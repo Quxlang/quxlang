@@ -48,6 +48,10 @@ when both positions are used. A block without a following declaration and a bloc
 preceding a scoped `PRIVATE` block are syntax errors. Declarations inside a scoped `PRIVATE` block
 may each carry their own documentation.
 
+Methods in `INTERFACE`, `GENERIC`, and `GENERIC_REF` declarations accept both
+documentation positions. The documentation attaches to the method whether the
+method ends with a semicolon or supplies a default body.
+
 Named base declarations and named import declarations accept both positions.
 Anonymous bases also accept `DOC` immediately after `.BASE`. Import shorthand
 accepts documentation before `IMPORT`. Documentation belongs to the following declaration alone; nested

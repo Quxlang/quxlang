@@ -475,10 +475,12 @@ namespace quxlang
         ast2_function_header header;
         ast2_function_definition definition;
         bool has_default_body = false;
+        /// Optional documentation attached to this interface member.
+        std::optional< std::string > doc;
         /// Optional source privacy for this interface member.
         std::optional< privacy_scope > privacy;
 
-        QUXLANG_WITH_SOURCE_LOCATION_METADATA(ast2_interface_function_declaration, name, header, definition, has_default_body, privacy);
+        QUXLANG_WITH_SOURCE_LOCATION_METADATA(ast2_interface_function_declaration, name, header, definition, has_default_body, doc, privacy);
     };
 
     struct ast2_interface_declaration

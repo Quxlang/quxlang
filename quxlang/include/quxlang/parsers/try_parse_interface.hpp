@@ -7,9 +7,11 @@
 
 #include <iterator>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include <quxlang/ast2/ast2_entity.hpp>
+#include <quxlang/parsers/doc.hpp>
 #include <quxlang/parsers/parse_function_args.hpp>
 #include <quxlang/parsers/parse_function_block.hpp>
 #include <quxlang/parsers/parse_privacy_scope.hpp>
@@ -22,7 +24,7 @@ namespace quxlang::parsers
 {
     std::vector< subdeclaration > parse_subdeclarations(parsing_context& ctx);
 
-    /** Tries to parse one interface function with the supplied privacy annotation. */
+    /** Parses an interface function with its documentation and supplied privacy annotation. */
     inline std::optional< ast2_interface_function_declaration > try_parse_interface_function_declaration(parsing_context& ctx, std::optional< privacy_scope > privacy)
     {
         auto& pos = ctx.iter_pos;
@@ -46,12 +48,14 @@ namespace quxlang::parsers
         }
 
         skip_whitespace_and_comments(pos, end);
+        ctx.pending_doc = try_parse_single_doc(ctx, std::move(ctx.pending_doc));
         if (!skip_keyword_if_is(pos, end, "FUNCTION"))
         {
             throw syntax_compilation_error("Expected FUNCTION in interface declaration");
         }
 
         ast2_interface_function_declaration out;
+        out.doc = std::exchange(ctx.pending_doc, std::nullopt);
         out.name = std::move(name);
         out.privacy = std::move(privacy);
         out.header.call_parameters = parse_function_args(ctx);
@@ -96,7 +100,7 @@ namespace quxlang::parsers
         return try_parse_interface_function_declaration(ctx, std::nullopt);
     }
 
-    /** Parses interface functions and flattens scoped PRIVATE blocks. */
+    /** Parses documented interface functions and flattens scoped PRIVATE blocks. */
     inline auto parse_interface_function_declarations(parsing_context& ctx, std::optional< privacy_scope > inherited_privacy = std::nullopt) -> std::vector< ast2_interface_function_declaration >
     {
         parse_iterator& pos = ctx.iter_pos;
@@ -112,6 +116,7 @@ namespace quxlang::parsers
                 return output;
             }
 
+            ctx.pending_doc = try_parse_single_doc(ctx, std::nullopt);
             std::optional< privacy_scope > declaration_privacy = try_parse_privacy_scope(ctx);
             if (declaration_privacy.has_value())
             {
@@ -123,6 +128,10 @@ namespace quxlang::parsers
                 skip_whitespace_and_comments(pos, end);
                 if (skip_symbol_if_is(pos, end, "{"))
                 {
+                    if (ctx.pending_doc.has_value())
+                    {
+                        throw syntax_compilation_error("DOC must precede a declaration rather than a PRIVATE block");
+                    }
                     std::vector< ast2_interface_function_declaration > nested = parse_interface_function_declarations(ctx, declaration_privacy);
                     skip_whitespace_and_comments(pos, end);
                     if (!skip_symbol_if_is(pos, end, "}"))

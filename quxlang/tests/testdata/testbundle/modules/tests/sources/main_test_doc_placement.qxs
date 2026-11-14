@@ -27,6 +27,24 @@ LANGUAGE QUXLANG EN 0.0;
     .BASE DOC <$ Supplies anonymous inheritance. $> parent;
   }
 
+  ::owned_reader GENERIC INCOMPARABLE
+  {
+    DOC <$ Reads the owned value. $>
+    .read FUNCTION() CONST: I32;
+  }
+
+  ::borrowed_reader GENERIC_REF CONST INCOMPARABLE
+  {
+    .read DOC <$ Reads the borrowed value. $> FUNCTION() CONST: I32;
+  }
+
+  ::reader_interface INTERFACE DEFAULTABLE
+  {
+    DOC <$ Returns the default value. $>
+    .read FUNCTION(): I32 { RETURN 41; }
+    .other DOC <$ Returns another default value. $> FUNCTION(): I32 { RETURN 43; }
+  }
+
   ::placements DOC <$ Verifies declarations with either documentation position. $> DUAL_TEST
   {
     TEST_ASSERT(prefix() == 17);
@@ -34,6 +52,13 @@ LANGUAGE QUXLANG EN 0.0;
     VAR value record;
     value.parent.value := 31;
     TEST_ASSERT(value.read() == 31);
+    VAR owned owned_reader := value;
+    VAR borrowed borrowed_reader := value;
+    TEST_ASSERT(owned.read() == 31);
+    TEST_ASSERT(borrowed.read() == 31);
+    VAR interface_value reader_interface;
+    TEST_ASSERT(interface_value.read() == 41);
+    TEST_ASSERT(interface_value.other() == 43);
     VAR anonymous anonymous_record;
     anonymous.value := 37;
     TEST_ASSERT(anonymous.value == 37);

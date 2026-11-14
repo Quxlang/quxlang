@@ -1,0 +1,218 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT std;
+IMPORT syscall;
+
+::io_uring_processor_tests INCLUDE_IF(OS_LINUX) NAMESPACE
+{
+  DOC <$ Records each notification from a no-op or poll submission. $>
+  ::operation STRUCT
+  {
+    .descriptor VAR I32;
+    .poll VAR BOOL;
+    .fail_notification VAR BOOL;
+    .skip_completion VAR BOOL;
+    .notifications VAR SZ;
+    .final_notifications VAR SZ;
+    .last_result VAR I32;
+    DOC <$ Prepares a no-op or a multishot readable-descriptor poll. $>
+    .prepare FUNCTION(@entry MUT& io::io_uring_submission_entry) MUT
+    {
+      IF (.skip_completion) { entry.flags := 64; }
+      IF (.poll)
+      {
+        entry.opcode := 6;
+        entry.descriptor := .descriptor;
+        entry.length := 1;
+        entry.operation_flags := 1;
+        STATIC_IF(ARCH_IS_Z_ARCH) { entry.operation_flags := entry.operation_flags #++ 16; }
+      }
+    }
+    DOC <$ Records intermediate updates and terminal notifications separately. $>
+    .on_notify FUNCTION(@completion io::io_uring_completion_result) MUT
+    {
+      .notifications := .notifications + 1;
+      .last_result := completion.result;
+      IF (completion.is_final) { .final_notifications := .final_notifications + 1; }
+      IF (.fail_notification) { THROW (19 AS I32); }
+    }
+  }
+
+  DOC <$ A bounded wait prevents missing completions from hanging the test process. $>
+  ::receive FUNCTION(@processor MUT& io::io_uring_processor)
+  {
+    TEST_ASSERT(processor.wait(@timeout_nanoseconds 2000000000));
+    TEST_ASSERT(processor.process_completions(@maximum 16) != 0);
+  }
+
+  DOC <$ Queued operations submit in batches and completion processing respects its bound. $>
+  ::batch UNIT_TEST
+  {
+    VAR processor io::io_uring_processor :(@submission_entries 2, @completion_entries 4);
+    VAR first operation;
+    VAR second operation;
+    VAR third operation;
+    processor.enqueue(@operation first);
+    processor.enqueue(@operation second);
+    VAR exhausted BOOL;
+    TRY { processor.enqueue(@operation third); }
+    CATCH failure CONST& io::io_uring_error { exhausted := failure == io::io_uring_error::queue_full; }
+    TEST_ASSERT(exhausted);
+    TEST_ASSERT(processor.pending_count() == 2);
+    processor.flush();
+    TEST_ASSERT(processor.wait(@minimum 2, @timeout_nanoseconds 2000000000));
+    TEST_ASSERT(processor.has_completions());
+    TEST_ASSERT(processor.process_completions(@maximum 1) == 1);
+    TEST_ASSERT(processor.pending_count() == 1);
+    TEST_ASSERT(processor.process_completions(@maximum 1) == 1);
+    TEST_ASSERT(first.final_notifications == 1 && second.final_notifications == 1);
+    TEST_ASSERT(first.last_result == 0 && second.last_result == 0);
+    TEST_ASSERT(processor.pending_count() == 0);
+    TEST_ASSERT(processor.wait(@timeout_nanoseconds 1000000) == FALSE);
+  }
+
+  DOC <$ A multishot registration survives intermediate updates and cancellation produces separate terminal notifications. $>
+  ::multishot UNIT_TEST
+  {
+    VAR descriptor I32 := syscall::linux::eventfd2(@initial 0, @flags 526336);
+    TEST_ASSERT(descriptor >= 0);
+    DEFER { syscall::linux::close(@fd descriptor); }
+    VAR processor io::io_uring_processor;
+    VAR poll operation;
+    poll.poll := TRUE;
+    poll.descriptor := descriptor;
+    VAR cancelled operation;
+    VAR identity := processor.enqueue(@operation poll);
+    processor.flush();
+    VAR counter U64 := 1;
+    TEST_ASSERT(syscall::linux::write(@fd descriptor, @buffer IBC_PUN#(MUT=>>BYTE)(@ADDR IBC_GETADDR(@PTR counter<-)), @count 8) == 8);
+    receive(@processor processor);
+    TEST_ASSERT(poll.notifications != 0 && poll.final_notifications == 0);
+    TEST_ASSERT(syscall::linux::read(@fd descriptor, @buffer IBC_PUN#(MUT=>>BYTE)(@ADDR IBC_GETADDR(@PTR counter<-)), @count 8) == 8);
+    counter := 1;
+    TEST_ASSERT(syscall::linux::write(@fd descriptor, @buffer IBC_PUN#(MUT=>>BYTE)(@ADDR IBC_GETADDR(@PTR counter<-)), @count 8) == 8);
+    receive(@processor processor);
+    TEST_ASSERT(poll.notifications >= 2 && poll.final_notifications == 0);
+    processor.enqueue_cancel(@submission identity, @notification cancelled);
+    processor.flush();
+    LOOP WHILE(processor.pending_count() != 0) DO { receive(@processor processor); };
+    TEST_ASSERT(poll.final_notifications == 1);
+    TEST_ASSERT(poll.last_result == (-125));
+    TEST_ASSERT(cancelled.final_notifications == 1 && cancelled.last_result == 0);
+  }
+
+  DOC <$ Completion notification signals a registered eventfd independently of callback dispatch. $>
+  ::completion_event UNIT_TEST
+  {
+    VAR descriptor I32 := syscall::linux::eventfd2(@initial 0, @flags 526336);
+    TEST_ASSERT(descriptor >= 0);
+    DEFER { syscall::linux::close(@fd descriptor); }
+    VAR processor io::io_uring_processor;
+    processor.register_completion_event(@descriptor descriptor);
+    VAR item operation;
+    processor.enqueue(@operation item);
+    processor.flush();
+    TEST_ASSERT(processor.wait(@timeout_nanoseconds 2000000000));
+    VAR counter U64;
+    VAR received BOOL;
+    AUTO observe := -<
+    {
+      received := syscall::linux::read(@fd descriptor,
+        @buffer IBC_PUN#(MUT=>>BYTE)(@ADDR IBC_GETADDR(@PTR counter<-)), @count 8) == 8;
+    };
+    VAR observer std::thread := std::thread(observe);
+    observer.join();
+    TEST_ASSERT(received && counter != 0 && item.notifications == 0);
+    TEST_ASSERT(processor.process_completions(@maximum 1) == 1);
+    processor.unregister_completion_event();
+  }
+  DOC <$ A separate completion consumer can dispatch operations submitted by the creating thread. $>
+  ::separate_consumer UNIT_TEST
+  {
+    VAR processor io::io_uring_processor;
+    VAR item operation;
+    VAR observed BOOL;
+    AUTO consume := -<
+    {
+      IF (processor.wait(@timeout_nanoseconds 2000000000))
+      { observed := processor.process_completions(@maximum 1) == 1; }
+    };
+    VAR consumer std::thread := std::thread(consume);
+    processor.enqueue(@operation item);
+    processor.flush();
+    consumer.join();
+    TEST_ASSERT(observed && item.final_notifications == 1);
+    TEST_ASSERT(processor.pending_count() == 0);
+  }
+  DOC <$ Terminal callback exceptions release registrations and leave other completions available. $>
+  ::callback_failure UNIT_TEST
+  {
+    VAR processor io::io_uring_processor;
+    VAR first operation;
+    first.fail_notification := TRUE;
+    processor.enqueue(@operation first);
+    processor.flush();
+    TEST_ASSERT(processor.wait(@timeout_nanoseconds 2000000000));
+    VAR caught BOOL;
+    TRY { processor.process_completions(@maximum 1); }
+    CATCH failure CONST& I32 { caught := failure == 19; }
+    TEST_ASSERT(caught && processor.pending_count() == 0);
+    VAR next operation;
+    next.skip_completion := TRUE;
+    caught := FALSE;
+    TRY { processor.enqueue(@operation next); }
+    CATCH failure CONST& io::io_uring_error { caught := failure == io::io_uring_error::invalid_submission; }
+    TEST_ASSERT(caught && processor.pending_count() == 0);
+    next.skip_completion := FALSE;
+    processor.enqueue(@operation next);
+    processor.flush();
+    receive(@processor processor);
+    TEST_ASSERT(next.final_notifications == 1);
+  }
+  DOC <$ Kernel overflow retention preserves every registration when completions exceed the mapped queue capacity. $>
+  ::completion_overflow UNIT_TEST
+  {
+    VAR processor io::io_uring_processor :(@submission_entries 2, @completion_entries 4);
+    VAR items [6]operation;
+    VAR index SZ;
+    LOOP WHILE(index < 4) DO
+    {
+      processor.enqueue(@operation items[index]);
+      index := index + 1;
+      processor.enqueue(@operation items[index]);
+      index := index + 1;
+      processor.flush();
+    };
+    TEST_ASSERT(processor.wait(@minimum 4, @timeout_nanoseconds 2000000000));
+    processor.enqueue(@operation items[4]);
+    processor.enqueue(@operation items[5]);
+    processor.flush();
+    LOOP WHILE(processor.pending_count() != 0) DO { receive(@processor processor); };
+    index := 0;
+    LOOP WHILE(index < 6) DO
+    {
+      TEST_ASSERT(items[index].final_notifications == 1 && items[index].last_result == 0);
+      index := index + 1;
+    };
+  }
+  DOC <$ Cancellation queued before terminal dispatch retains its target identity until the cancellation completes. $>
+  ::cancel_completed_request UNIT_TEST
+  {
+    VAR processor io::io_uring_processor;
+    VAR original operation;
+    VAR cancellation operation;
+    VAR identity := processor.enqueue(@operation original);
+    processor.flush();
+    TEST_ASSERT(processor.wait(@timeout_nanoseconds 2000000000));
+    processor.enqueue_cancel(@submission identity, @notification cancellation);
+    TEST_ASSERT(processor.process_completions(@maximum 1) == 1);
+    TEST_ASSERT(original.final_notifications == 1);
+    VAR next operation;
+    processor.enqueue(@operation next);
+    processor.flush();
+    LOOP WHILE(processor.pending_count() != 0) DO { receive(@processor processor); };
+    TEST_ASSERT(cancellation.final_notifications == 1 && cancellation.last_result == (-2));
+    TEST_ASSERT(next.final_notifications == 1 && next.last_result == 0);
+  }
+}

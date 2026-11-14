@@ -246,9 +246,76 @@ LANGUAGE QUXLANG EN 0.0;
     BR %r14
   }
 
+  DOC <$ Matches the extended io_uring_enter argument ABI for timed waits. $>
+  ::io_uring_wait_arguments IBC_STRUCT
+  {
+    .signal_mask VAR io_uring_address;
+    .signal_mask_size VAR U32;
+    .padding VAR U32;
+    .timeout VAR io_uring_address;
+  }
+
+  DOC <$ Registers resources and completion notifications with an io_uring descriptor. $>
+  ::io_uring_register ASM_PROCEDURE X64
+    CALLABLE CALLCONV CCALL(
+      @descriptor I32, @operation U32, @argument ADDRESS, @count U32;
+      RETURN I32
+    )
+  {
+    MOV R10, RCX
+    MOV RAX, 427
+    SYSCALL
+    RET
+  }
+
+  DOC <$ Registers resources and completion notifications with an io_uring descriptor. $>
+  ::io_uring_register ASM_PROCEDURE ARM64
+    CALLABLE CALLCONV CCALL(
+      @descriptor I32, @operation U32, @argument ADDRESS, @count U32;
+      RETURN I32
+    )
+  {
+    MOV X8, 427
+    SVC 0
+    RET
+  }
+
+  DOC <$ Registers resources and completion notifications with an io_uring descriptor. $>
+  ::io_uring_register ASM_PROCEDURE X86
+    CALLABLE CALLCONV CCALL(
+      @descriptor I32, @operation U32, @argument ADDRESS, @count U32;
+      RETURN I32
+    )
+  {
+    PUSH EBX
+    PUSH ESI
+    MOV EBX, [ESP+12]
+    MOV ECX, [ESP+16]
+    MOV EDX, [ESP+20]
+    MOV ESI, [ESP+24]
+    MOV EAX, 427
+    INT 0x80
+    POP ESI
+    POP EBX
+    RET
+  }
+
+  DOC <$ Registers resources and completion notifications with an io_uring descriptor. $>
+  ::io_uring_register ASM_PROCEDURE Z_ARCH
+    CALLABLE CALLCONV CCALL(
+      @descriptor I32, @operation U32, @argument ADDRESS, @count U32;
+      RETURN I32
+    )
+  {
+    LGHI %r1, 427
+    SVC 0
+    BR %r14
+  }
+
   ::io_uring_abi_layout_test STATIC_TEST
   {
     TEST_ASSERT(SIZEOF(io_uring_address) == 8);
+    TEST_ASSERT(SIZEOF(io_uring_wait_arguments) == 24);
     TEST_ASSERT(SIZEOF(io_uring_submission_offsets) == 40);
     TEST_ASSERT(SIZEOF(io_uring_completion_offsets) == 40);
     TEST_ASSERT(SIZEOF(io_uring_parameters) == 120);

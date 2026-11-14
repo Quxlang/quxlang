@@ -804,6 +804,46 @@ TEST(parsing, declaration_rejects_multiple_doc_blocks)
     EXPECT_THROW(parse_file_text("DOC <$x$> PRIVATE(MODULE) { ::foo STRUCT {} }"), std::logic_error);
 }
 
+TEST(parsing, interface_member_documentation_metadata)
+{
+    for (std::string const& kind : {"INTERFACE", "GENERIC", "GENERIC_REF"})
+    {
+        SCOPED_TRACE(kind);
+        quxlang::ast2_file_declaration file = parse_file_text("DOC <$outer$> ::contract " + kind + R"({
+            DOC <$prefix$> PRIVATE(MODULE) .first FUNCTION();
+            .second DOC <$suffix$> FUNCTION() { RETURN; }
+            PRIVATE(MODULE) { DOC <$scoped$> .third FUNCTION(); }
+            .plain FUNCTION();
+        } ::following STRUCT {})");
+        quxlang::global_subdeclaration const& contract = file.declarations.at(0).get_as< quxlang::global_subdeclaration >();
+        EXPECT_EQ(contract.doc, "outer");
+        std::vector< quxlang::ast2_interface_function_declaration > const& functions = kind == "INTERFACE"
+            ? contract.decl.get_as< quxlang::ast2_interface_declaration >().functions
+            : contract.decl.get_as< quxlang::ast2_generic_declaration >().functions;
+        ASSERT_EQ(functions.size(), 4);
+        EXPECT_EQ(functions[0].doc, "prefix");
+        EXPECT_TRUE(functions[0].privacy.has_value());
+        EXPECT_EQ(functions[1].doc, "suffix");
+        EXPECT_TRUE(functions[1].has_default_body);
+        EXPECT_EQ(functions[2].doc, "scoped");
+        EXPECT_TRUE(functions[2].privacy.has_value());
+        EXPECT_FALSE(functions[3].doc.has_value());
+        EXPECT_FALSE(file.declarations.at(1).get_as< quxlang::global_subdeclaration >().doc.has_value());
+
+        for (std::string const& body : {
+                 "DOC <$a$> DOC <$b$> .read FUNCTION();",
+                 "DOC <$a$> .read DOC <$b$> FUNCTION();",
+                 ".read DOC <$a$> DOC <$b$> FUNCTION();",
+                 "DOC <$orphan$>",
+                 "DOC <$block$> PRIVATE(MODULE) { .read FUNCTION(); }",
+             })
+        {
+            SCOPED_TRACE(body);
+            EXPECT_THROW(parse_file_text("::contract " + kind + " { " + body + " }"), quxlang::compilation_error);
+        }
+    }
+}
+
 TEST(parsing, parse_function_args)
 {
     std::string test_string = "(%a I32, %b I64, %c -> I32)";
