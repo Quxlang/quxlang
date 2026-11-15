@@ -17,6 +17,19 @@ DOC <$ The structure stores a native timestamp with 64-bit seconds and nanosecon
     RET
   }
 
+  DOC <$ Invokes the Linux ARM EABI clock_gettime system call. $>
+  ::clock_gettime ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@clock I32, @output MUT->timespec64; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOVW R7, 403
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
+  }
+
   ::clock_gettime ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(@clock I32, @output MUT->timespec64; RETURN I32)
   {

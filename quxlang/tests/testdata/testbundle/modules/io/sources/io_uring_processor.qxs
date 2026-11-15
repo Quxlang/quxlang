@@ -40,10 +40,10 @@ DOC <$ Identifies a live submission in its originating processor. The identity e
 
 PRIVATE(MODULE)
 {
-  DOC <$ Maps one shared ring region and reports native mapping failures. The x86 mmap2 ABI receives page offsets. $>
+  DOC <$ Maps one shared ring region and reports native mapping failures. The 32-bit mmap2 ABI receives page offsets. $>
   ::map_uring_region INCLUDE_IF(OS_LINUX) FUNCTION(@descriptor I32, @size SZ, @offset SZ): ADDRESS
   {
-    STATIC_IF(ARCH_IS_X86) { offset := offset / 4096; }
+    STATIC_IF(SIZEOF(UINTPTR) == 4) { offset := offset / 4096; }
     VAR address ADDRESS := syscall::linux::mmap(@addr NULL, @len size,
       @prot syscall::linux::prot_flags::read #|| syscall::linux::prot_flags::write,
       @flags syscall::linux::mmap_flags::shared, @fd descriptor, @off offset);

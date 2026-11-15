@@ -6,7 +6,7 @@ LANGUAGE QUXLANG EN 0.0;
   ::epoll_event IBC_STRUCT
   {
     .events VAR U32;
-    .padding INCLUDE_IF(ARCH_IS_ARM64 || ARCH_IS_Z_ARCH) VAR U32;
+    .padding INCLUDE_IF(ARCH_IS_ARM32 || ARCH_IS_ARM64 || ARCH_IS_Z_ARCH) VAR U32;
     .data VAR [2]U32;
   }
 
@@ -29,6 +29,19 @@ LANGUAGE QUXLANG EN 0.0;
     INT 0x80
     POP EBX
     RET
+  }
+
+  DOC <$ Creates an epoll instance. $>
+  ::epoll_create1 ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@flags I32; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOVW R7, 357
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
   }
 
   DOC <$ Creates an epoll instance. $>
@@ -69,6 +82,19 @@ LANGUAGE QUXLANG EN 0.0;
     INT 0x80
     POP EBX
     RET
+  }
+
+  DOC <$ Creates an event counter descriptor. $>
+  ::eventfd2 ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@initial U32, @flags I32; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOVW R7, 356
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
   }
 
   DOC <$ Creates an event counter descriptor. $>
@@ -117,6 +143,19 @@ LANGUAGE QUXLANG EN 0.0;
   }
 
   DOC <$ Updates an epoll registration. $>
+  ::epoll_ctl ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@queue I32, @operation I32, @descriptor I32, @event CONST->epoll_event; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOV R7, 251
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
+  }
+
+  DOC <$ Updates an epoll registration. $>
   ::epoll_ctl ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(@queue I32, @operation I32, @descriptor I32, @event CONST->epoll_event; RETURN I32)
   {
@@ -159,6 +198,19 @@ LANGUAGE QUXLANG EN 0.0;
     POP ESI
     POP EBX
     RET
+  }
+
+  DOC <$ Waits for epoll events without changing the signal mask. $>
+  ::epoll_wait ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@queue I32, @event MUT->epoll_event, @maximum I32, @timeout I32; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOV R7, 252
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
   }
 
   DOC <$ Waits for epoll events without changing the signal mask. $>
@@ -212,6 +264,25 @@ LANGUAGE QUXLANG EN 0.0;
   }
 
   DOC <$ Reads a byte range at an explicit file offset. $>
+  ::pread64 ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@descriptor I32, @buffer MUT=>>BYTE, @count SZ, @offset U64; RETURN SZ)
+  {
+    SUB SP, SP, 16
+    STR R4, [SP, 0]
+    STR R5, [SP, 4]
+    STR R7, [SP, 8]
+    LDR R4, [SP, 16]
+    LDR R5, [SP, 20]
+    MOV R7, 180
+    SVC 0
+    LDR R4, [SP, 0]
+    LDR R5, [SP, 4]
+    LDR R7, [SP, 8]
+    ADD SP, SP, 16
+    BX LR
+  }
+
+  DOC <$ Reads a byte range at an explicit file offset. $>
   ::pread64 ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(@descriptor I32, @buffer MUT=>>BYTE, @count SZ, @offset U64; RETURN SZ)
   {
@@ -260,6 +331,25 @@ LANGUAGE QUXLANG EN 0.0;
   }
 
   DOC <$ Writes a byte range at an explicit file offset. $>
+  ::pwrite64 ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@descriptor I32, @buffer CONST=>>BYTE, @count SZ, @offset U64; RETURN SZ)
+  {
+    SUB SP, SP, 16
+    STR R4, [SP, 0]
+    STR R5, [SP, 4]
+    STR R7, [SP, 8]
+    LDR R4, [SP, 16]
+    LDR R5, [SP, 20]
+    MOV R7, 181
+    SVC 0
+    LDR R4, [SP, 0]
+    LDR R5, [SP, 4]
+    LDR R7, [SP, 8]
+    ADD SP, SP, 16
+    BX LR
+  }
+
+  DOC <$ Writes a byte range at an explicit file offset. $>
   ::pwrite64 ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(@descriptor I32, @buffer CONST=>>BYTE, @count SZ, @offset U64; RETURN SZ)
   {
@@ -297,6 +387,19 @@ LANGUAGE QUXLANG EN 0.0;
     INT 0x80
     POP EBX
     RET
+  }
+
+  DOC <$ Creates an anonymous memory-backed file. $>
+  ::memfd_create ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@name CONST=>>BYTE, @flags U32; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOVW R7, 385
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
   }
 
   DOC <$ Creates an anonymous memory-backed file. $>

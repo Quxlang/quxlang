@@ -70,6 +70,19 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Invokes the Linux ARM EABI write system call. $>
+  ::write ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@fd I32, @buffer CONST =>> BYTE, @count SZ; RETURN SZ)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOV R7, 4
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
+  }
+
   ::write ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(@fd I32, @buffer CONST =>> BYTE, @count SZ; RETURN SZ)
   {
@@ -105,6 +118,19 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Invokes the Linux ARM EABI exit system call. $>
+  ::exit ASM_PROCEDURE ARM32
+    CALLABLE(@code I32; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOV R7, 1
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
+  }
+
   ::exit ASM_PROCEDURE ARM64
     CALLABLE(@code I32; RETURN I32)
   {
@@ -138,6 +164,19 @@ LANGUAGE QUXLANG EN 0.0;
     INT 0x80
     POP EBX
     RET
+  }
+
+  DOC <$ Invokes the Linux ARM EABI exit_group system call. $>
+  ::exit_group ASM_PROCEDURE ARM32
+    CALLABLE(@code I32; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOV R7, 248
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
   }
 
   ::exit_group ASM_PROCEDURE ARM64
@@ -200,6 +239,33 @@ LANGUAGE QUXLANG EN 0.0;
     POP ESI
     POP EBX
     RET
+  }
+
+  DOC <$ Invokes the Linux ARM EABI mmap_anonymous_private system call. $>
+  ::mmap_anonymous_private ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@size SZ; RETURN ADDRESS)
+  {
+    SUB SP, SP, 16
+    STR R4, [SP, 0]
+    STR R5, [SP, 4]
+    STR R7, [SP, 8]
+    MOV R1, R0
+    MOV R0, 0
+    MOV R2, 3
+    MOV R3, 34
+    MVN R4, 0
+    MOV R5, 0
+    MOV R7, 192
+    SVC 0
+    MOVW R1, 61441
+    MOVT R1, 65535
+    CMP R0, R1
+    MOVHS R0, 0
+    LDR R4, [SP, 0]
+    LDR R5, [SP, 4]
+    LDR R7, [SP, 8]
+    ADD SP, SP, 16
+    BX LR
   }
 
   ::mmap_anonymous_private ASM_PROCEDURE ARM64
@@ -277,6 +343,28 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Invokes the Linux ARM EABI futex_wait system call. $>
+  ::futex_wait ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@address ADDRESS, @expected I32; RETURN I32)
+  {
+    SUB SP, SP, 16
+    STR R4, [SP, 0]
+    STR R5, [SP, 4]
+    STR R7, [SP, 8]
+    MOV R2, R1
+    MOV R1, 0
+    MOV R3, 0
+    MOV R4, 0
+    MOV R5, 0
+    MOV R7, 240
+    SVC 0
+    LDR R4, [SP, 0]
+    LDR R5, [SP, 4]
+    LDR R7, [SP, 8]
+    ADD SP, SP, 16
+    BX LR
+  }
+
   ::futex_wait ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(@address ADDRESS, @expected I32; RETURN I32)
   {
@@ -344,6 +432,28 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Invokes the Linux ARM EABI futex_wake system call. $>
+  ::futex_wake ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@address ADDRESS, @count I32; RETURN I32)
+  {
+    SUB SP, SP, 16
+    STR R4, [SP, 0]
+    STR R5, [SP, 4]
+    STR R7, [SP, 8]
+    MOV R2, R1
+    MOV R1, 1
+    MOV R3, 0
+    MOV R4, 0
+    MOV R5, 0
+    MOV R7, 240
+    SVC 0
+    LDR R4, [SP, 0]
+    LDR R5, [SP, 4]
+    LDR R7, [SP, 8]
+    ADD SP, SP, 16
+    BX LR
+  }
+
   ::futex_wake ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(@address ADDRESS, @count I32; RETURN I32)
   {
@@ -397,6 +507,19 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Invokes the Linux ARM EABI read system call. $>
+  ::read ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@fd I32, @buffer MUT =>> BYTE, @count SZ; RETURN SZ)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOV R7, 3
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
+  }
+
   ::read ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(@fd I32, @buffer MUT =>> BYTE, @count SZ; RETURN SZ)
   {
@@ -430,6 +553,19 @@ LANGUAGE QUXLANG EN 0.0;
     INT 0x80
     POP EBX
     RET
+  }
+
+  DOC <$ Invokes the Linux ARM EABI close system call. $>
+  ::close ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@fd I32; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOV R7, 6
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
   }
 
   ::close ASM_PROCEDURE ARM64
@@ -476,6 +612,19 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Invokes the Linux ARM EABI open system call. $>
+  ::open ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@path CONST =>> BYTE, @flags open_flags, @mode file_mode; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOV R7, 5
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
+  }
+
   ::open ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(@path CONST =>> BYTE, @flags open_flags, @mode file_mode; RETURN I32)
   {
@@ -515,6 +664,19 @@ LANGUAGE QUXLANG EN 0.0;
     INT 0x80
     POP EBX
     RET
+  }
+
+  DOC <$ Invokes the Linux ARM EABI lseek system call. $>
+  ::lseek ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@fd I32, @offset SZ, @whence seek_whence; RETURN SZ)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOV R7, 19
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
   }
 
   ::lseek ASM_PROCEDURE ARM64
@@ -562,6 +724,25 @@ LANGUAGE QUXLANG EN 0.0;
     POP ESI
     POP EBX
     RET
+  }
+
+  DOC <$ Invokes the Linux ARM EABI mmap system call. $>
+  ::mmap ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ, @prot prot_flags, @flags mmap_flags, @fd I32, @off SZ; RETURN ADDRESS)
+  {
+    SUB SP, SP, 16
+    STR R4, [SP, 0]
+    STR R5, [SP, 4]
+    STR R7, [SP, 8]
+    LDR R4, [SP, 16]
+    LDR R5, [SP, 20]
+    MOV R7, 192
+    SVC 0
+    LDR R4, [SP, 0]
+    LDR R5, [SP, 4]
+    LDR R7, [SP, 8]
+    ADD SP, SP, 16
+    BX LR
   }
 
   ::mmap ASM_PROCEDURE ARM64
@@ -618,6 +799,19 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Invokes the Linux ARM EABI munmap system call. $>
+  ::munmap ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOV R7, 91
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
+  }
+
   ::munmap ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ; RETURN I32)
   {
@@ -653,6 +847,19 @@ LANGUAGE QUXLANG EN 0.0;
     INT 0x80
     POP EBX
     RET
+  }
+
+  DOC <$ Invokes the Linux ARM EABI mprotect system call. $>
+  ::mprotect ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ, @prot prot_flags; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOV R7, 125
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
   }
 
   ::mprotect ASM_PROCEDURE ARM64
@@ -691,6 +898,19 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Invokes the Linux ARM EABI nanosleep system call. $>
+  ::nanosleep ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@req CONST =>>BYTE, @rem MUT =>>BYTE; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOV R7, 162
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
+  }
+
   ::nanosleep ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(@req CONST =>>BYTE, @rem MUT =>>BYTE; RETURN I32)
   {
@@ -721,6 +941,19 @@ LANGUAGE QUXLANG EN 0.0;
     MOV EAX, 20
     INT 0x80
     RET
+  }
+
+  DOC <$ Invokes the Linux ARM EABI getpid system call. $>
+  ::getpid ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOV R7, 20
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
   }
 
   ::getpid ASM_PROCEDURE ARM64
@@ -757,6 +990,19 @@ LANGUAGE QUXLANG EN 0.0;
     INT 0x80
     POP EBX
     RET
+  }
+
+  DOC <$ Invokes the Linux ARM EABI kill system call. $>
+  ::kill ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@pid I32, @sig I32; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOV R7, 37
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
   }
 
   ::kill ASM_PROCEDURE ARM64

@@ -117,6 +117,12 @@ out-of-range versions are rejected. The setting controls output deployment
 metadata; it does not validate the availability of imported symbols or change
 the SDK version field.
 
+Linux targets with `cpu: ARM32` use the ARMv7-A instruction set with NEON and
+VFP, little-endian ELF32, and the GNU EABI core-register calling convention for
+floating-point arguments. Static executables provide process startup, system
+calls, thread-local storage, native threads, and DWARF `.eh_frame` exception
+unwinding. ARM32 assembly procedures execute in ARM state.
+
 ## Module mappings
 
 The key under `modules` is the logical name visible to source imports. `source`

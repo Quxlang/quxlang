@@ -51,6 +51,29 @@ LANGUAGE QUXLANG EN 0.0;
     Waiters points to count Linux futex_waitv records; timeout is null or points
     to an absolute kernel timespec with two signed 64-bit fields.
     $>
+  ::futex_waitv ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(
+      @waiters ADDRESS, @count U32, @flags U32, @timeout ADDRESS, @clock I32;
+      RETURN I32
+    )
+  {
+    SUB SP, SP, 8
+    STR R4, [SP, 0]
+    STR R7, [SP, 4]
+    LDR R4, [SP, 8]
+    MOVW R7, 449
+    SVC 0
+    LDR R4, [SP, 0]
+    LDR R7, [SP, 4]
+    ADD SP, SP, 8
+    BX LR
+  }
+
+  DOC <$
+    Invokes Linux futex_waitv and returns a waiter index or a negative errno.
+    Waiters points to count Linux futex_waitv records; timeout is null or points
+    to an absolute kernel timespec with two signed 64-bit fields.
+    $>
   ::futex_waitv ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(
       @waiters ADDRESS, @count U32, @flags U32, @timeout ADDRESS, @clock I32;

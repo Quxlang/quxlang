@@ -225,7 +225,6 @@ namespace quxlang
             case cpu::none:
                 throw std::invalid_argument("Float alignment requires a CPU target");
             case cpu::x86_32:
-            case cpu::arm_32:
             case cpu::riscv_32: {
                 std::uint64_t alignment = 1;
                 while (alignment * 2 <= byte_count && alignment * 2 <= 4)
@@ -234,6 +233,8 @@ namespace quxlang
                 }
                 return alignment;
             }
+            case cpu::arm_32:
+                return byte_count >= 8 ? max_int_align() : byte_count >= 4 ? 4 : byte_count >= 2 ? 2 : 1;
             case cpu::x86_64:
             case cpu::arm_64:
             case cpu::riscv_64:

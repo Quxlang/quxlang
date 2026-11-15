@@ -26,6 +26,19 @@ LANGUAGE QUXLANG EN 0.0;
   }
 
   DOC <$ Updates or queries descriptor flags. $>
+  ::fcntl ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@socket I32, @command I32, @argument I32; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOV R7, 55
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
+  }
+
+  DOC <$ Updates or queries descriptor flags. $>
   ::fcntl ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(@socket I32, @command I32, @argument I32; RETURN I32)
   {
@@ -74,6 +87,22 @@ LANGUAGE QUXLANG EN 0.0;
   }
 
   DOC <$ Reads a socket integer option. $>
+  ::get_socket_option ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@socket I32, @level I32, @option I32, @value MUT->I32, @length MUT->U32; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R4, [SP, 0]
+    STR R7, [SP, 4]
+    LDR R4, [SP, 8]
+    MOVW R7, 295
+    SVC 0
+    LDR R4, [SP, 0]
+    LDR R7, [SP, 4]
+    ADD SP, SP, 8
+    BX LR
+  }
+
+  DOC <$ Reads a socket integer option. $>
   ::get_socket_option ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(@socket I32, @level I32, @option I32, @value MUT->I32, @length MUT->U32; RETURN I32)
   {
@@ -119,6 +148,22 @@ LANGUAGE QUXLANG EN 0.0;
     POP ESI
     POP EBX
     RET
+  }
+
+  DOC <$ Waits for descriptor readiness with an optional timeout and signal mask. $>
+  ::ppoll ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@descriptors MUT->poll_descriptor, @count SZ, @timeout ADDRESS, @signal_mask ADDRESS, @signal_size SZ; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R4, [SP, 0]
+    STR R7, [SP, 4]
+    LDR R4, [SP, 8]
+    MOVW R7, 414
+    SVC 0
+    LDR R4, [SP, 0]
+    LDR R7, [SP, 4]
+    ADD SP, SP, 8
+    BX LR
   }
 
   DOC <$ Waits for descriptor readiness with an optional timeout and signal mask. $>

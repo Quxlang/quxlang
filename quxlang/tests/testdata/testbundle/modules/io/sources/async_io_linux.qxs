@@ -50,7 +50,7 @@ PRIVATE(MODULE)
   ::linux_io_uring_mmap_offset INCLUDE_IF(OS_LINUX && linux_use_io_uring)
     FUNCTION(@byte_offset SZ): SZ
   {
-    STATIC_IF(ARCH_IS_X86)
+    STATIC_IF(SIZEOF(UINTPTR) == 4)
     {
       RETURN byte_offset / 4096;
     }

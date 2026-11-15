@@ -4,6 +4,7 @@
 #define QUXLANG_BACKENDS_ASM_GNU_ASM_CONVERTER_HEADER_GUARD
 
 #include "quxlang/asm/asm.hpp"
+#include "quxlang/data/machine.hpp"
 #include "quxlang/backends/asm/symbol_format.hpp"
 #include "quxlang/variant_utils.hpp"
 #include "rpnx/unimplemented.hpp"
@@ -26,16 +27,17 @@ namespace quxlang
 
     /**
      * Converts an assembly routine using GNU operand syntax into textual assembly accepted by LLVM's integrated assembler.
+     * ARM32 literal pools are emitted immediately after their owning routine.
      */
     template < typename It >
-    inline std::string convert_to_gnu_asm(It begin, It end, std::string const& name, bool emit_elf_type = false)
+    inline std::string convert_to_gnu_asm(It begin, It end, std::string const& name, cpu architecture, bool emit_elf_type = false)
     {
         std::string const asm_name = format_asm_symbol_name(name);
         std::string result = ".text\n";
         result += ".global " + asm_name + "\n";
         if (emit_elf_type)
         {
-            result += ".type " + asm_name + ", @function\n";
+            result += ".type " + asm_name + ", %function\n";
         }
         result += asm_name + ":\n";
 
@@ -64,6 +66,10 @@ namespace quxlang
             }
 
             rpnx::unimplemented();
+        }
+        if (architecture == cpu::arm_32)
+        {
+            result += ".ltorg\n";
         }
         return result;
     }

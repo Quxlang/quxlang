@@ -295,6 +295,7 @@ namespace quxlang::detail
                 return;
             case quxlang::cpu::x86_64:
                 return;
+            case quxlang::cpu::arm_32:
             case quxlang::cpu::arm_64:
                 return;
             case quxlang::cpu::z_arch:
@@ -315,6 +316,8 @@ namespace quxlang::detail
                 return llvm::ELF::EM_386;
             case quxlang::cpu::x86_64:
                 return llvm::ELF::EM_X86_64;
+            case quxlang::cpu::arm_32:
+                return llvm::ELF::EM_ARM;
             case quxlang::cpu::arm_64:
                 return llvm::ELF::EM_AARCH64;
             case quxlang::cpu::z_arch:
@@ -1320,6 +1323,7 @@ namespace quxlang::detail
                 executable_base_address = 0x08048000;
                 break;
             case quxlang::cpu::x86_64:
+            case quxlang::cpu::arm_32:
             case quxlang::cpu::arm_64:
                 executable_base_address = 0x00400000;
                 break;
@@ -2014,6 +2018,7 @@ namespace quxlang::detail
                        checked_i64(tls_segment_info->memory_size, "ELF TLS segment is too large") -
                        checked_i64(alignment_adjustment, "ELF TLS alignment adjustment is too large");
             }
+            case quxlang::cpu::arm_32:
             case quxlang::cpu::arm_64:
             {
                 std::uint64_t const thread_control_block_size = machine.pointer_size_bytes() * 2;
@@ -2055,6 +2060,37 @@ namespace quxlang::detail
             std::uint64_t const relocation_type = relocation.getType();
             switch (machine.cpu_type)
             {
+            case quxlang::cpu::arm_32:
+            {
+                if (relocation_type == llvm::ELF::R_ARM_NONE || relocation_type == llvm::ELF::R_ARM_V4BX)
+                {
+                    return 0;
+                }
+                std::uint32_t instruction = read_u32(section.contents, offset);
+                switch (relocation_type)
+                {
+                case llvm::ELF::R_ARM_ABS32:
+                case llvm::ELF::R_ARM_REL32:
+                case llvm::ELF::R_ARM_TARGET1:
+                case llvm::ELF::R_ARM_TLS_LE32:
+                    return static_cast< std::int32_t >(instruction);
+                case llvm::ELF::R_ARM_PREL31:
+                    return static_cast< std::int32_t >(instruction << 1) >> 1;
+                case llvm::ELF::R_ARM_CALL:
+                case llvm::ELF::R_ARM_JUMP24:
+                case llvm::ELF::R_ARM_PC24:
+                case llvm::ELF::R_ARM_PLT32:
+                    return static_cast< std::int32_t >(instruction << 8) >> 6;
+                case llvm::ELF::R_ARM_MOVW_ABS_NC:
+                case llvm::ELF::R_ARM_MOVT_ABS:
+                case llvm::ELF::R_ARM_MOVW_PREL_NC:
+                case llvm::ELF::R_ARM_MOVT_PREL:
+                    return static_cast< std::int16_t >(((instruction >> 4) & 0xf000) | (instruction & 0xfff));
+                default:
+                    break;
+                }
+                break;
+            }
             case quxlang::cpu::x86_32:
                 if (relocation_type == llvm::ELF::R_386_32 ||
                     relocation_type == llvm::ELF::R_386_PLT32 ||
@@ -2795,6 +2831,71 @@ namespace quxlang::detail
                                 continue;
                             }
                             break;
+                        case quxlang::cpu::arm_32:
+                        {
+                            if (relocation_type == llvm::ELF::R_ARM_NONE || relocation_type == llvm::ELF::R_ARM_V4BX)
+                            {
+                                continue;
+                            }
+                            std::uint64_t symbol_value = relocation_target_address(object_index, relocation);
+                            std::int64_t value = checked_i64(symbol_value, "ARM relocation address is too large") + addend;
+                            std::size_t instruction_offset = static_cast< std::size_t >(offset);
+                            switch (relocation_type)
+                            {
+                            case llvm::ELF::R_ARM_ABS32:
+                            case llvm::ELF::R_ARM_TARGET1:
+                                write_u32(section.contents, instruction_offset, static_cast< std::uint32_t >(value));
+                                continue;
+                            case llvm::ELF::R_ARM_REL32:
+                                patch_signed32(section, instruction_offset, value - checked_i64(place_address, "ARM relocation place is too large"), "ARM relative relocation is out of range");
+                                continue;
+                            case llvm::ELF::R_ARM_TLS_LE32:
+                                patch_signed32(section, instruction_offset, relocation_target_tls_thread_pointer_offset(object_index, relocation) + addend, "ARM TLS relocation is out of range");
+                                continue;
+                            case llvm::ELF::R_ARM_CALL:
+                            case llvm::ELF::R_ARM_JUMP24:
+                            case llvm::ELF::R_ARM_PC24:
+                            case llvm::ELF::R_ARM_PLT32:
+                            {
+                                value -= checked_i64(place_address, "ARM branch place is too large");
+                                if ((value & 3) != 0 || value < -33554432 || value > 33554428)
+                                {
+                                    throw quxlang::semantic_compilation_error("ARM branch relocation is out of range or targets Thumb code");
+                                }
+                                std::uint32_t instruction = read_u32(section.contents, instruction_offset);
+                                write_u32(section.contents, instruction_offset, (instruction & 0xff000000) | ((static_cast< std::uint32_t >(value) >> 2) & 0xffffff));
+                                continue;
+                            }
+                            case llvm::ELF::R_ARM_PREL31:
+                            {
+                                value -= checked_i64(place_address, "ARM relocation place is too large");
+                                if (value < -1073741824 || value > 1073741823)
+                                {
+                                    throw quxlang::semantic_compilation_error("ARM PREL31 relocation is out of range");
+                                }
+                                std::uint32_t instruction = read_u32(section.contents, instruction_offset);
+                                write_u32(section.contents, instruction_offset, (instruction & 0x80000000) | (static_cast< std::uint32_t >(value) & 0x7fffffff));
+                                continue;
+                            }
+                            case llvm::ELF::R_ARM_MOVW_PREL_NC:
+                            case llvm::ELF::R_ARM_MOVT_PREL:
+                                value -= checked_i64(place_address, "ARM relocation place is too large");
+                                [[fallthrough]];
+                            case llvm::ELF::R_ARM_MOVW_ABS_NC:
+                            case llvm::ELF::R_ARM_MOVT_ABS:
+                            {
+                                std::uint32_t immediate = static_cast< std::uint32_t >(value);
+                                if (relocation_type == llvm::ELF::R_ARM_MOVT_ABS || relocation_type == llvm::ELF::R_ARM_MOVT_PREL) immediate >>= 16;
+                                std::uint32_t instruction = read_u32(section.contents, instruction_offset);
+                                instruction = (instruction & 0xfff0f000) | ((immediate & 0xf000) << 4) | (immediate & 0xfff);
+                                write_u32(section.contents, instruction_offset, instruction);
+                                continue;
+                            }
+                            default:
+                                break;
+                            }
+                            break;
+                        }
                         case quxlang::cpu::arm_64:
                             if (relocation_type == llvm::ELF::R_AARCH64_ADR_PREL_PG_HI21)
                             {
@@ -3013,12 +3114,12 @@ namespace quxlang::detail
             output_file_bytes[6] = std::byte{1};
             output_file_bytes[7] = std::byte{0};
             write_u16(output_file_bytes, 16, llvm::ELF::ET_EXEC);
-            write_u16(output_file_bytes, 18, llvm::ELF::EM_386);
+            write_u16(output_file_bytes, 18, expected_elf_machine());
             write_u32(output_file_bytes, 20, 1);
             write_u32(output_file_bytes, 24, static_cast< std::uint32_t >(entry_point));
             write_u32(output_file_bytes, 28, 52);
             write_u32(output_file_bytes, 32, static_cast< std::uint32_t >(section_header_offset));
-            write_u32(output_file_bytes, 36, 0);
+            write_u32(output_file_bytes, 36, machine.cpu_type == quxlang::cpu::arm_32 ? llvm::ELF::EF_ARM_EABI_VER5 | llvm::ELF::EF_ARM_ABI_FLOAT_SOFT : 0);
             write_u16(output_file_bytes, 40, 52);
             write_u16(output_file_bytes, 42, 32);
             write_u16(output_file_bytes, 44, program_header_count >= llvm::ELF::PN_XNUM ? llvm::ELF::PN_XNUM : static_cast< std::uint16_t >(program_header_count));

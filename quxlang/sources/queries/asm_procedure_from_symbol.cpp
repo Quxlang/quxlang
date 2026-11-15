@@ -249,7 +249,7 @@ rpnx::querygraph::coroutine< quxlang::asm_procedure_from_symbol_spec > quxlang::
                     std::string const formatted_symbol = format_asm_symbol_name(linkname);
                     // GNU's '=' literal-pool syntax belongs to LDR operands;
                     // branch operands reference the linker symbol directly.
-                    bool is_arm_literal_load = (proc.architecture == "ARM32" || proc.architecture == "ARM64") && inst.opcode_mnemonic == "LDR";
+                    bool is_arm_literal_load = (proc.architecture == "ARM32" || proc.architecture == "ARM64") && inst.opcode_mnemonic == "LDR" && operand_str.empty();
                     operand_str += is_arm_literal_load ? "=" + formatted_symbol : formatted_symbol;
                 }
                 else if (typeis< ast2_object_ref >(part))
@@ -265,6 +265,11 @@ rpnx::querygraph::coroutine< quxlang::asm_procedure_from_symbol_spec > quxlang::
                     if (!object_canonical.has_value())
                     {
                         throw quxlang::semantic_compilation_error("OBJECT_REF target could not be resolved: " + quxlang::to_string(object_ref.object));
+                    }
+                    bool is_arm_literal_load = (proc.architecture == "ARM32" || proc.architecture == "ARM64") && inst.opcode_mnemonic == "LDR" && operand_str.empty();
+                    if (is_arm_literal_load)
+                    {
+                        operand_str += "=";
                     }
                     operand_str += quxlang::format_asm_symbol_name(quxlang::to_string(*object_canonical));
                 }

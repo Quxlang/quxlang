@@ -125,6 +125,49 @@ LABEL static_linux_clone_x86_child;
     UD2
   }
 
+  DOC <$ Creates a Linux ARM EABI thread with an independent stack and TLS image. $>
+  ::static_linux_clone INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC && ARCH_IS_ARM32)
+    ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(
+      @flags UINTPTR,
+      @child_stack MUT=>>TYPED_STORAGE(BYTE),
+      @parent_tid MUT->ATOMIC#I32,
+      @tls MUT=>>TYPED_STORAGE(BYTE),
+      @child_tid MUT->ATOMIC#I32,
+      @control MUT->thread_control;
+      RETURN I32
+    )
+  {
+    SUB SP, SP, 16
+    STR R4, [SP]
+    STR R5, [SP, 4]
+    STR R7, [SP, 8]
+    STR LR, [SP, 12]
+    LDR R4, [SP, 16]
+    LDR R5, [SP, 20]
+    SUB R1, R1, 8
+    STR R5, [R1]
+    MOV R7, 120
+    SVC 0
+    CMP R0, 0
+    BNE static_linux_clone_arm32_parent
+    LDR R0, [SP]
+    ADD SP, SP, 8
+    LDR R12, PROCEDURE_REF("", static_linux_thread_worker!$[0])
+    BLX R12
+    MOV R0, 0
+    MOV R7, 1
+    SVC 0
+    UDF 0
+LABEL static_linux_clone_arm32_parent;
+    LDR R4, [SP]
+    LDR R5, [SP, 4]
+    LDR R7, [SP, 8]
+    LDR LR, [SP, 12]
+    ADD SP, SP, 16
+    BX LR
+  }
+
   ::static_linux_clone INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC && ARCH_IS_ARM64)
     ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(

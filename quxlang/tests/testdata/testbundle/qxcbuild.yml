@@ -96,6 +96,35 @@ targets:
         options:
           option_num: 5
         source: tests
+  linux-arm32:
+    platform: linux
+    cpu: ARM32
+    backend: llvm
+    modules:
+      syscall:
+        source: syscall
+      posix:
+        source: posix
+      RUNTIME:
+        source: runtime
+      std:
+        source: std
+      io:
+        source: io
+      net:
+        source: net
+      foolib:
+        source: foolib1_0
+      barlib:
+        source: barlib2_1
+      helloworld:
+        source: helloworld_main
+      benchmarks:
+        source: benchmarks
+      tests:
+        options:
+          option_num: 5
+        source: tests
   linux-x86:
     platform: linux
     cpu: x86
@@ -275,6 +304,17 @@ outputs:
       build_type: Debug
   linux-arm64/tests:
     target: linux-arm64
+    type: unit_test_suite
+    build_type: quick
+    test_modules: [syscall, posix, RUNTIME, std, io, net, foolib, barlib, tests]
+
+  linux-arm32/helloworld:
+    target: linux-arm32
+    type: executable
+    main_module: helloworld
+    build_type: quick
+  linux-arm32/tests:
+    target: linux-arm32
     type: unit_test_suite
     build_type: quick
     test_modules: [syscall, posix, RUNTIME, std, io, net, foolib, barlib, tests]

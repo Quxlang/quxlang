@@ -1094,8 +1094,18 @@ namespace quxlang::llvm_backend::detail
                 code_model = llvm::CodeModel::Large;
             }
 
+            std::string codegen_features = compilation_target.target_features;
+            if (machine.cpu_type == quxlang::cpu::arm_32 && machine.os_type == quxlang::os::linux)
+            {
+                // Linux installs the ARM EABI thread pointer in TPIDRURO.
+                if (!codegen_features.empty())
+                {
+                    codegen_features += ",";
+                }
+                codegen_features += "+read-tp-tpidruro";
+            }
             llvm::CodeGenOptLevel opt_level = llvm_codegen_opt_level(compilation_target.build_type);
-            llvm::TargetMachine* raw_machine = target->createTargetMachine(triple, compilation_target.cpu_name, compilation_target.target_features, options, reloc_model, code_model, opt_level);
+            llvm::TargetMachine* raw_machine = target->createTargetMachine(triple, compilation_target.cpu_name, codegen_features, options, reloc_model, code_model, opt_level);
             if (raw_machine == nullptr)
             {
                 throw quxlang::semantic_compilation_error("Failed to create LLVM target machine for " + triple_text);
@@ -1113,37 +1123,50 @@ namespace quxlang::llvm_backend::detail
             std::unique_ptr< llvm::Module > object_module = llvm::CloneModule(source_module);
             object_module->setTargetTriple(llvm::Triple(quxlang::lookup_llvm_triple(target.machine)));
             object_module->setDataLayout(object_target_machine->createDataLayout());
-            llvm::SmallVector< llvm::BinaryOperator*, 4 > wide_divisions;
+            llvm::SmallVector< llvm::BinaryOperator*, 4 > unsupported_divisions;
             std::uint32_t native_integer_width = object_module->getDataLayout().getLargestLegalIntTypeSizeInBits();
             for (llvm::Function& function : object_module->functions())
             {
+                if (function.isDeclaration())
+                {
+                    continue;
+                }
+                llvm::TargetLowering const* lowering = object_target_machine->getSubtargetImpl(function)->getTargetLowering();
                 for (llvm::BasicBlock& block : function)
                 {
                     for (llvm::Instruction& instruction : block)
                     {
-                        if (llvm::BinaryOperator* binary = llvm::dyn_cast< llvm::BinaryOperator >(&instruction))
+                        llvm::BinaryOperator* binary = llvm::dyn_cast< llvm::BinaryOperator >(&instruction);
+                        if (binary == nullptr || !binary->getType()->isIntegerTy())
                         {
-                            if (binary->getType()->isIntegerTy() && binary->getType()->getIntegerBitWidth() > native_integer_width)
-                            {
-                                switch (binary->getOpcode())
-                                {
-                                case llvm::Instruction::SDiv:
-                                case llvm::Instruction::UDiv:
-                                case llvm::Instruction::SRem:
-                                case llvm::Instruction::URem:
-                                    wide_divisions.push_back(binary);
-                                    break;
-                                default:
-                                    break;
-                                }
-                            }
+                            continue;
+                        }
+                        std::uint32_t opcode;
+                        switch (binary->getOpcode())
+                        {
+                        case llvm::Instruction::SDiv:
+                        case llvm::Instruction::SRem:
+                            opcode = llvm::ISD::SDIV;
+                            break;
+                        case llvm::Instruction::UDiv:
+                        case llvm::Instruction::URem:
+                            opcode = llvm::ISD::UDIV;
+                            break;
+                        default:
+                            continue;
+                        }
+                        llvm::MVT register_type = lowering->getRegisterType(object_module->getContext(), llvm::EVT::getEVT(binary->getType()));
+                        if (binary->getType()->getIntegerBitWidth() > native_integer_width ||
+                            !lowering->isOperationLegalOrCustom(opcode, register_type))
+                        {
+                            unsupported_divisions.push_back(binary);
                         }
                     }
                 }
             }
             // Expand after optimization so constant division remains optimizable and code generation
-            // cannot introduce arithmetic runtime calls for integers wider than the target supports.
-            for (llvm::BinaryOperator* division : wide_divisions)
+            // cannot introduce division runtime calls for unsupported operations.
+            for (llvm::BinaryOperator* division : unsupported_divisions)
             {
                 switch (division->getOpcode())
                 {
@@ -1156,7 +1179,7 @@ namespace quxlang::llvm_backend::detail
                     llvm::expandRemainder(division);
                     break;
                 default:
-                    throw quxlang::compiler_bug("Unexpected wide integer division opcode");
+                    throw quxlang::compiler_bug("Unexpected unsupported integer division opcode");
                 }
             }
             // Some targets also use runtime calls for the variable-width shifts introduced by
@@ -1524,6 +1547,13 @@ namespace quxlang::llvm_backend::detail
                 llvm::Type* arg_types[] = {pointer_integer_type()};
                 llvm::FunctionType* const exit_type = llvm::FunctionType::get(llvm::Type::getVoidTy(context), llvm::ArrayRef< llvm::Type* >(arg_types), false);
                 llvm::InlineAsm* const exit_asm = llvm::InlineAsm::get(exit_type, "movl $$1, %eax\n\tint $$0x80\n\tud2", "{ebx},~{eax},~{memory}", true);
+                builder.CreateCall(exit_asm, {exit_code_value});
+                return;
+            }
+            case quxlang::cpu::arm_32: {
+                llvm::Type* arg_types[] = {pointer_integer_type()};
+                llvm::FunctionType* exit_type = llvm::FunctionType::get(llvm::Type::getVoidTy(context), llvm::ArrayRef< llvm::Type* >(arg_types), false);
+                llvm::InlineAsm* exit_asm = llvm::InlineAsm::get(exit_type, "mov r7, #1\n\tsvc #0\n\tudf #0", "{r0},~{r7},~{memory}", true);
                 builder.CreateCall(exit_asm, {exit_code_value});
                 return;
             }
@@ -2485,7 +2515,7 @@ namespace quxlang::llvm_backend::detail
                     function.addFnAttr("target-cpu", input.machine_target.cpu_name);
                     if (!input.machine_target.target_features.empty())
                     {
-                        function.addFnAttr("target-features", input.machine_target.target_features);
+                        function.addFnAttr("target-features", target_machine->getTargetFeatureString());
                     }
                     if (input.machine_target.tune_cpu.has_value())
                     {
@@ -2516,11 +2546,11 @@ namespace quxlang::llvm_backend::detail
             std::string text;
             if (procedure.architecture == "ARM32" || procedure.architecture == "ARM64")
             {
-                text = quxlang::convert_to_gnu_asm(procedure.instructions.begin(), procedure.instructions.end(), procedure.name, input.machine_target.machine.binary_type == quxlang::binary::elf);
+                text = quxlang::convert_to_gnu_asm(procedure.instructions.begin(), procedure.instructions.end(), procedure.name, input.machine_target.machine.cpu_type, input.machine_target.machine.binary_type == quxlang::binary::elf);
             }
             else if (procedure.architecture == "Z_ARCH")
             {
-                text = quxlang::convert_to_gnu_asm(procedure.instructions.begin(), procedure.instructions.end(), procedure.name, true);
+                text = quxlang::convert_to_gnu_asm(procedure.instructions.begin(), procedure.instructions.end(), procedure.name, input.machine_target.machine.cpu_type, true);
             }
             else if (procedure.architecture == "X64" || procedure.architecture == "X86")
             {
@@ -2533,7 +2563,7 @@ namespace quxlang::llvm_backend::detail
 
             if (input.place_definitions_in_stepping_section)
             {
-                std::string section_directive = input.machine_target.machine.binary_type == quxlang::binary::pe ? ".section .text_s" + std::to_string(input.stepping_index) + ",\"xr\"\n" : input.machine_target.machine.binary_type == quxlang::binary::macho ? ".section __TEXT,__text_s" + std::to_string(input.stepping_index) + ",regular,pure_instructions\n" : ".section .text_s" + std::to_string(input.stepping_index) + ",\"ax\",@progbits\n";
+                std::string section_directive = input.machine_target.machine.binary_type == quxlang::binary::pe ? ".section .text_s" + std::to_string(input.stepping_index) + ",\"xr\"\n" : input.machine_target.machine.binary_type == quxlang::binary::macho ? ".section __TEXT,__text_s" + std::to_string(input.stepping_index) + ",regular,pure_instructions\n" : ".section .text_s" + std::to_string(input.stepping_index) + ",\"ax\",%progbits\n";
                 std::size_t text_directive = text.find(".text\n");
                 if (text_directive == std::string::npos)
                 {
@@ -8111,14 +8141,77 @@ namespace quxlang::llvm_backend::detail
             quxlang::type_symbol const& target_type = state.routine->local_types.at(local_slot_index(inst.result)).type;
             llvm::Value* integer = integer_value(state, builder, inst.source);
             llvm::Type* llvm_float_type = value_storage_type(target_type);
-            llvm::Value* converted = nullptr;
-            if (source_type.type_is< quxlang::int_type >() && source_type.get_as< quxlang::int_type >().has_sign)
+            quxlang::float_type const& format = target_type.get_as< quxlang::float_type >();
+            bool signed_integer = source_type.type_is< quxlang::int_type >() && source_type.get_as< quxlang::int_type >().has_sign;
+            llvm::TargetLowering const* lowering = target_machine->getSubtargetImpl(*state.function)->getTargetLowering();
+            llvm::EVT integer_value_type = llvm::EVT::getEVT(integer->getType());
+            std::uint32_t conversion_opcode = signed_integer ? llvm::ISD::SINT_TO_FP : llvm::ISD::UINT_TO_FP;
+            llvm::MVT conversion_type = lowering->getRegisterType(context, integer_value_type);
+            bool fits_register = integer->getType()->getIntegerBitWidth() <= conversion_type.getSizeInBits();
+            while (lowering->getOperationAction(conversion_opcode, conversion_type) == llvm::TargetLowering::Promote)
             {
-                converted = builder.CreateSIToFP(integer, llvm_float_type);
+                conversion_type = lowering->getTypeToPromoteTo(conversion_opcode, conversion_type);
+            }
+            llvm::Value* converted = nullptr;
+            if (format.has_llvm_representation() && lowering->isTypeLegal(llvm::EVT::getEVT(llvm_float_type)) &&
+                fits_register && lowering->isOperationLegalOrCustom(conversion_opcode, conversion_type))
+            {
+                converted = signed_integer ? builder.CreateSIToFP(integer, llvm_float_type) : builder.CreateUIToFP(integer, llvm_float_type);
             }
             else
             {
-                converted = builder.CreateUIToFP(integer, llvm_float_type);
+                // Normalize the magnitude and round its significand to nearest, ties to even.
+                // Integer operations preserve this conversion without arithmetic runtime imports.
+                std::uint32_t source_bits = integer->getType()->getIntegerBitWidth();
+                std::uint32_t float_bits = static_cast< std::uint32_t >(format.bits);
+                std::uint32_t precision = static_cast< std::uint32_t >(format.bits - format.exponent_bits);
+                std::uint32_t fraction_bits = precision - 1;
+                std::uint32_t exponent_bits = float_bits - precision;
+                std::uint32_t working_bits = std::max(source_bits, float_bits);
+                llvm::IntegerType* working_type = llvm::IntegerType::get(context, working_bits);
+                llvm::Value* negative = signed_integer ? builder.CreateICmpSLT(integer, llvm::ConstantInt::get(integer->getType(), 0)) : builder.getFalse();
+                llvm::Value* magnitude = builder.CreateSelect(negative, builder.CreateNeg(integer), integer);
+                magnitude = builder.CreateZExtOrTrunc(magnitude, working_type);
+                llvm::Constant* zero = llvm::ConstantInt::get(working_type, 0);
+                llvm::Constant* one = llvm::ConstantInt::get(working_type, 1);
+                llvm::Constant* fraction_width = llvm::ConstantInt::get(working_type, fraction_bits);
+                llvm::Value* is_zero = builder.CreateICmpEQ(magnitude, zero);
+                llvm::Value* leading_zeros = builder.CreateIntrinsic(llvm::Intrinsic::ctlz, {working_type}, {magnitude, builder.getFalse()});
+                llvm::Value* exponent = builder.CreateSub(llvm::ConstantInt::get(working_type, working_bits - 1), leading_zeros);
+                exponent = builder.CreateSelect(is_zero, zero, exponent);
+                llvm::Value* needs_rounding = builder.CreateICmpUGT(exponent, fraction_width);
+                llvm::Value* right_shift = builder.CreateSelect(needs_rounding, builder.CreateSub(exponent, fraction_width), zero);
+                llvm::Value* left_shift = builder.CreateSelect(needs_rounding, zero, builder.CreateSub(fraction_width, exponent));
+                llvm::Value* significand = builder.CreateSelect(needs_rounding,
+                    builder.CreateLShr(magnitude, right_shift), builder.CreateShl(magnitude, left_shift));
+                llvm::Value* discarded_mask = builder.CreateSub(builder.CreateShl(one, right_shift), one);
+                llvm::Value* discarded = builder.CreateAnd(magnitude, discarded_mask);
+                llvm::Value* halfway_shift = builder.CreateSelect(needs_rounding, builder.CreateSub(right_shift, one), zero);
+                llvm::Value* halfway = builder.CreateShl(one, halfway_shift);
+                llvm::Value* odd = builder.CreateICmpNE(builder.CreateAnd(significand, one), zero);
+                llvm::Value* round_up = builder.CreateAnd(needs_rounding, builder.CreateOr(
+                    builder.CreateICmpUGT(discarded, halfway), builder.CreateAnd(builder.CreateICmpEQ(discarded, halfway), odd)));
+                significand = builder.CreateAdd(significand, builder.CreateZExt(round_up, working_type));
+                llvm::Value* carry = builder.CreateICmpNE(builder.CreateAnd(significand,
+                    llvm::ConstantInt::get(context, llvm::APInt::getOneBitSet(working_bits, precision))), zero);
+                significand = builder.CreateSelect(carry, builder.CreateLShr(significand, one), significand);
+                exponent = builder.CreateAdd(exponent, builder.CreateZExt(carry, working_type));
+                llvm::Constant* exponent_bias = llvm::ConstantInt::get(context, llvm::APInt::getLowBitsSet(working_bits, exponent_bits - 1));
+                exponent = builder.CreateAdd(exponent, exponent_bias);
+                significand = builder.CreateSelect(builder.CreateICmpEQ(exponent, zero),
+                    builder.CreateLShr(significand, one), significand);
+                llvm::Constant* maximum_exponent = llvm::ConstantInt::get(context, llvm::APInt::getLowBitsSet(working_bits, exponent_bits));
+                llvm::Value* overflow = builder.CreateICmpUGE(exponent, maximum_exponent);
+                exponent = builder.CreateSelect(overflow, maximum_exponent, exponent);
+                llvm::Value* fraction = builder.CreateAnd(significand,
+                    llvm::ConstantInt::get(context, llvm::APInt::getLowBitsSet(working_bits, fraction_bits)));
+                fraction = builder.CreateSelect(overflow, zero, fraction);
+                llvm::Value* representation = builder.CreateOr(builder.CreateShl(exponent, fraction_width), fraction);
+                representation = builder.CreateSelect(is_zero, zero, representation);
+                llvm::Constant* sign_bit = llvm::ConstantInt::get(context, llvm::APInt::getOneBitSet(working_bits, float_bits - 1));
+                representation = builder.CreateOr(representation, builder.CreateSelect(negative, sign_bit, zero));
+                representation = builder.CreateZExtOrTrunc(representation, llvm::IntegerType::get(context, float_bits));
+                converted = format.has_llvm_representation() ? builder.CreateBitCast(representation, llvm_float_type) : representation;
             }
             store_slot_value(state, builder, inst.result, converted);
             return;
@@ -10491,11 +10584,11 @@ auto quxlang::llvm_backend::llvm_backend::assemble(quxlang::llvm_backend::llvm_c
     {
         if (procedure.architecture == "ARM32" || procedure.architecture == "ARM64")
         {
-            return quxlang::convert_to_gnu_asm(procedure.instructions.begin(), procedure.instructions.end(), procedure.name, target.machine.binary_type == quxlang::binary::elf);
+            return quxlang::convert_to_gnu_asm(procedure.instructions.begin(), procedure.instructions.end(), procedure.name, target.machine.cpu_type, target.machine.binary_type == quxlang::binary::elf);
         }
         if (procedure.architecture == "Z_ARCH")
         {
-            return quxlang::convert_to_gnu_asm(procedure.instructions.begin(), procedure.instructions.end(), procedure.name, true);
+            return quxlang::convert_to_gnu_asm(procedure.instructions.begin(), procedure.instructions.end(), procedure.name, target.machine.cpu_type, true);
         }
         if (procedure.architecture == "X64" || procedure.architecture == "X86")
         {

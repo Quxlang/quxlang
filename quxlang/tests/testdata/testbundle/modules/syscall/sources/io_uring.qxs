@@ -123,6 +123,23 @@ LANGUAGE QUXLANG EN 0.0;
   }
 
   DOC <$ Creates one Linux io_uring instance. $>
+  ::io_uring_setup ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(
+      @entries U32,
+      @parameters MUT->io_uring_parameters;
+      RETURN I32
+    )
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOVW R7, 425
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
+  }
+
+  DOC <$ Creates one Linux io_uring instance. $>
   ::io_uring_setup ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(
       @entries U32,
@@ -204,6 +221,35 @@ LANGUAGE QUXLANG EN 0.0;
   DOC <$
     Submits entries and optionally waits for Linux io_uring completions.
     $>
+  ::io_uring_enter ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(
+      @descriptor I32,
+      @submission_count U32,
+      @minimum_completion_count U32,
+      @flags U32,
+      @signal_mask CONST=>>BYTE,
+      @signal_mask_size SZ;
+      RETURN I32
+    )
+  {
+    SUB SP, SP, 16
+    STR R4, [SP, 0]
+    STR R5, [SP, 4]
+    STR R7, [SP, 8]
+    LDR R4, [SP, 16]
+    LDR R5, [SP, 20]
+    MOVW R7, 426
+    SVC 0
+    LDR R4, [SP, 0]
+    LDR R5, [SP, 4]
+    LDR R7, [SP, 8]
+    ADD SP, SP, 16
+    BX LR
+  }
+
+  DOC <$
+    Submits entries and optionally waits for Linux io_uring completions.
+    $>
   ::io_uring_enter ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(
       @descriptor I32,
@@ -266,6 +312,22 @@ LANGUAGE QUXLANG EN 0.0;
     MOV RAX, 427
     SYSCALL
     RET
+  }
+
+  DOC <$ Registers resources and completion notifications with an io_uring descriptor. $>
+  ::io_uring_register ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(
+      @descriptor I32, @operation U32, @argument ADDRESS, @count U32;
+      RETURN I32
+    )
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOVW R7, 427
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
   }
 
   DOC <$ Registers resources and completion notifications with an io_uring descriptor. $>

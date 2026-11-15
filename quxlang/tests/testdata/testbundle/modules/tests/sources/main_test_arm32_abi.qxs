@@ -1,0 +1,38 @@
+LANGUAGE QUXLANG EN 0.0;
+
+::arm32_abi_tests INCLUDE_IF(OS_LINUX && ARCH_IS_ARM32) NAMESPACE
+{
+  DOC <$ Verifies the Linux ARM EABI scalar alignment contract. $>
+  ::scalar_layout STATIC_TEST
+  {
+    TEST_ASSERT(SIZEOF(UINTPTR) == 4);
+    TEST_ASSERT(ALIGNOF(U64) == 8);
+    TEST_ASSERT(ALIGNOF(F64) == 8);
+    TEST_ASSERT(SIZEOF([3]F64) == 24);
+  }
+
+  DOC <$ Adds six ARM EABI argument words across registers and the stack. $>
+  ::sum_six ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(
+      @first U32, @second U32, @third U32,
+      @fourth U32, @fifth U32, @sixth U32;
+      RETURN U32
+    )
+  {
+    ADD R0, R0, R1
+    ADD R0, R0, R2
+    ADD R0, R0, R3
+    LDR R12, [SP]
+    ADD R0, R0, R12
+    LDR R12, [SP, 4]
+    ADD R0, R0, R12
+    BX LR
+  }
+
+  DOC <$ Verifies ARM EABI register arguments, stack arguments, and scalar returns. $>
+  ::stack_arguments UNIT_TEST
+  {
+    TEST_ASSERT(sum_six(@first 1, @second 2, @third 3,
+      @fourth 4, @fifth 5, @sixth 6) == 21);
+  }
+}

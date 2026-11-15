@@ -25,6 +25,19 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ The socket procedure invokes the Linux socket operation through the ARM32 system-call ABI. $>
+  ::socket ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@family I32, @kind I32, @protocol I32; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOVW R7, 281
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
+  }
+
   DOC <$ The socket procedure invokes the Linux socket operation through the ARM64 system-call ABI. $>
   ::socket ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(@family I32, @kind I32, @protocol I32; RETURN I32)
@@ -64,6 +77,19 @@ LANGUAGE QUXLANG EN 0.0;
     INT 0x80
     POP EBX
     RET
+  }
+
+  DOC <$ The bind procedure invokes the Linux bind operation through the ARM32 system-call ABI. $>
+  ::bind ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@socket I32, @address CONST->socket_address_storage, @length U32; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOVW R7, 282
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
   }
 
   DOC <$ The bind procedure invokes the Linux bind operation through the ARM64 system-call ABI. $>
@@ -107,6 +133,19 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ The connect procedure invokes the Linux connect operation through the ARM32 system-call ABI. $>
+  ::connect ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@socket I32, @address CONST->socket_address_storage, @length U32; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOVW R7, 283
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
+  }
+
   DOC <$ The connect procedure invokes the Linux connect operation through the ARM64 system-call ABI. $>
   ::connect ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(@socket I32, @address CONST->socket_address_storage, @length U32; RETURN I32)
@@ -145,6 +184,19 @@ LANGUAGE QUXLANG EN 0.0;
     INT 0x80
     POP EBX
     RET
+  }
+
+  DOC <$ The listen procedure invokes the Linux listen operation through the ARM32 system-call ABI. $>
+  ::listen ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@socket I32, @backlog I32; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOVW R7, 284
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
   }
 
   DOC <$ The listen procedure invokes the Linux listen operation through the ARM64 system-call ABI. $>
@@ -192,6 +244,19 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ The accept procedure invokes the Linux accept operation through the ARM32 system-call ABI. $>
+  ::accept ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@socket I32, @address MUT->socket_address_storage, @length MUT->U32, @flags I32; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOVW R7, 366
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
+  }
+
   DOC <$ The accept procedure invokes the Linux accept operation through the ARM64 system-call ABI. $>
   ::accept ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(@socket I32, @address MUT->socket_address_storage, @length MUT->U32, @flags I32; RETURN I32)
@@ -231,6 +296,19 @@ LANGUAGE QUXLANG EN 0.0;
     INT 0x80
     POP EBX
     RET
+  }
+
+  DOC <$ The socket_name procedure invokes the Linux socket_name operation through the ARM32 system-call ABI. $>
+  ::socket_name ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@socket I32, @address MUT->socket_address_storage, @length MUT->U32; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOVW R7, 286
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
   }
 
   DOC <$ The socket_name procedure invokes the Linux socket_name operation through the ARM64 system-call ABI. $>
@@ -279,6 +357,22 @@ LANGUAGE QUXLANG EN 0.0;
     POP ESI
     POP EBX
     RET
+  }
+
+  DOC <$ The set_socket_option procedure invokes the Linux set_option operation through the ARM32 system-call ABI. $>
+  ::set_socket_option ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@socket I32, @level I32, @option I32, @value CONST->I32, @length U32; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R4, [SP, 0]
+    STR R7, [SP, 4]
+    LDR R4, [SP, 8]
+    MOVW R7, 294
+    SVC 0
+    LDR R4, [SP, 0]
+    LDR R7, [SP, 4]
+    ADD SP, SP, 8
+    BX LR
   }
 
   DOC <$ The set_socket_option procedure invokes the Linux set_option operation through the ARM64 system-call ABI. $>
@@ -330,6 +424,25 @@ LANGUAGE QUXLANG EN 0.0;
     POP ESI
     POP EBX
     RET
+  }
+
+  DOC <$ The receive_from procedure invokes the Linux receive operation through the ARM32 system-call ABI. $>
+  ::receive_from ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@socket I32, @buffer MUT=>>BYTE, @count SZ, @flags I32, @address MUT->socket_address_storage, @length MUT->U32; RETURN signed_byte_count)
+  {
+    SUB SP, SP, 16
+    STR R4, [SP, 0]
+    STR R5, [SP, 4]
+    STR R7, [SP, 8]
+    LDR R4, [SP, 16]
+    LDR R5, [SP, 20]
+    MOVW R7, 292
+    SVC 0
+    LDR R4, [SP, 0]
+    LDR R5, [SP, 4]
+    LDR R7, [SP, 8]
+    ADD SP, SP, 16
+    BX LR
   }
 
   DOC <$ The receive_from procedure invokes the Linux receive operation through the ARM64 system-call ABI. $>
@@ -388,6 +501,25 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ The send_to procedure invokes the Linux send operation through the ARM32 system-call ABI. $>
+  ::send_to ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@socket I32, @buffer CONST=>>BYTE, @count SZ, @flags I32, @address CONST->socket_address_storage, @length U32; RETURN signed_byte_count)
+  {
+    SUB SP, SP, 16
+    STR R4, [SP, 0]
+    STR R5, [SP, 4]
+    STR R7, [SP, 8]
+    LDR R4, [SP, 16]
+    LDR R5, [SP, 20]
+    MOVW R7, 290
+    SVC 0
+    LDR R4, [SP, 0]
+    LDR R5, [SP, 4]
+    LDR R7, [SP, 8]
+    ADD SP, SP, 16
+    BX LR
+  }
+
   DOC <$ The send_to procedure invokes the Linux send operation through the ARM64 system-call ABI. $>
   ::send_to ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(@socket I32, @buffer CONST=>>BYTE, @count SZ, @flags I32, @address CONST->socket_address_storage, @length U32; RETURN signed_byte_count)
@@ -434,6 +566,19 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ The receive_message procedure invokes Linux recvmsg through the ARM32 system-call ABI. $>
+  ::receive_message ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@socket I32, @message MUT->datagram_message, @flags I32; RETURN signed_byte_count)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOVW R7, 297
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
+  }
+
   DOC <$ The receive_message procedure invokes Linux recvmsg through the ARM64 system-call ABI. $>
   ::receive_message ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(@socket I32, @message MUT->datagram_message, @flags I32; RETURN signed_byte_count)
@@ -459,6 +604,19 @@ LANGUAGE QUXLANG EN 0.0;
     SYSCALL
     RET
   }
+  DOC <$ The shutdown procedure invokes Linux connection shutdown through the native system-call ABI. $>
+  ::shutdown ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@socket I32, @direction I32; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOVW R7, 293
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
+  }
+
   DOC <$ The shutdown procedure invokes Linux connection shutdown through the native system-call ABI. $>
   ::shutdown ASM_PROCEDURE ARM64
     CALLABLE CALLCONV CCALL(@socket I32, @direction I32; RETURN I32)

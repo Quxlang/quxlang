@@ -3,7 +3,7 @@ LANGUAGE QUXLANG EN 0.0;
 DOC <$ Saves the calling frame register state for native stack walking. $>
 PRIVATE(MODULE) ::unwind_capture INCLUDE_IF(OS_WINDOWS == FALSE)
 ASM_PROCEDURE X64
-  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [256]UINTPTR)
+  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [unwind_register_storage_count]UINTPTR)
 {
   MOV [RDI+0], RAX
   MOV [RDI+8], RDX
@@ -30,7 +30,7 @@ ASM_PROCEDURE X64
 DOC <$ Restores preserved registers and transfers execution to a landing pad. $>
 PRIVATE(MODULE) ::unwind_restore INCLUDE_IF(OS_WINDOWS == FALSE)
 ASM_PROCEDURE X64
-  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [256]UINTPTR, @ip UINTPTR)
+  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [unwind_register_storage_count]UINTPTR, @ip UINTPTR)
 {
   MOV R11, RSI
   MOV R10, RDI
@@ -48,7 +48,7 @@ ASM_PROCEDURE X64
 
 DOC <$ Saves the calling frame register state for native stack walking. $>
 PRIVATE(MODULE) ::unwind_capture ASM_PROCEDURE X86
-  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [256]UINTPTR)
+  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [unwind_register_storage_count]UINTPTR)
 {
   MOV EAX, [ESP+4]
   MOV [EAX+4], ECX
@@ -66,7 +66,7 @@ PRIVATE(MODULE) ::unwind_capture ASM_PROCEDURE X86
 
 DOC <$ Restores preserved registers and transfers execution to a landing pad. $>
 PRIVATE(MODULE) ::unwind_restore ASM_PROCEDURE X86
-  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [256]UINTPTR, @ip UINTPTR)
+  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [unwind_register_storage_count]UINTPTR, @ip UINTPTR)
 {
   MOV EAX, [ESP+4]
   MOV ECX, [ESP+8]
@@ -82,7 +82,7 @@ PRIVATE(MODULE) ::unwind_restore ASM_PROCEDURE X86
 
 DOC <$ Saves the calling frame register state for native stack walking. $>
 PRIVATE(MODULE) ::unwind_capture ASM_PROCEDURE ARM64
-  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [256]UINTPTR)
+  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [unwind_register_storage_count]UINTPTR)
 {
   STR X19, [X0, 152]
   STR X20, [X0, 160]
@@ -112,7 +112,7 @@ PRIVATE(MODULE) ::unwind_capture ASM_PROCEDURE ARM64
 
 DOC <$ Restores preserved registers and transfers execution to a landing pad. $>
 PRIVATE(MODULE) ::unwind_restore ASM_PROCEDURE ARM64
-  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [256]UINTPTR, @ip UINTPTR)
+  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [unwind_register_storage_count]UINTPTR, @ip UINTPTR)
 {
   MOV X16, X0
   MOV X17, X1
@@ -145,7 +145,7 @@ PRIVATE(MODULE) ::unwind_restore ASM_PROCEDURE ARM64
 
 DOC <$ Saves the calling frame register state for native stack walking. $>
 PRIVATE(MODULE) ::unwind_capture ASM_PROCEDURE Z_ARCH
-  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [256]UINTPTR)
+  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [unwind_register_storage_count]UINTPTR)
 {
   STG %r6, 48(%r2)
   STG %r7, 56(%r2)
@@ -171,7 +171,7 @@ PRIVATE(MODULE) ::unwind_capture ASM_PROCEDURE Z_ARCH
 
 DOC <$ Restores preserved registers and transfers execution to a landing pad. $>
 PRIVATE(MODULE) ::unwind_restore ASM_PROCEDURE Z_ARCH
-  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [256]UINTPTR, @ip UINTPTR)
+  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [unwind_register_storage_count]UINTPTR, @ip UINTPTR)
 {
   LGR %r1, %r2
   LGR %r0, %r3
@@ -312,7 +312,7 @@ ASM_PROCEDURE Z_ARCH
 DOC <$ Saves the Windows x64 nonvolatile register state, including full XMM values. $>
 PRIVATE(MODULE) ::unwind_capture INCLUDE_IF(OS_WINDOWS)
 ASM_PROCEDURE X64
-  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [256]UINTPTR)
+  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [unwind_register_storage_count]UINTPTR)
 {
   MOV [RCX+0], RAX
   MOV [RCX+8], RDX
@@ -369,7 +369,7 @@ ASM_PROCEDURE X64
 DOC <$ Restores the Windows x64 register state and enters a landing pad. $>
 PRIVATE(MODULE) ::unwind_restore INCLUDE_IF(OS_WINDOWS)
 ASM_PROCEDURE X64
-  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [256]UINTPTR, @ip UINTPTR)
+  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [unwind_register_storage_count]UINTPTR, @ip UINTPTR)
 {
   MOV R10, RCX
   MOV R11, RDX
@@ -433,4 +433,115 @@ ASM_PROCEDURE X64
 {
   LEA RAX, [RIP+quxlang_unwind_end]
   RET
+}
+
+DOC <$ Saves the ARM core registers used by DWARF stack walking. $>
+PRIVATE(MODULE) ::unwind_capture ASM_PROCEDURE ARM32
+  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [unwind_register_storage_count]UINTPTR)
+{
+  STR R1, [R0, 4]
+  STR R2, [R0, 8]
+  STR R3, [R0, 12]
+  STR R4, [R0, 16]
+  STR R5, [R0, 20]
+  STR R6, [R0, 24]
+  STR R7, [R0, 28]
+  STR R8, [R0, 32]
+  STR R9, [R0, 36]
+  STR R10, [R0, 40]
+  STR R11, [R0, 44]
+  STR R12, [R0, 48]
+  MOV R12, SP
+  STR R12, [R0, 52]
+  STR LR, [R0, 56]
+  STR LR, [R0, 60]
+  VMOV R1, R2, D8
+  STR R1, [R0, 1056]
+  STR R2, [R0, 1568]
+  VMOV R1, R2, D9
+  STR R1, [R0, 1060]
+  STR R2, [R0, 1572]
+  VMOV R1, R2, D10
+  STR R1, [R0, 1064]
+  STR R2, [R0, 1576]
+  VMOV R1, R2, D11
+  STR R1, [R0, 1068]
+  STR R2, [R0, 1580]
+  VMOV R1, R2, D12
+  STR R1, [R0, 1072]
+  STR R2, [R0, 1584]
+  VMOV R1, R2, D13
+  STR R1, [R0, 1076]
+  STR R2, [R0, 1588]
+  VMOV R1, R2, D14
+  STR R1, [R0, 1080]
+  STR R2, [R0, 1592]
+  VMOV R1, R2, D15
+  STR R1, [R0, 1084]
+  STR R2, [R0, 1596]
+  BX LR
+}
+
+DOC <$ Restores ARM preserved registers and enters an exception landing pad. $>
+PRIVATE(MODULE) ::unwind_restore ASM_PROCEDURE ARM32
+  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [unwind_register_storage_count]UINTPTR, @ip UINTPTR)
+{
+  MOV R12, R0
+  MOV LR, R1
+  LDR R4, [R12, 16]
+  LDR R5, [R12, 20]
+  LDR R6, [R12, 24]
+  LDR R7, [R12, 28]
+  LDR R8, [R12, 32]
+  LDR R9, [R12, 36]
+  LDR R10, [R12, 40]
+  LDR R11, [R12, 44]
+  LDR R1, [R12, 1056]
+  LDR R2, [R12, 1568]
+  VMOV D8, R1, R2
+  LDR R1, [R12, 1060]
+  LDR R2, [R12, 1572]
+  VMOV D9, R1, R2
+  LDR R1, [R12, 1064]
+  LDR R2, [R12, 1576]
+  VMOV D10, R1, R2
+  LDR R1, [R12, 1068]
+  LDR R2, [R12, 1580]
+  VMOV D11, R1, R2
+  LDR R1, [R12, 1072]
+  LDR R2, [R12, 1584]
+  VMOV D12, R1, R2
+  LDR R1, [R12, 1076]
+  LDR R2, [R12, 1588]
+  VMOV D13, R1, R2
+  LDR R1, [R12, 1080]
+  LDR R2, [R12, 1592]
+  VMOV D14, R1, R2
+  LDR R1, [R12, 1084]
+  LDR R2, [R12, 1596]
+  VMOV D15, R1, R2
+  LDR SP, [R12, 52]
+  LDR R0, [R12]
+  LDR R1, [R12, 4]
+  BX LR
+}
+
+DOC <$ Returns the begin of the executable unwind section. $>
+PRIVATE(MODULE) ::unwind_section_begin INCLUDE_IF(OS_LINUX)
+ASM_PROCEDURE ARM32
+  CALLABLE CALLCONV CCALL NOEXCEPT(; RETURN ADDRESS)
+{
+  MOVW R0, :lower16:quxlang_unwind_begin
+  MOVT R0, :upper16:quxlang_unwind_begin
+  BX LR
+}
+
+DOC <$ Returns the end of the executable unwind section. $>
+PRIVATE(MODULE) ::unwind_section_end INCLUDE_IF(OS_LINUX)
+ASM_PROCEDURE ARM32
+  CALLABLE CALLCONV CCALL NOEXCEPT(; RETURN ADDRESS)
+{
+  MOVW R0, :lower16:quxlang_unwind_end
+  MOVT R0, :upper16:quxlang_unwind_end
+  BX LR
 }

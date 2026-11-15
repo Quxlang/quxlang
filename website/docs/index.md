@@ -35,13 +35,14 @@ representation, which makes translation relatively trivial.
 
 ## Other Links
 
-- [Code Repository](https://github.com/quxlang/quxlang)
+- [Code Repository (GitHub)](https://github.com/quxlang/quxlang)
 - [Quxlang Blog](https://quxlang.blog/)
+- [Discord](https://discord.gg/Z9qRXXxRtY)
 
 ## Website Content
 
 !!! warning "AI Usage"
-    This documentation contains a mixture of human written and AI generated content and may contain errors. Report any issues on [Discord](https://discord.gg/Z9qRXXxRtY).
+    This documentation contains a mixture of human written and AI generated content and may contain errors. Please report any issues on [GitHub](https://github.com/Quxlang/quxlang/issues/new).
 
 ## Overview
 

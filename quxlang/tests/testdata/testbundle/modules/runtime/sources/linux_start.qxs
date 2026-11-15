@@ -87,3 +87,25 @@ LANGUAGE QUXLANG EN 0.0;
   LGHI %r1, 1
   SVC 0
 }
+
+DOC <$ Initializes Linux ARM EABI process state and invokes the selected stepping. $>
+::PROGRAM_START INCLUDE_IF(OS_LINUX) ASM_PROCEDURE ARM32
+{
+  MOV R0, SP
+  LDR R12, PROCEDURE_REF("", linux_parse_initial_stack!$[0])
+  BLX R12
+  LDR R12, PROCEDURE_REF("", linux_initial_tls_start!$[0])
+  BLX R12
+  BL DETECT_CPU_ARCHINFO
+  BL PICK_STEPPING
+  MOV R4, R0
+  LDR R12, OBJECT_REF(ACTIVE_STEPPING)
+  STR R4, [R12]
+  LDR R12, OBJECT_REF(POST_DETECT_FUNCTION_ARRAY)
+  LDR R12, [R12]
+  LDR R12, [R12, R4, LSL #2]
+  BLX R12
+  MOV R0, 127
+  MOV R7, 1
+  SVC 0
+}

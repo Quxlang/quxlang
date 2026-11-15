@@ -106,6 +106,18 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
   DOC <$ Yields execution to another runnable thread. $>
+  ::sched_yield ASM_PROCEDURE ARM32 CALLABLE CALLCONV CCALL(; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOV R7, 158
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
+  }
+
+  DOC <$ Yields execution to another runnable thread. $>
   ::sched_yield ASM_PROCEDURE ARM64 CALLABLE CALLCONV CCALL(; RETURN I32)
   {
     MOV X8, 124

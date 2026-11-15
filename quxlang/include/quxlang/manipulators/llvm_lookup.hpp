@@ -33,7 +33,7 @@ namespace quxlang
             break;
 
         case cpu::arm_32:
-            ret += "arm";
+            ret += "armv7";
             break;
 
         case cpu::arm_64:
@@ -84,7 +84,7 @@ namespace quxlang
             throw compiler_bug("LLVM target triple requires an OS target");
         }
 
-        ret += "-unknown";
+        ret += info.cpu_type == cpu::arm_32 && info.os_type == os::linux ? "-gnueabi" : "-unknown";
 
         switch (info.binary_type)
         {

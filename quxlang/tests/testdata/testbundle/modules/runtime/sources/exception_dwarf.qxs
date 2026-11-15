@@ -1,9 +1,18 @@
 LANGUAGE QUXLANG EN 0.0;
 
+DOC <$ Specifies the storage words available for saved native registers. $>
+PRIVATE(MODULE) ::unwind_register_storage_count INCLUDE_IF(ARCH_IS_ARM32) STATIC SZ := 512;
+DOC <$ Specifies the storage words available for saved native registers. $>
+PRIVATE(MODULE) ::unwind_register_storage_count INCLUDE_IF(ARCH_IS_ARM32 == FALSE) STATIC SZ := 256;
+DOC <$ Specifies the number of DWARF registers accepted by the native unwinder. $>
+PRIVATE(MODULE) ::unwind_register_rule_count INCLUDE_IF(ARCH_IS_ARM32) STATIC SZ := 288;
+DOC <$ Specifies the number of DWARF registers accepted by the native unwinder. $>
+PRIVATE(MODULE) ::unwind_register_rule_count INCLUDE_IF(ARCH_IS_ARM32 == FALSE) STATIC SZ := 128;
+
 DOC <$ Preserves a native frame's DWARF register values and exception-table location. $>
 ::exception_unwind_context STRUCT
 {
-  .registers VAR [256]UINTPTR;
+  .registers VAR [unwind_register_storage_count]UINTPTR;
   .ip VAR UINTPTR;
   .region VAR UINTPTR;
   .lsda VAR ADDRESS;
@@ -31,7 +40,7 @@ PRIVATE(MODULE) ::unwind_register_rule STRUCT
 DOC <$ Holds the caller-frame address rule and the register recovery rules at one instruction. $>
 PRIVATE(MODULE) ::unwind_cfi_state STRUCT
 {
-  .registers VAR [128]unwind_register_rule;
+  .registers VAR [unwind_register_rule_count]unwind_register_rule;
   .cfa_register VAR SZ;
   .cfa_offset VAR I64;
   .cfa_expression VAR ADDRESS;
@@ -310,7 +319,7 @@ PRIVATE(MODULE) ::unwind_evaluate_cfi FUNCTION(@state MUT& unwind_cfi_state, @in
     ELSE
     {
       index := exception_read_uleb(@cursor cursor);
-      IF (index >= 128) { EXCEPTION_TERMINATE(); }
+      IF (index >= unwind_register_rule_count) { EXCEPTION_TERMINATE(); }
       IF (opcode == 5 || opcode == 17 || opcode == 20 || opcode == 21)
       {
         state.registers[index].kind := 1;
@@ -363,7 +372,7 @@ PRIVATE(MODULE) ::unwind_caller FUNCTION(@context MUT& exception_unwind_context,
   }
   caller := context;
   VAR index SZ := 0;
-  LOOP WHILE (index < 128) DO
+  LOOP WHILE (index < unwind_register_rule_count) DO
   {
     VAR kind U8 := state.registers[index].kind;
     IF (kind == 1 || kind == 4)
@@ -372,6 +381,10 @@ PRIVATE(MODULE) ::unwind_caller FUNCTION(@context MUT& exception_unwind_context,
       IF (kind == 1)
       {
         caller.registers[index] := unwind_load_word(@address address);
+        STATIC_IF(ARCH_IS_ARM32)
+        {
+          IF (index >= 256 && index < 288) { caller.registers[index + 128] := unwind_load_word(@address address + 4); }
+        }
         STATIC_IF(OS_WINDOWS && ARCH_IS_X64)
         {
           IF (index >= 23 && index <= 32) { caller.registers[index + 128] := unwind_load_word(@address address + 8); }
@@ -379,7 +392,17 @@ PRIVATE(MODULE) ::unwind_caller FUNCTION(@context MUT& exception_unwind_context,
       }
       ELSE { caller.registers[index] := unwind_word(@address address); }
     }
-    ELSE IF (kind == 2) { caller.registers[index] := context.registers[state.registers[index].register_index]; }
+    ELSE IF (kind == 2)
+    {
+      caller.registers[index] := context.registers[state.registers[index].register_index];
+      STATIC_IF(ARCH_IS_ARM32)
+      {
+        IF (index >= 256 && index < 288)
+        {
+          caller.registers[index + 128] := context.registers[state.registers[index].register_index + 128];
+        }
+      }
+    }
     ELSE IF (kind == 3) { caller.registers[index] := 0; }
     ELSE IF (kind == 5 || kind == 6)
     {
@@ -391,6 +414,7 @@ PRIVATE(MODULE) ::unwind_caller FUNCTION(@context MUT& exception_unwind_context,
   }
   STATIC_IF(ARCH_IS_X64) { caller.registers[7] := context.cfa; }
   STATIC_ELSE STATIC_IF(ARCH_IS_X86) { caller.registers[4] := context.cfa; }
+  STATIC_ELSE STATIC_IF(ARCH_IS_ARM32) { caller.registers[13] := context.cfa; }
   STATIC_ELSE STATIC_IF(ARCH_IS_ARM64) { caller.registers[31] := context.cfa; }
   STATIC_ELSE STATIC_IF(ARCH_IS_Z_ARCH) { caller.registers[15] := context.cfa - 160; }
   caller.ip := caller.registers[context.return_register];
@@ -431,6 +455,7 @@ PRIVATE(MODULE) ::unwind_set_ip FUNCTION(@context ADDRESS, @value UINTPTR) NOEXC
   VAR pointer MUT->exception_unwind_context := IBC_PUN#(MUT->exception_unwind_context)(@ADDR context);
   STATIC_IF(ARCH_IS_X64) { pointer->.registers[7] += pointer->.stack_argument_size; }
   STATIC_ELSE STATIC_IF(ARCH_IS_X86) { pointer->.registers[4] += pointer->.stack_argument_size; }
+  STATIC_ELSE STATIC_IF(ARCH_IS_ARM32) { pointer->.registers[13] += pointer->.stack_argument_size; }
   STATIC_ELSE STATIC_IF(ARCH_IS_ARM64) { pointer->.registers[31] += pointer->.stack_argument_size; }
   STATIC_ELSE STATIC_IF(ARCH_IS_Z_ARCH) { pointer->.registers[15] += pointer->.stack_argument_size; }
   pointer->.ip := value;
@@ -471,6 +496,7 @@ PRIVATE(MODULE) ::unwind_raise FUNCTION(@record ADDRESS): I32
   unwind_capture(@registers context.registers<-);
   STATIC_IF(ARCH_IS_X64) { context.ip := context.registers[16]; }
   STATIC_ELSE STATIC_IF(ARCH_IS_X86) { context.ip := context.registers[8]; }
+  STATIC_ELSE STATIC_IF(ARCH_IS_ARM32) { context.ip := context.registers[15]; }
   STATIC_ELSE STATIC_IF(ARCH_IS_ARM64) { context.ip := context.registers[32]; }
   STATIC_ELSE STATIC_IF(ARCH_IS_Z_ARCH) { context.ip := context.registers[64]; }
   pointer->.cursor := context;
@@ -502,6 +528,7 @@ PRIVATE(MODULE) ::unwind_resume FUNCTION(@record ADDRESS)
   unwind_capture(@registers context.registers<-);
   STATIC_IF(ARCH_IS_X64) { context.ip := context.registers[16]; }
   STATIC_ELSE STATIC_IF(ARCH_IS_X86) { context.ip := context.registers[8]; }
+  STATIC_ELSE STATIC_IF(ARCH_IS_ARM32) { context.ip := context.registers[15]; }
   STATIC_ELSE STATIC_IF(ARCH_IS_ARM64) { context.ip := context.registers[32]; }
   STATIC_ELSE STATIC_IF(ARCH_IS_Z_ARCH) { context.ip := context.registers[64]; }
   pointer->.cursor := context;
