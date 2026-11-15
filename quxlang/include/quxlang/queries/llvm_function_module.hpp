@@ -8,7 +8,7 @@
 
 namespace quxlang
 {
-    /** Caches one unoptimized procedure module with declaration-only callees. */
+    /** Caches one procedure module with declaration-only callees and build-policy preoptimization. */
     struct llvm_function_module_query
     {
         static constexpr auto query_id = "llvm_function_module";

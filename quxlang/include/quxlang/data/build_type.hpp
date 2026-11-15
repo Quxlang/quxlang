@@ -47,10 +47,16 @@ namespace quxlang
         return value == build_type::development || value == build_type::debug || value == build_type::debug_opt || value == build_type::release_dbgsym || value == build_type::debug_compact || value == build_type::debug_compact_opt;
     }
 
-    /** Reports whether procedures are compiled in independent LLVM modules. */
+    /** Reports whether procedures are emitted as independent native objects. */
     inline auto build_type_compiles_procedures(build_type value) -> bool
     {
         return value == build_type::debug || value == build_type::quick;
+    }
+
+    /** Reports whether procedure preoptimization precedes component-wide LTO. */
+    inline auto build_type_uses_lto(build_type value) -> bool
+    {
+        return value == build_type::release || value == build_type::release_dbgsym;
     }
 
     /** Reports whether all platform-default CPU steppings are enabled. */

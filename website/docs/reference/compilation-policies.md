@@ -67,6 +67,13 @@ type is `Development`. An output can override it; for LLVM, the effective LLVM
 defaults. Constant evaluation enables all four policies independently of output
 overrides.
 
+LLVM `Release` and `ReleaseDbgSym` outputs lower each procedure into an
+independent LLVM module and apply the LLVM ThinLTO pre-link optimization
+pipeline at `O3`. The compiler links the procedure modules with their
+component's support data, applies the full LTO optimization pipeline at `O3`,
+and generates one native object per component and CPU stepping. Memory
+intrinsics retain their optimization semantics until the final LTO stage.
+
 `unimplemented_compiles` is a separate target-level Boolean, defaulting to
 `true`. Setting it to `false` rejects `UNIMPLEMENTED` during code generation,
 before output policy selection. See [Build Configuration](qxcbuild-file.md).

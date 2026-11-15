@@ -215,6 +215,8 @@ namespace quxlang::llvm_backend
         bool suffix_generated_function_symbols = false;
         /// Allows identical definitions shared by independently compiled closures to be coalesced during linking.
         bool definitions_are_coalescible = false;
+        /** Indicates that the root definition can receive internal linkage after component aggregation. */
+        bool root_is_component_local = false;
         /// Allows this unit to synthesize a platform process entrypoint when one is not supplied.
         bool emit_process_entrypoint = true;
         /// Selects whether this packet owns the root routine body.

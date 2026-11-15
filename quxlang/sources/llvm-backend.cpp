@@ -217,6 +217,16 @@ namespace quxlang::llvm_backend::detail
             generate_module();
             verify_generated_module();
 
+            if (quxlang::build_type_uses_lto(input.machine_target.build_type) && input.partitioned && !input.owns_support_data)
+            {
+                if (input.root_is_component_local && !is_registered_suite_procedure(input.target_name))
+                {
+                    // Definitions retain linkable names until every procedure has been aggregated.
+                    functions.at(input.target_name)->addFnAttr("quxlang-component-local");
+                }
+                module = optimize_module(*module, target_machine.get(), input.machine_target.build_type, llvm::ThinOrFullLTOPhase::ThinLTOPreLink);
+            }
+
             quxlang::llvm_backend::llvm_preoptimized_unit result;
             result.bitcode = module_bitcode(*module);
             result.source_filename = module->getSourceFileName();
@@ -388,7 +398,7 @@ namespace quxlang::llvm_backend::detail
         }
 
         /** Clones and optimizes one LLVM module while preserving externally reachable definitions. */
-        static auto optimize_module(llvm::Module const& source_module, llvm::TargetMachine* target_machine, quxlang::build_type build_type) -> std::unique_ptr< llvm::Module >
+        static auto optimize_module(llvm::Module const& source_module, llvm::TargetMachine* target_machine, quxlang::build_type build_type, llvm::ThinOrFullLTOPhase phase) -> std::unique_ptr< llvm::Module >
         {
             std::unique_ptr< llvm::Module > optimized_module = llvm::CloneModule(source_module);
             std::vector< llvm::GlobalValue* > preserved_functions;
@@ -452,19 +462,35 @@ namespace quxlang::llvm_backend::detail
             pass_builder.registerLoopAnalyses(loop_analysis_manager);
             pass_builder.crossRegisterProxies(loop_analysis_manager, function_analysis_manager, cgscc_analysis_manager, module_analysis_manager);
 
-            llvm::ModulePassManager module_pass_manager = pass_builder.buildPerModuleDefaultPipeline(level);
+            llvm::ModulePassManager module_pass_manager;
+            switch (phase)
+            {
+            case llvm::ThinOrFullLTOPhase::ThinLTOPreLink:
+                module_pass_manager = pass_builder.buildThinLTOPreLinkDefaultPipeline(level);
+                break;
+            case llvm::ThinOrFullLTOPhase::FullLTOPostLink:
+                module_pass_manager = pass_builder.buildLTODefaultPipeline(level, nullptr);
+                break;
+            default:
+                module_pass_manager = pass_builder.buildPerModuleDefaultPipeline(level);
+                break;
+            }
             module_pass_manager.run(*optimized_module, module_analysis_manager);
 
             llvm::SmallVector< llvm::MemIntrinsic*, 4 > memory_intrinsics;
-            for (llvm::Function& function : optimized_module->functions())
+            // Memory intrinsics retain their optimization semantics until the final LTO stage.
+            if (phase != llvm::ThinOrFullLTOPhase::ThinLTOPreLink)
             {
-                for (llvm::BasicBlock& block : function)
+                for (llvm::Function& function : optimized_module->functions())
                 {
-                    for (llvm::Instruction& instruction : block)
+                    for (llvm::BasicBlock& block : function)
                     {
-                        if (llvm::MemIntrinsic* intrinsic = llvm::dyn_cast< llvm::MemIntrinsic >(&instruction))
+                        for (llvm::Instruction& instruction : block)
                         {
-                            memory_intrinsics.push_back(intrinsic);
+                            if (llvm::MemIntrinsic* intrinsic = llvm::dyn_cast< llvm::MemIntrinsic >(&instruction))
+                            {
+                                memory_intrinsics.push_back(intrinsic);
+                            }
                         }
                     }
                 }
@@ -10541,6 +10567,38 @@ auto quxlang::llvm_backend::bitcode_to_ir_text(std::vector< std::byte > const& b
     return text;
 }
 
+auto quxlang::llvm_backend::aggregate_function_modules(llvm_preoptimized_unit const& support, std::vector< std::reference_wrapper< llvm_preoptimized_unit const > > const& procedures) -> llvm_preoptimized_unit
+{
+    llvm::LLVMContext context;
+    std::unique_ptr< llvm::Module > module = detail::llvm_module_codegen::parse_module_bitcode(support.bitcode, context, "quxlang-support.bc");
+    llvm::Linker linker(*module);
+    for (std::reference_wrapper< llvm_preoptimized_unit const > const& procedure : procedures)
+    {
+        std::unique_ptr< llvm::Module > candidate = detail::llvm_module_codegen::parse_module_bitcode(procedure.get().bitcode, context, "quxlang-procedure.bc");
+        if (linker.linkInModule(std::move(candidate)))
+        {
+            throw semantic_compilation_error("Failed to aggregate LLVM procedure module");
+        }
+    }
+    for (llvm::Function& function : *module)
+    {
+        if (function.hasFnAttribute("quxlang-component-local"))
+        {
+            function.removeFnAttr("quxlang-component-local");
+            if (!function.hasAddressTaken())
+            {
+                function.setLinkage(llvm::GlobalValue::InternalLinkage);
+                function.setComdat(nullptr);
+            }
+        }
+    }
+    return llvm_preoptimized_unit{
+        .bitcode = detail::llvm_module_codegen::module_bitcode(*module),
+        .source_filename = support.source_filename,
+        .target = support.target,
+    };
+}
+
 auto quxlang::llvm_backend::llvm_backend::preoptimize(quxlang::llvm_backend::llvm_compilable_unit const& input) const -> quxlang::llvm_backend::llvm_preoptimized_unit
 {
     detail::llvm_module_codegen codegen(input);
@@ -10563,7 +10621,8 @@ auto quxlang::llvm_backend::llvm_backend::postoptimize(quxlang::llvm_backend::ll
     std::unique_ptr< llvm::TargetMachine > target_machine = detail::llvm_module_codegen::create_target_machine(input.target);
     source_module->setTargetTriple(llvm::Triple(quxlang::lookup_llvm_triple(input.target.machine)));
     source_module->setDataLayout(target_machine->createDataLayout());
-    std::unique_ptr< llvm::Module > optimized_module = detail::llvm_module_codegen::optimize_module(*source_module, target_machine.get(), input.target.build_type);
+    llvm::ThinOrFullLTOPhase phase = build_type_uses_lto(input.target.build_type) ? llvm::ThinOrFullLTOPhase::FullLTOPostLink : llvm::ThinOrFullLTOPhase::None;
+    std::unique_ptr< llvm::Module > optimized_module = detail::llvm_module_codegen::optimize_module(*source_module, target_machine.get(), input.target.build_type, phase);
     result.bitcode = detail::llvm_module_codegen::module_bitcode(*optimized_module);
     result.source_filename = optimized_module->getSourceFileName();
     return result;

@@ -44,7 +44,7 @@ auto quxlang::lower_llvm_unit(llvm_output_query_input input) -> typename rpnx::q
     {
         imported = catalog.inlinable_functions;
     }
-    else if (!build_type_compiles_procedures(*options.build_type))
+    else if (!build_type_compiles_procedures(*options.build_type) && !build_type_uses_lto(*options.build_type))
     {
         throw semantic_compilation_error("Procedure partition requested for a whole-component build type");
     }
@@ -110,6 +110,7 @@ auto quxlang::lower_llvm_unit(llvm_output_query_input input) -> typename rpnx::q
     if (input.unit.type_is< type_symbol >())
     {
         compilable.target_name = input.unit.get_as< type_symbol >();
+        compilable.root_is_component_local = compilable.target_name != catalog.target_name && !catalog.assembly_referenced_procedures.contains(compilable.target_name);
         compilable.root_routine = llvm_backend::root_routine_emission::definition;
         compilable.emit_process_entrypoint = false;
         compilable.defines_compiler_builtin_objects = false;
@@ -454,6 +455,34 @@ rpnx::querygraph::coroutine< quxlang::llvm_function_module_spec > quxlang::llvm_
 rpnx::querygraph::coroutine< quxlang::llvm_preoptimize_spec > quxlang::llvm_preoptimize_impl(llvm_output_query_input input)
 {
     backend_llvm_options const& options = co_await rpnx::querygraph::request< output_llvm_backend_options_query >(input.output_name);
+    if (build_type_uses_lto(*options.build_type) && input.unit.type_is< std::monostate >())
+    {
+        llvm_component_catalog const& catalog = co_await rpnx::querygraph::request< output_llvm_catalog_query >({input.output_name, input.component});
+        std::set< type_symbol > procedures = catalog.inlinable_functions;
+        if (catalog.root_routine == llvm_backend::root_routine_emission::definition && !catalog.asm_functions.contains(catalog.target_name))
+        {
+            procedures.insert(catalog.target_name);
+        }
+        std::vector< rpnx::querygraph::request< llvm_function_module_query > > modules;
+        modules.reserve(procedures.size());
+        for (type_symbol const& procedure : procedures)
+        {
+            llvm_output_query_input identity = input;
+            identity.unit = procedure;
+            modules.emplace_back(std::move(identity));
+            co_yield rpnx::querygraph::dependency(modules.back());
+        }
+        input.unit = llvm_support_data_unit{};
+        rpnx::cow< llvm_backend::llvm_preoptimized_unit > support = co_await lower_llvm_unit< llvm_preoptimize_spec >(std::move(input));
+        std::vector< std::reference_wrapper< llvm_backend::llvm_preoptimized_unit const > > definitions;
+        definitions.reserve(modules.size());
+        for (rpnx::querygraph::request< llvm_function_module_query >& module : modules)
+        {
+            rpnx::cow< llvm_backend::llvm_preoptimized_unit > const& definition = co_await module;
+            definitions.emplace_back(std::cref(definition.get()));
+        }
+        co_return rpnx::cow< llvm_backend::llvm_preoptimized_unit >(llvm_backend::aggregate_function_modules(support.get(), definitions));
+    }
     if (*options.build_type != build_type::quick || !input.unit.type_is< type_symbol >())
     {
         co_return co_await lower_llvm_unit< llvm_preoptimize_spec >(std::move(input));

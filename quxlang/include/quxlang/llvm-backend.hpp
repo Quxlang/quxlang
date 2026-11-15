@@ -25,11 +25,14 @@ namespace quxlang::llvm_backend
     /** Links cached inline candidates into a root module while retaining its machine-code ownership. */
     auto import_function_modules(llvm_preoptimized_unit const& root, std::vector< std::reference_wrapper< llvm_preoptimized_unit const > > const& imports) -> llvm_preoptimized_unit;
 
+    /** Links independently preoptimized procedure definitions into their component's support module. */
+    auto aggregate_function_modules(llvm_preoptimized_unit const& support, std::vector< std::reference_wrapper< llvm_preoptimized_unit const > > const& procedures) -> llvm_preoptimized_unit;
+
     /** Compiles VMIR2 packets through LLVM bitcode to native objects. */
     class llvm_backend
     {
     public:
-        /** Lowers one VMIR2 compilation packet to verified pre-optimization LLVM. */
+        /** Lowers one VMIR2 packet to verified LLVM and applies ThinLTO pre-link optimization to Release procedure packets. */
         auto preoptimize(
             quxlang::llvm_backend::llvm_compilable_unit const& input) const -> quxlang::llvm_backend::llvm_preoptimized_unit;
 
