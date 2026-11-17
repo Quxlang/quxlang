@@ -193,6 +193,58 @@ LABEL static_linux_clone_arm64_parent;
     RET
   }
 
+  DOC <$ Creates a Linux RISC-V thread and enters its worker on the child stack. $>
+  ::static_linux_clone INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC && ARCH_IS_RISCV32)
+    ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(
+      @flags UINTPTR,
+      @child_stack MUT=>>TYPED_STORAGE(BYTE),
+      @parent_tid MUT->ATOMIC#I32,
+      @tls MUT=>>TYPED_STORAGE(BYTE),
+      @child_tid MUT->ATOMIC#I32,
+      @control MUT->thread_control;
+      RETURN I32
+    )
+  {
+    LI a7, 220
+    ECALL
+    BNEZ a0, clone_parent
+    MV a0, a5
+    CALL PROCEDURE_REF("", static_linux_thread_worker!$[0])
+    LI a0, 0
+    LI a7, 93
+    ECALL
+    UNIMP
+    LABEL clone_parent;
+    RET
+  }
+
+  DOC <$ Creates a Linux RISC-V thread and enters its worker on the child stack. $>
+  ::static_linux_clone INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC && ARCH_IS_RISCV64)
+    ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(
+      @flags UINTPTR,
+      @child_stack MUT=>>TYPED_STORAGE(BYTE),
+      @parent_tid MUT->ATOMIC#I32,
+      @tls MUT=>>TYPED_STORAGE(BYTE),
+      @child_tid MUT->ATOMIC#I32,
+      @control MUT->thread_control;
+      RETURN I32
+    )
+  {
+    LI a7, 220
+    ECALL
+    BNEZ a0, clone_parent
+    MV a0, a5
+    CALL PROCEDURE_REF("", static_linux_thread_worker!$[0])
+    LI a0, 0
+    LI a7, 93
+    ECALL
+    UNIMP
+    LABEL clone_parent;
+    RET
+  }
+
   ::static_linux_clone INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC && ARCH_IS_Z_ARCH)
     ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(

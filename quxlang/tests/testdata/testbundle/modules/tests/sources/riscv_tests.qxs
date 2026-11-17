@@ -1,0 +1,188 @@
+LANGUAGE QUXLANG EN 0.0;
+IMPORT std;
+
+DOC <$ Verifies RISC-V object layout and native procedure calling conventions. $>
+::riscv_tests INCLUDE_IF(ARCH_IS_RISCV32 || ARCH_IS_RISCV64) NAMESPACE
+{
+  DOC <$ Preserves native pointer widths and floating-point ABI alignment. $>
+  ::layout DUAL_TEST
+  {
+    STATIC_IF(ARCH_IS_RISCV32)
+    {
+      TEST_ASSERT(SIZEOF(SZ) == 4);
+      TEST_ASSERT(SIZEOF(ADDRESS) == 4);
+    }
+    STATIC_ELSE
+    {
+      TEST_ASSERT(SIZEOF(SZ) == 8);
+      TEST_ASSERT(SIZEOF(ADDRESS) == 8);
+    }
+    TEST_ASSERT(ALIGNOF(I64) == 8);
+    TEST_ASSERT(ALIGNOF(F64) == 8);
+    TEST_ASSERT(ALIGNOF(F128E15) == 16);
+  }
+
+  DOC <$ Reads the ninth integer argument from the caller stack. $>
+  ::ninth_argument ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@a I32, @b I32, @c I32, @d I32,
+      @e I32, @f I32, @g I32, @h I32, @last I32; RETURN I32)
+  {
+    LW a0, 0(sp)
+    RET
+  }
+
+  DOC <$ Reads the ninth integer argument from the caller stack. $>
+  ::ninth_argument ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@a I32, @b I32, @c I32, @d I32,
+      @e I32, @f I32, @g I32, @h I32, @last I32; RETURN I32)
+  {
+    LW a0, 0(sp)
+    RET
+  }
+
+  DOC <$ Preserves integer arguments after the eight argument registers. $>
+  ::stack_arguments UNIT_TEST
+  {
+    TEST_ASSERT(ninth_argument(@a 1, @b 2, @c 3, @d 4,
+      @e 5, @f 6, @g 7, @h 8, @last 91) == 91);
+  }
+
+  DOC <$ Adds two binary32 arguments in their floating-point argument registers. $>
+  ::add_float ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@left F32, @right F32; RETURN F32)
+  {
+    FADD.S fa0, fa0, fa1
+    RET
+  }
+
+  DOC <$ Adds two binary32 arguments in their floating-point argument registers. $>
+  ::add_float ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@left F32, @right F32; RETURN F32)
+  {
+    FADD.S fa0, fa0, fa1
+    RET
+  }
+
+  DOC <$ Adds two binary64 arguments in their floating-point argument registers. $>
+  ::add_double ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@left F64, @right F64; RETURN F64)
+  {
+    FADD.D fa0, fa0, fa1
+    RET
+  }
+
+  DOC <$ Adds two binary64 arguments in their floating-point argument registers. $>
+  ::add_double ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@left F64, @right F64; RETURN F64)
+  {
+    FADD.D fa0, fa0, fa1
+    RET
+  }
+
+  DOC <$ Transports binary32 and binary64 values through the hardware floating-point ABI. $>
+  ::floating_arguments UNIT_TEST
+  {
+    TEST_ASSERT(add_float(@left 1.5 AS F32, @right 2.25 AS F32) == 3.75 AS F32);
+    TEST_ASSERT(add_double(@left 1.5 AS F64, @right 2.25 AS F64) == 3.75 AS F64);
+  }
+
+  DOC <$ Adds two 64-bit integers passed in pairs of RV32 argument registers. $>
+  ::add_wide ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@left U64, @right U64; RETURN U64)
+  {
+    ADD t0, a0, a2
+    SLTU t1, t0, a0
+    ADD a1, a1, a3
+    ADD a1, a1, t1
+    MV a0, t0
+    RET
+  }
+
+  DOC <$ Adds two 64-bit integers passed in RV64 argument registers. $>
+  ::add_wide ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@left U64, @right U64; RETURN U64)
+  {
+    ADD a0, a0, a1
+    RET
+  }
+
+  DOC <$ Preserves the low and high halves of integer arguments and results. $>
+  ::wide_arguments UNIT_TEST
+  {
+    TEST_ASSERT(add_wide(@left 4294967295 AS U64, @right 2 AS U64) == 4294967297 AS U64);
+    TEST_ASSERT(add_wide(@left 8589934592 AS U64, @right 12884901888 AS U64) == 21474836480 AS U64);
+  }
+
+  DOC <$ Supplies global storage for structured assembly references. $>
+  ::reference_value VAR U32;
+
+  DOC <$ Returns the address of a Quxlang global through a structured symbol reference. $>
+  ::reference_address ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(; RETURN MUT->U32)
+  {
+    LA a0, OBJECT_REF(reference_value)
+    RET
+  }
+
+  DOC <$ Returns the address of a Quxlang global through a structured symbol reference. $>
+  ::reference_address ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(; RETURN MUT->U32)
+  {
+    LA a0, OBJECT_REF(reference_value)
+    RET
+  }
+
+  DOC <$ Updates storage through a C-callable Quxlang procedure. $>
+  ::update_reference FUNCTION(%value MUT->U32, %amount U32)
+  {
+    value-> := amount;
+  }
+
+  DOC <$ Transfers control to a structured Quxlang procedure reference. $>
+  ::tail_update ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@value MUT->U32, @amount U32)
+  {
+    TAIL PROCEDURE_REF("CCALL", update_reference!$[0])
+  }
+
+  DOC <$ Transfers control to a structured Quxlang procedure reference. $>
+  ::tail_update ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@value MUT->U32, @amount U32)
+  {
+    TAIL PROCEDURE_REF("CCALL", update_reference!$[0])
+  }
+
+  DOC <$ Preserves symbol identity through address materialization and assembly calls. $>
+  ::structured_references UNIT_TEST
+  {
+    reference_value := 17;
+    VAR pointer MUT->U32 := reference_address();
+    TEST_ASSERT(pointer == reference_value<-);
+    TEST_ASSERT(pointer-> == 17);
+    tail_update(@value pointer, @amount 91);
+    TEST_ASSERT(reference_value == 91);
+    reference_value := 0;
+  }
+
+  DOC <$ Concurrent 64-bit atomic updates preserve every increment on both word widths. $>
+  ::contended_wide_atomic UNIT_TEST
+  {
+    VAR counter ATOMIC#U64;
+    counter.STORE#ATOMIC_RELAXED(0);
+    AUTO increment := -<
+    {
+      VAR count SZ := 0;
+      LOOP WHILE (count < 100) DO
+      {
+        counter.FETCH_ADD#ATOMIC_RELAXED(1);
+        count++;
+      }
+    };
+    VAR first std::thread := std::thread(increment);
+    VAR second std::thread := std::thread(increment);
+    first.join();
+    second.join();
+    TEST_ASSERT(counter.LOAD#ATOMIC_ACQUIRE() == 200);
+  }
+
+}

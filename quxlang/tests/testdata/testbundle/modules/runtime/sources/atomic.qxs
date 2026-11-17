@@ -1,0 +1,364 @@
+LANGUAGE QUXLANG EN 0.0;
+
+DOC <$ Serializes atomic accesses wider than the target's native atomic width. $>
+PRIVATE(MODULE) ::non_native_atomic_lock VAR ATOMIC#U32;
+
+DOC <$ Acquires the runtime lock for a non-native atomic operation. $>
+PRIVATE(MODULE) ::non_native_atomic_acquire FUNCTION() NOEXCEPT
+{
+  RUNTIME CONSTEXPR { RETURN; }
+  ELSE
+  {
+    LOOP WHILE (non_native_atomic_lock.EXCHANGE#ATOMIC_SEQCST(1) != 0) DO { }
+  }
+}
+
+DOC <$ Releases the runtime lock after a non-native atomic operation. $>
+PRIVATE(MODULE) ::non_native_atomic_release FUNCTION() NOEXCEPT
+{
+  RUNTIME CONSTEXPR { RETURN; }
+  ELSE { non_native_atomic_lock.STORE#ATOMIC_SEQCST(0); }
+}
+
+DOC <$ Loads a payload under the runtime's non-native atomic lock. $>
+::ATOMIC_LOAD TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target CONST& ATOMIC#T) NOEXCEPT: T
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.LOAD#NONATOMIC();
+}
+
+DOC <$ Stores a payload under the runtime's non-native atomic lock. $>
+::ATOMIC_STORE TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  target.STORE#NONATOMIC(value);
+}
+
+DOC <$ Replaces a payload under the runtime's non-native atomic lock. $>
+::ATOMIC_EXCHANGE TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT: T
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.EXCHANGE#NONATOMIC(value);
+}
+
+DOC <$ Compares and conditionally replaces a payload under the runtime's non-native atomic lock. $>
+::ATOMIC_COMPARE_EXCHANGE TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @EXPECTED:expected MUT& T, @DESIRED:desired T) NOEXCEPT: BOOL
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.COMPARE_EXCHANGE#(@SUCCESS NONATOMIC, @FAILURE NONATOMIC)(@EXPECTED expected, @DESIRED desired);
+}
+
+DOC <$ Applies ADD under the runtime's non-native atomic lock. $>
+::ATOMIC_ADD TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  target.ADD#NONATOMIC(value);
+}
+
+DOC <$ Applies FETCH_ADD under the runtime's non-native atomic lock. $>
+::ATOMIC_FETCH_ADD TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT: T
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.FETCH_ADD#NONATOMIC(value);
+}
+
+DOC <$ Applies SUBTRACT under the runtime's non-native atomic lock. $>
+::ATOMIC_SUBTRACT TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  target.SUBTRACT#NONATOMIC(value);
+}
+
+DOC <$ Applies FETCH_SUBTRACT under the runtime's non-native atomic lock. $>
+::ATOMIC_FETCH_SUBTRACT TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT: T
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.FETCH_SUBTRACT#NONATOMIC(value);
+}
+
+DOC <$ Applies MULTIPLY under the runtime's non-native atomic lock. $>
+::ATOMIC_MULTIPLY TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  target.MULTIPLY#NONATOMIC(value);
+}
+
+DOC <$ Applies FETCH_MULTIPLY under the runtime's non-native atomic lock. $>
+::ATOMIC_FETCH_MULTIPLY TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT: T
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.FETCH_MULTIPLY#NONATOMIC(value);
+}
+
+DOC <$ Applies DIVIDE under the runtime's non-native atomic lock. $>
+::ATOMIC_DIVIDE TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  target.DIVIDE#NONATOMIC(value);
+}
+
+DOC <$ Applies FETCH_DIVIDE under the runtime's non-native atomic lock. $>
+::ATOMIC_FETCH_DIVIDE TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT: T
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.FETCH_DIVIDE#NONATOMIC(value);
+}
+
+DOC <$ Applies MODULO under the runtime's non-native atomic lock. $>
+::ATOMIC_MODULO TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  target.MODULO#NONATOMIC(value);
+}
+
+DOC <$ Applies FETCH_MODULO under the runtime's non-native atomic lock. $>
+::ATOMIC_FETCH_MODULO TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT: T
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.FETCH_MODULO#NONATOMIC(value);
+}
+
+DOC <$ Applies BIT_AND under the runtime's non-native atomic lock. $>
+::ATOMIC_BIT_AND TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  target.BIT_AND#NONATOMIC(value);
+}
+
+DOC <$ Applies FETCH_BIT_AND under the runtime's non-native atomic lock. $>
+::ATOMIC_FETCH_BIT_AND TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT: T
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.FETCH_BIT_AND#NONATOMIC(value);
+}
+
+DOC <$ Applies BIT_OR under the runtime's non-native atomic lock. $>
+::ATOMIC_BIT_OR TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  target.BIT_OR#NONATOMIC(value);
+}
+
+DOC <$ Applies FETCH_BIT_OR under the runtime's non-native atomic lock. $>
+::ATOMIC_FETCH_BIT_OR TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT: T
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.FETCH_BIT_OR#NONATOMIC(value);
+}
+
+DOC <$ Applies BIT_XOR under the runtime's non-native atomic lock. $>
+::ATOMIC_BIT_XOR TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  target.BIT_XOR#NONATOMIC(value);
+}
+
+DOC <$ Applies FETCH_BIT_XOR under the runtime's non-native atomic lock. $>
+::ATOMIC_FETCH_BIT_XOR TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT: T
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.FETCH_BIT_XOR#NONATOMIC(value);
+}
+
+DOC <$ Applies BIT_NAND under the runtime's non-native atomic lock. $>
+::ATOMIC_BIT_NAND TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  target.BIT_NAND#NONATOMIC(value);
+}
+
+DOC <$ Applies FETCH_BIT_NAND under the runtime's non-native atomic lock. $>
+::ATOMIC_FETCH_BIT_NAND TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT: T
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.FETCH_BIT_NAND#NONATOMIC(value);
+}
+
+DOC <$ Applies BIT_NOR under the runtime's non-native atomic lock. $>
+::ATOMIC_BIT_NOR TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  target.BIT_NOR#NONATOMIC(value);
+}
+
+DOC <$ Applies FETCH_BIT_NOR under the runtime's non-native atomic lock. $>
+::ATOMIC_FETCH_BIT_NOR TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT: T
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.FETCH_BIT_NOR#NONATOMIC(value);
+}
+
+DOC <$ Applies BIT_NXOR under the runtime's non-native atomic lock. $>
+::ATOMIC_BIT_NXOR TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  target.BIT_NXOR#NONATOMIC(value);
+}
+
+DOC <$ Applies FETCH_BIT_NXOR under the runtime's non-native atomic lock. $>
+::ATOMIC_FETCH_BIT_NXOR TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT: T
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.FETCH_BIT_NXOR#NONATOMIC(value);
+}
+
+DOC <$ Applies BIT_IMPLIES under the runtime's non-native atomic lock. $>
+::ATOMIC_BIT_IMPLIES TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  target.BIT_IMPLIES#NONATOMIC(value);
+}
+
+DOC <$ Applies FETCH_BIT_IMPLIES under the runtime's non-native atomic lock. $>
+::ATOMIC_FETCH_BIT_IMPLIES TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT: T
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.FETCH_BIT_IMPLIES#NONATOMIC(value);
+}
+
+DOC <$ Applies BIT_IMPLIED under the runtime's non-native atomic lock. $>
+::ATOMIC_BIT_IMPLIED TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  target.BIT_IMPLIED#NONATOMIC(value);
+}
+
+DOC <$ Applies FETCH_BIT_IMPLIED under the runtime's non-native atomic lock. $>
+::ATOMIC_FETCH_BIT_IMPLIED TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value T) NOEXCEPT: T
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.FETCH_BIT_IMPLIED#NONATOMIC(value);
+}
+
+DOC <$ Applies BIT_SHIFT_UP under the runtime's non-native atomic lock. $>
+::ATOMIC_BIT_SHIFT_UP TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value SZ) NOEXCEPT
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  target.BIT_SHIFT_UP#NONATOMIC(value);
+}
+
+DOC <$ Applies FETCH_BIT_SHIFT_UP under the runtime's non-native atomic lock. $>
+::ATOMIC_FETCH_BIT_SHIFT_UP TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value SZ) NOEXCEPT: T
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.FETCH_BIT_SHIFT_UP#NONATOMIC(value);
+}
+
+DOC <$ Applies BIT_SHIFT_DOWN under the runtime's non-native atomic lock. $>
+::ATOMIC_BIT_SHIFT_DOWN TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value SZ) NOEXCEPT
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  target.BIT_SHIFT_DOWN#NONATOMIC(value);
+}
+
+DOC <$ Applies FETCH_BIT_SHIFT_DOWN under the runtime's non-native atomic lock. $>
+::ATOMIC_FETCH_BIT_SHIFT_DOWN TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value SZ) NOEXCEPT: T
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.FETCH_BIT_SHIFT_DOWN#NONATOMIC(value);
+}
+
+DOC <$ Applies BIT_ROTATE_UP under the runtime's non-native atomic lock. $>
+::ATOMIC_BIT_ROTATE_UP TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value SZ) NOEXCEPT
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  target.BIT_ROTATE_UP#NONATOMIC(value);
+}
+
+DOC <$ Applies FETCH_BIT_ROTATE_UP under the runtime's non-native atomic lock. $>
+::ATOMIC_FETCH_BIT_ROTATE_UP TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value SZ) NOEXCEPT: T
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.FETCH_BIT_ROTATE_UP#NONATOMIC(value);
+}
+
+DOC <$ Applies BIT_ROTATE_DOWN under the runtime's non-native atomic lock. $>
+::ATOMIC_BIT_ROTATE_DOWN TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value SZ) NOEXCEPT
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  target.BIT_ROTATE_DOWN#NONATOMIC(value);
+}
+
+DOC <$ Applies FETCH_BIT_ROTATE_DOWN under the runtime's non-native atomic lock. $>
+::ATOMIC_FETCH_BIT_ROTATE_DOWN TEMPLATE(@T TYPE AUTO)
+FUNCTION(@THIS:target MUT& ATOMIC#T, @ARG:value SZ) NOEXCEPT: T
+{
+  non_native_atomic_acquire();
+  DEFER { non_native_atomic_release(); }
+  RETURN target.FETCH_BIT_ROTATE_DOWN#NONATOMIC(value);
+}
+

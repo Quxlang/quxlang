@@ -584,6 +584,14 @@ namespace quxlang::detail
                 {
                     info.cpu_type = quxlang::cpu::arm_64;
                 }
+                else if (*configured_cpu == "RISCV32")
+                {
+                    info.cpu_type = quxlang::cpu::riscv_32;
+                }
+                else if (*configured_cpu == "RISCV64")
+                {
+                    info.cpu_type = quxlang::cpu::riscv_64;
+                }
                 else if (*configured_cpu == "z_arch")
                 {
                     info.cpu_type = quxlang::cpu::z_arch;

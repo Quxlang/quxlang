@@ -91,6 +91,24 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V write operation. $>
+  ::write ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@fd I32, @buffer CONST =>> BYTE, @count SZ; RETURN SZ)
+  {
+    LI a7, 64
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V write operation. $>
+  ::write ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@fd I32, @buffer CONST =>> BYTE, @count SZ; RETURN SZ)
+  {
+    LI a7, 64
+    ECALL
+    RET
+  }
+
   ::write ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(@fd I32, @buffer CONST =>> BYTE, @count SZ; RETURN SZ)
   {
@@ -139,6 +157,24 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V exit operation. $>
+  ::exit ASM_PROCEDURE RISCV32
+    CALLABLE(@code I32; RETURN I32)
+  {
+    LI a7, 93
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V exit operation. $>
+  ::exit ASM_PROCEDURE RISCV64
+    CALLABLE(@code I32; RETURN I32)
+  {
+    LI a7, 93
+    ECALL
+    RET
+  }
+
   ::exit ASM_PROCEDURE Z_ARCH
     CALLABLE(@code I32; RETURN I32)
   {
@@ -184,6 +220,24 @@ LANGUAGE QUXLANG EN 0.0;
   {
     MOV X8, 94
     SVC 0
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V exit group operation. $>
+  ::exit_group ASM_PROCEDURE RISCV32
+    CALLABLE(@code I32; RETURN I32)
+  {
+    LI a7, 94
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V exit group operation. $>
+  ::exit_group ASM_PROCEDURE RISCV64
+    CALLABLE(@code I32; RETURN I32)
+  {
+    LI a7, 94
+    ECALL
     RET
   }
 
@@ -286,6 +340,44 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V mmap anonymous private operation. $>
+  ::mmap_anonymous_private ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@size SZ; RETURN ADDRESS)
+  {
+    MV a1, a0
+    LI a0, 0
+    LI a2, 3
+    LI a3, 34
+    LI a4, -1
+    LI a5, 0
+    LI a7, 222
+    ECALL
+    LI t0, -4095
+    BLTU a0, t0, mapping_ready
+    LI a0, 0
+    LABEL mapping_ready;
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V mmap anonymous private operation. $>
+  ::mmap_anonymous_private ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@size SZ; RETURN ADDRESS)
+  {
+    MV a1, a0
+    LI a0, 0
+    LI a2, 3
+    LI a3, 34
+    LI a4, -1
+    LI a5, 0
+    LI a7, 222
+    ECALL
+    LI t0, -4095
+    BLTU a0, t0, mapping_ready
+    LI a0, 0
+    LABEL mapping_ready;
+    RET
+  }
+
   ::mmap_anonymous_private ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(@size SZ; RETURN ADDRESS)
   {
@@ -378,6 +470,34 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V futex wait operation. $>
+  ::futex_wait ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@address ADDRESS, @expected I32; RETURN I32)
+  {
+    MV a2, a1
+    LI a1, 0
+    LI a3, 0
+    LI a4, 0
+    LI a5, 0
+    LI a7, 422
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V futex wait operation. $>
+  ::futex_wait ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@address ADDRESS, @expected I32; RETURN I32)
+  {
+    MV a2, a1
+    LI a1, 0
+    LI a3, 0
+    LI a4, 0
+    LI a5, 0
+    LI a7, 98
+    ECALL
+    RET
+  }
+
   ::futex_wait ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(@address ADDRESS, @expected I32; RETURN I32)
   {
@@ -467,6 +587,34 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V futex wake operation. $>
+  ::futex_wake ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@address ADDRESS, @count I32; RETURN I32)
+  {
+    MV a2, a1
+    LI a1, 1
+    LI a3, 0
+    LI a4, 0
+    LI a5, 0
+    LI a7, 422
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V futex wake operation. $>
+  ::futex_wake ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@address ADDRESS, @count I32; RETURN I32)
+  {
+    MV a2, a1
+    LI a1, 1
+    LI a3, 0
+    LI a4, 0
+    LI a5, 0
+    LI a7, 98
+    ECALL
+    RET
+  }
+
   ::futex_wake ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(@address ADDRESS, @count I32; RETURN I32)
   {
@@ -528,6 +676,24 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V read operation. $>
+  ::read ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@fd I32, @buffer MUT =>> BYTE, @count SZ; RETURN SZ)
+  {
+    LI a7, 63
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V read operation. $>
+  ::read ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@fd I32, @buffer MUT =>> BYTE, @count SZ; RETURN SZ)
+  {
+    LI a7, 63
+    ECALL
+    RET
+  }
+
   ::read ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(@fd I32, @buffer MUT =>> BYTE, @count SZ; RETURN SZ)
   {
@@ -573,6 +739,24 @@ LANGUAGE QUXLANG EN 0.0;
   {
     MOV X8, 57
     SVC 0
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V close operation. $>
+  ::close ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@fd I32; RETURN I32)
+  {
+    LI a7, 57
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V close operation. $>
+  ::close ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@fd I32; RETURN I32)
+  {
+    LI a7, 57
+    ECALL
     RET
   }
 
@@ -637,6 +821,32 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V open operation. $>
+  ::open ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@path CONST =>> BYTE, @flags open_flags, @mode file_mode; RETURN I32)
+  {
+    MV a3, a2
+    MV a2, a1
+    MV a1, a0
+    LI a0, -100
+    LI a7, 56
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V open operation. $>
+  ::open ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@path CONST =>> BYTE, @flags open_flags, @mode file_mode; RETURN I32)
+  {
+    MV a3, a2
+    MV a2, a1
+    MV a1, a0
+    LI a0, -100
+    LI a7, 56
+    ECALL
+    RET
+  }
+
   ::open ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(@path CONST =>> BYTE, @flags open_flags, @mode file_mode; RETURN I32)
   {
@@ -684,6 +894,33 @@ LANGUAGE QUXLANG EN 0.0;
   {
     MOV X8, 62
     SVC 0
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V lseek operation. $>
+  ::lseek ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@fd I32, @offset SZ, @whence seek_whence; RETURN SZ)
+  {
+    MV a4, a2
+    MV a2, a1
+    LI a1, 0
+    ADDI sp, sp, -16
+    MV a3, sp
+    LI a7, 62
+    ECALL
+    BLTZ a0, seek_done
+    LW a0, 0(sp)
+    LABEL seek_done;
+    ADDI sp, sp, 16
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V lseek operation. $>
+  ::lseek ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@fd I32, @offset SZ, @whence seek_whence; RETURN SZ)
+  {
+    LI a7, 62
+    ECALL
     RET
   }
 
@@ -750,6 +987,30 @@ LANGUAGE QUXLANG EN 0.0;
   {
     MOV X8, 222
     SVC 0
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V mmap operation. $>
+  ::mmap ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ, @prot prot_flags, @flags mmap_flags, @fd I32, @off SZ; RETURN ADDRESS)
+  {
+    SLLI t0, a5, 20
+    BNEZ t0, invalid_offset
+    SRLI a5, a5, 12
+    LI a7, 222
+    ECALL
+    RET
+    LABEL invalid_offset;
+    LI a0, -22
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V mmap operation. $>
+  ::mmap ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ, @prot prot_flags, @flags mmap_flags, @fd I32, @off SZ; RETURN ADDRESS)
+  {
+    LI a7, 222
+    ECALL
     RET
   }
 
@@ -820,6 +1081,24 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V munmap operation. $>
+  ::munmap ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ; RETURN I32)
+  {
+    LI a7, 215
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V munmap operation. $>
+  ::munmap ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ; RETURN I32)
+  {
+    LI a7, 215
+    ECALL
+    RET
+  }
+
   ::munmap ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ; RETURN I32)
   {
@@ -867,6 +1146,24 @@ LANGUAGE QUXLANG EN 0.0;
   {
     MOV X8, 226
     SVC 0
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V mprotect operation. $>
+  ::mprotect ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ, @prot prot_flags; RETURN I32)
+  {
+    LI a7, 226
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V mprotect operation. $>
+  ::mprotect ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ, @prot prot_flags; RETURN I32)
+  {
+    LI a7, 226
+    ECALL
     RET
   }
 
@@ -919,6 +1216,28 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V nanosleep operation. $>
+  ::nanosleep ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@req CONST =>>BYTE, @rem MUT =>>BYTE; RETURN I32)
+  {
+    MV a2, a0
+    MV a3, a1
+    LI a0, 0
+    LI a1, 0
+    LI a7, 407
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V nanosleep operation. $>
+  ::nanosleep ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@req CONST =>>BYTE, @rem MUT =>>BYTE; RETURN I32)
+  {
+    LI a7, 101
+    ECALL
+    RET
+  }
+
   ::nanosleep ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(@req CONST =>>BYTE, @rem MUT =>>BYTE; RETURN I32)
   {
@@ -961,6 +1280,24 @@ LANGUAGE QUXLANG EN 0.0;
   {
     MOV X8, 172
     SVC 0
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V getpid operation. $>
+  ::getpid ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(; RETURN I32)
+  {
+    LI a7, 172
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V getpid operation. $>
+  ::getpid ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(; RETURN I32)
+  {
+    LI a7, 172
+    ECALL
     RET
   }
 
@@ -1010,6 +1347,24 @@ LANGUAGE QUXLANG EN 0.0;
   {
     MOV X8, 129
     SVC 0
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V kill operation. $>
+  ::kill ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@pid I32, @sig I32; RETURN I32)
+  {
+    LI a7, 129
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V kill operation. $>
+  ::kill ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@pid I32, @sig I32; RETURN I32)
+  {
+    LI a7, 129
+    ECALL
     RET
   }
 

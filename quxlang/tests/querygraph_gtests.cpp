@@ -462,6 +462,8 @@ TEST(querygraph_queries, architecture_keywords_reflect_machine_info)
     EXPECT_FALSE(evaluate(quxlang::cpu::arm_32, "ARCH_IS_ARM64"));
     EXPECT_TRUE(evaluate(quxlang::cpu::arm_64, "ARCH_IS_ARM64"));
     EXPECT_FALSE(evaluate(quxlang::cpu::arm_64, "ARCH_IS_ARM32"));
+    EXPECT_TRUE(evaluate(quxlang::cpu::riscv_32, "ARCH_IS_RISCV32"));
+    EXPECT_FALSE(evaluate(quxlang::cpu::riscv_64, "ARCH_IS_RISCV32"));
     EXPECT_TRUE(evaluate(quxlang::cpu::riscv_64, "ARCH_IS_RISCV64"));
     EXPECT_FALSE(evaluate(quxlang::cpu::x86_64, "ARCH_IS_RISCV64"));
     EXPECT_TRUE(evaluate(quxlang::cpu::z_arch, "ARCH_IS_Z_ARCH"));

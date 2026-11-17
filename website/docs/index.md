@@ -17,9 +17,9 @@ Quxlang is in early development stages, and `qxc` can target Windows, MacOS and 
 Future support for various BSD, Hurd, and other open source operating systems is planned for
 future work.
 
-For native targets using LLVM, it currently supports x86, x64, ARM, ARM64 and z/Architecture(s390).
-Other architectures like RISC-V, POWER, SPARC, LoongArch64 and are planned to get future support,
-with RISC-V being the priority next target.
+The LLVM backend supports x86, x64, ARM32, ARM64, and z/Architecture (s390).
+Linux also supports RISC-V RV32GC and RV64GC targets. Support for POWER, SPARC,
+and LoongArch64 is planned.
 
 For non-native targets, `qxc` currently supports the Cortado backend for generating
 executable jar files which can be run using `java -jar <jarfile>`. Note that the

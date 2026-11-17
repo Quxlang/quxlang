@@ -146,7 +146,7 @@ namespace quxlang::parsers
         auto [member, name] = std::move(*name_opt);
         constexpr std::string_view detect_prefix = "DETECT_";
         bool const is_cpu_attribute_detector = !member && name.starts_with(detect_prefix) && !is_cpu_attribute_group(std::string_view(name).substr(detect_prefix.size())) && parse_cpu_attribute_stem(std::string_view(name).substr(detect_prefix.size())).has_value();
-        if (!member && !ctx.parsing_runtime_module && (keywords::runtime_only_declared_symbols.contains(name) || is_cpu_attribute_detector))
+        if (!member && !ctx.parsing_runtime_module && (keywords::runtime_only_declared_symbols.contains(name) || is_cpu_attribute_detector || is_builtin_atomic_runtime_name(name)))
         {
             throw syntax_compilation_error("Runtime declaration ::" + name + " is only allowed in the runtime module");
         }

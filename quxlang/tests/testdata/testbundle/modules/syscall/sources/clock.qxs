@@ -38,6 +38,24 @@ DOC <$ The structure stores a native timestamp with 64-bit seconds and nanosecon
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V clock gettime operation. $>
+  ::clock_gettime ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@clock I32, @output MUT->timespec64; RETURN I32)
+  {
+    LI a7, 403
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V clock gettime operation. $>
+  ::clock_gettime ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@clock I32, @output MUT->timespec64; RETURN I32)
+  {
+    LI a7, 113
+    ECALL
+    RET
+  }
+
   ::clock_gettime ASM_PROCEDURE X86
     CALLABLE CALLCONV CCALL(@clock I32, @output MUT->timespec64; RETURN I32)
   {

@@ -385,6 +385,10 @@ PRIVATE(MODULE) ::unwind_caller FUNCTION(@context MUT& exception_unwind_context,
         {
           IF (index >= 256 && index < 288) { caller.registers[index + 128] := unwind_load_word(@address address + 4); }
         }
+        STATIC_IF(ARCH_IS_RISCV32)
+        {
+          IF (index >= 32 && index < 64) { caller.registers[index + 128] := unwind_load_word(@address address + 4); }
+        }
         STATIC_IF(OS_WINDOWS && ARCH_IS_X64)
         {
           IF (index >= 23 && index <= 32) { caller.registers[index + 128] := unwind_load_word(@address address + 8); }
@@ -398,6 +402,13 @@ PRIVATE(MODULE) ::unwind_caller FUNCTION(@context MUT& exception_unwind_context,
       STATIC_IF(ARCH_IS_ARM32)
       {
         IF (index >= 256 && index < 288)
+        {
+          caller.registers[index + 128] := context.registers[state.registers[index].register_index + 128];
+        }
+      }
+      STATIC_IF(ARCH_IS_RISCV32)
+      {
+        IF (index >= 32 && index < 64)
         {
           caller.registers[index + 128] := context.registers[state.registers[index].register_index + 128];
         }
@@ -416,6 +427,7 @@ PRIVATE(MODULE) ::unwind_caller FUNCTION(@context MUT& exception_unwind_context,
   STATIC_ELSE STATIC_IF(ARCH_IS_X86) { caller.registers[4] := context.cfa; }
   STATIC_ELSE STATIC_IF(ARCH_IS_ARM32) { caller.registers[13] := context.cfa; }
   STATIC_ELSE STATIC_IF(ARCH_IS_ARM64) { caller.registers[31] := context.cfa; }
+  STATIC_ELSE STATIC_IF(ARCH_IS_RISCV32 || ARCH_IS_RISCV64) { caller.registers[2] := context.cfa; }
   STATIC_ELSE STATIC_IF(ARCH_IS_Z_ARCH) { caller.registers[15] := context.cfa - 160; }
   caller.ip := caller.registers[context.return_register];
   RETURN TRUE;
@@ -457,6 +469,7 @@ PRIVATE(MODULE) ::unwind_set_ip FUNCTION(@context ADDRESS, @value UINTPTR) NOEXC
   STATIC_ELSE STATIC_IF(ARCH_IS_X86) { pointer->.registers[4] += pointer->.stack_argument_size; }
   STATIC_ELSE STATIC_IF(ARCH_IS_ARM32) { pointer->.registers[13] += pointer->.stack_argument_size; }
   STATIC_ELSE STATIC_IF(ARCH_IS_ARM64) { pointer->.registers[31] += pointer->.stack_argument_size; }
+  STATIC_ELSE STATIC_IF(ARCH_IS_RISCV32 || ARCH_IS_RISCV64) { pointer->.registers[2] += pointer->.stack_argument_size; }
   STATIC_ELSE STATIC_IF(ARCH_IS_Z_ARCH) { pointer->.registers[15] += pointer->.stack_argument_size; }
   pointer->.ip := value;
 }
@@ -498,6 +511,7 @@ PRIVATE(MODULE) ::unwind_raise FUNCTION(@record ADDRESS): I32
   STATIC_ELSE STATIC_IF(ARCH_IS_X86) { context.ip := context.registers[8]; }
   STATIC_ELSE STATIC_IF(ARCH_IS_ARM32) { context.ip := context.registers[15]; }
   STATIC_ELSE STATIC_IF(ARCH_IS_ARM64) { context.ip := context.registers[32]; }
+  STATIC_ELSE STATIC_IF(ARCH_IS_RISCV32 || ARCH_IS_RISCV64) { context.ip := context.registers[1]; }
   STATIC_ELSE STATIC_IF(ARCH_IS_Z_ARCH) { context.ip := context.registers[64]; }
   pointer->.cursor := context;
   LOOP WHILE(TRUE) DO
@@ -530,6 +544,7 @@ PRIVATE(MODULE) ::unwind_resume FUNCTION(@record ADDRESS)
   STATIC_ELSE STATIC_IF(ARCH_IS_X86) { context.ip := context.registers[8]; }
   STATIC_ELSE STATIC_IF(ARCH_IS_ARM32) { context.ip := context.registers[15]; }
   STATIC_ELSE STATIC_IF(ARCH_IS_ARM64) { context.ip := context.registers[32]; }
+  STATIC_ELSE STATIC_IF(ARCH_IS_RISCV32 || ARCH_IS_RISCV64) { context.ip := context.registers[1]; }
   STATIC_ELSE STATIC_IF(ARCH_IS_Z_ARCH) { context.ip := context.registers[64]; }
   pointer->.cursor := context;
   unwind_cleanup_pass(@record pointer);

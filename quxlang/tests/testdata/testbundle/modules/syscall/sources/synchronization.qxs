@@ -124,6 +124,22 @@ LANGUAGE QUXLANG EN 0.0;
     SVC 0
     RET
   }
+
+  DOC <$ Implements the Linux RISC-V sched yield operation. $>
+  ::sched_yield ASM_PROCEDURE RISCV32 CALLABLE CALLCONV CCALL(; RETURN I32)
+  {
+    LI a7, 124
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V sched yield operation. $>
+  ::sched_yield ASM_PROCEDURE RISCV64 CALLABLE CALLCONV CCALL(; RETURN I32)
+  {
+    LI a7, 124
+    ECALL
+    RET
+  }
   DOC <$ Yields execution to another runnable thread. $>
   ::sched_yield ASM_PROCEDURE Z_ARCH CALLABLE CALLCONV CCALL(; RETURN I32)
   {

@@ -545,3 +545,283 @@ ASM_PROCEDURE ARM32
   MOVT R0, :upper16:quxlang_unwind_end
   BX LR
 }
+
+DOC <$ Saves RISC-V preserved integer and floating-point registers for stack walking. $>
+PRIVATE(MODULE) ::unwind_capture INCLUDE_IF(OS_LINUX)
+ASM_PROCEDURE RISCV32
+  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [unwind_register_storage_count]UINTPTR)
+{
+  SW ra, 4(a0)
+  SW sp, 8(a0)
+  SW s0, 32(a0)
+  SW s1, 36(a0)
+  SW s2, 72(a0)
+  SW s3, 76(a0)
+  SW s4, 80(a0)
+  SW s5, 84(a0)
+  SW s6, 88(a0)
+  SW s7, 92(a0)
+  SW s8, 96(a0)
+  SW s9, 100(a0)
+  SW s10, 104(a0)
+  SW s11, 108(a0)
+  ADDI sp, sp, -16
+  FSD fs0, 0(sp)
+  LW t0, 0(sp)
+  SW t0, 160(a0)
+  LW t0, 4(sp)
+  SW t0, 672(a0)
+  FSD fs1, 0(sp)
+  LW t0, 0(sp)
+  SW t0, 164(a0)
+  LW t0, 4(sp)
+  SW t0, 676(a0)
+  FSD fs2, 0(sp)
+  LW t0, 0(sp)
+  SW t0, 200(a0)
+  LW t0, 4(sp)
+  SW t0, 712(a0)
+  FSD fs3, 0(sp)
+  LW t0, 0(sp)
+  SW t0, 204(a0)
+  LW t0, 4(sp)
+  SW t0, 716(a0)
+  FSD fs4, 0(sp)
+  LW t0, 0(sp)
+  SW t0, 208(a0)
+  LW t0, 4(sp)
+  SW t0, 720(a0)
+  FSD fs5, 0(sp)
+  LW t0, 0(sp)
+  SW t0, 212(a0)
+  LW t0, 4(sp)
+  SW t0, 724(a0)
+  FSD fs6, 0(sp)
+  LW t0, 0(sp)
+  SW t0, 216(a0)
+  LW t0, 4(sp)
+  SW t0, 728(a0)
+  FSD fs7, 0(sp)
+  LW t0, 0(sp)
+  SW t0, 220(a0)
+  LW t0, 4(sp)
+  SW t0, 732(a0)
+  FSD fs8, 0(sp)
+  LW t0, 0(sp)
+  SW t0, 224(a0)
+  LW t0, 4(sp)
+  SW t0, 736(a0)
+  FSD fs9, 0(sp)
+  LW t0, 0(sp)
+  SW t0, 228(a0)
+  LW t0, 4(sp)
+  SW t0, 740(a0)
+  FSD fs10, 0(sp)
+  LW t0, 0(sp)
+  SW t0, 232(a0)
+  LW t0, 4(sp)
+  SW t0, 744(a0)
+  FSD fs11, 0(sp)
+  LW t0, 0(sp)
+  SW t0, 236(a0)
+  LW t0, 4(sp)
+  SW t0, 748(a0)
+  ADDI sp, sp, 16
+  RET
+}
+
+DOC <$ Restores RISC-V preserved registers and enters an exception landing pad. $>
+PRIVATE(MODULE) ::unwind_restore INCLUDE_IF(OS_LINUX)
+ASM_PROCEDURE RISCV32
+  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [unwind_register_storage_count]UINTPTR, @ip UINTPTR)
+{
+  MV t1, a0
+  MV t2, a1
+  ADDI sp, sp, -16
+  LW t0, 160(t1)
+  SW t0, 0(sp)
+  LW t0, 672(t1)
+  SW t0, 4(sp)
+  FLD fs0, 0(sp)
+  LW t0, 164(t1)
+  SW t0, 0(sp)
+  LW t0, 676(t1)
+  SW t0, 4(sp)
+  FLD fs1, 0(sp)
+  LW t0, 200(t1)
+  SW t0, 0(sp)
+  LW t0, 712(t1)
+  SW t0, 4(sp)
+  FLD fs2, 0(sp)
+  LW t0, 204(t1)
+  SW t0, 0(sp)
+  LW t0, 716(t1)
+  SW t0, 4(sp)
+  FLD fs3, 0(sp)
+  LW t0, 208(t1)
+  SW t0, 0(sp)
+  LW t0, 720(t1)
+  SW t0, 4(sp)
+  FLD fs4, 0(sp)
+  LW t0, 212(t1)
+  SW t0, 0(sp)
+  LW t0, 724(t1)
+  SW t0, 4(sp)
+  FLD fs5, 0(sp)
+  LW t0, 216(t1)
+  SW t0, 0(sp)
+  LW t0, 728(t1)
+  SW t0, 4(sp)
+  FLD fs6, 0(sp)
+  LW t0, 220(t1)
+  SW t0, 0(sp)
+  LW t0, 732(t1)
+  SW t0, 4(sp)
+  FLD fs7, 0(sp)
+  LW t0, 224(t1)
+  SW t0, 0(sp)
+  LW t0, 736(t1)
+  SW t0, 4(sp)
+  FLD fs8, 0(sp)
+  LW t0, 228(t1)
+  SW t0, 0(sp)
+  LW t0, 740(t1)
+  SW t0, 4(sp)
+  FLD fs9, 0(sp)
+  LW t0, 232(t1)
+  SW t0, 0(sp)
+  LW t0, 744(t1)
+  SW t0, 4(sp)
+  FLD fs10, 0(sp)
+  LW t0, 236(t1)
+  SW t0, 0(sp)
+  LW t0, 748(t1)
+  SW t0, 4(sp)
+  FLD fs11, 0(sp)
+  ADDI sp, sp, 16
+  LW ra, 4(t1)
+  LW sp, 8(t1)
+  LW s0, 32(t1)
+  LW s1, 36(t1)
+  LW s2, 72(t1)
+  LW s3, 76(t1)
+  LW s4, 80(t1)
+  LW s5, 84(t1)
+  LW s6, 88(t1)
+  LW s7, 92(t1)
+  LW s8, 96(t1)
+  LW s9, 100(t1)
+  LW s10, 104(t1)
+  LW s11, 108(t1)
+  LW a0, 40(t1)
+  LW a1, 44(t1)
+  JR t2
+}
+
+DOC <$ Returns the beginning of the executable unwind section. $>
+PRIVATE(MODULE) ::unwind_section_begin INCLUDE_IF(OS_LINUX)
+ASM_PROCEDURE RISCV32
+  CALLABLE CALLCONV CCALL NOEXCEPT(; RETURN ADDRESS)
+{
+  LA a0, quxlang_unwind_begin
+  RET
+}
+
+DOC <$ Returns the end of the executable unwind section. $>
+PRIVATE(MODULE) ::unwind_section_end INCLUDE_IF(OS_LINUX)
+ASM_PROCEDURE RISCV32
+  CALLABLE CALLCONV CCALL NOEXCEPT(; RETURN ADDRESS)
+{
+  LA a0, quxlang_unwind_end
+  RET
+}
+
+DOC <$ Saves RISC-V preserved integer and floating-point registers for stack walking. $>
+PRIVATE(MODULE) ::unwind_capture INCLUDE_IF(OS_LINUX)
+ASM_PROCEDURE RISCV64
+  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [unwind_register_storage_count]UINTPTR)
+{
+  SD ra, 8(a0)
+  SD sp, 16(a0)
+  SD s0, 64(a0)
+  SD s1, 72(a0)
+  SD s2, 144(a0)
+  SD s3, 152(a0)
+  SD s4, 160(a0)
+  SD s5, 168(a0)
+  SD s6, 176(a0)
+  SD s7, 184(a0)
+  SD s8, 192(a0)
+  SD s9, 200(a0)
+  SD s10, 208(a0)
+  SD s11, 216(a0)
+  FSD fs0, 320(a0)
+  FSD fs1, 328(a0)
+  FSD fs2, 400(a0)
+  FSD fs3, 408(a0)
+  FSD fs4, 416(a0)
+  FSD fs5, 424(a0)
+  FSD fs6, 432(a0)
+  FSD fs7, 440(a0)
+  FSD fs8, 448(a0)
+  FSD fs9, 456(a0)
+  FSD fs10, 464(a0)
+  FSD fs11, 472(a0)
+  RET
+}
+
+DOC <$ Restores RISC-V preserved registers and enters an exception landing pad. $>
+PRIVATE(MODULE) ::unwind_restore INCLUDE_IF(OS_LINUX)
+ASM_PROCEDURE RISCV64
+  CALLABLE CALLCONV CCALL NOEXCEPT(@registers MUT -> [unwind_register_storage_count]UINTPTR, @ip UINTPTR)
+{
+  MV t1, a0
+  MV t2, a1
+  FLD fs0, 320(t1)
+  FLD fs1, 328(t1)
+  FLD fs2, 400(t1)
+  FLD fs3, 408(t1)
+  FLD fs4, 416(t1)
+  FLD fs5, 424(t1)
+  FLD fs6, 432(t1)
+  FLD fs7, 440(t1)
+  FLD fs8, 448(t1)
+  FLD fs9, 456(t1)
+  FLD fs10, 464(t1)
+  FLD fs11, 472(t1)
+  LD ra, 8(t1)
+  LD sp, 16(t1)
+  LD s0, 64(t1)
+  LD s1, 72(t1)
+  LD s2, 144(t1)
+  LD s3, 152(t1)
+  LD s4, 160(t1)
+  LD s5, 168(t1)
+  LD s6, 176(t1)
+  LD s7, 184(t1)
+  LD s8, 192(t1)
+  LD s9, 200(t1)
+  LD s10, 208(t1)
+  LD s11, 216(t1)
+  LD a0, 80(t1)
+  LD a1, 88(t1)
+  JR t2
+}
+
+DOC <$ Returns the beginning of the executable unwind section. $>
+PRIVATE(MODULE) ::unwind_section_begin INCLUDE_IF(OS_LINUX)
+ASM_PROCEDURE RISCV64
+  CALLABLE CALLCONV CCALL NOEXCEPT(; RETURN ADDRESS)
+{
+  LA a0, quxlang_unwind_begin
+  RET
+}
+
+DOC <$ Returns the end of the executable unwind section. $>
+PRIVATE(MODULE) ::unwind_section_end INCLUDE_IF(OS_LINUX)
+ASM_PROCEDURE RISCV64
+  CALLABLE CALLCONV CCALL NOEXCEPT(; RETURN ADDRESS)
+{
+  LA a0, quxlang_unwind_end
+  RET
+}

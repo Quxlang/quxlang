@@ -1031,6 +1031,12 @@ namespace quxlang
         return name == "LOAD" || name == "STORE" || name == "EXCHANGE" || name == "COMPARE_EXCHANGE" || is_builtin_atomic_rmw_member_name(name);
     }
 
+    /** Returns true when a name denotes a runtime implementation of a non-native atomic operation. */
+    inline auto is_builtin_atomic_runtime_name(std::string_view name) -> bool
+    {
+        return name.starts_with("ATOMIC_") && is_builtin_atomic_member_name(name.substr(7));
+    }
+
     /// Returns true when a builtin name denotes a nominal ENUM type.
     inline auto is_builtin_enum_name(std::string_view name) -> bool
     {

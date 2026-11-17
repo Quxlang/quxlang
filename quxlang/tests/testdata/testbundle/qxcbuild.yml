@@ -96,6 +96,68 @@ targets:
         options:
           option_num: 5
         source: tests
+  linux-riscv32:
+    platform: linux
+    cpu: RISCV32
+    backend: llvm
+    modules:
+      syscall:
+        source: syscall
+      posix:
+        source: posix
+      RUNTIME:
+        source: runtime
+      std:
+        source: std
+      io:
+        source: io
+      net:
+        source: net
+      foolib:
+        source: foolib1_0
+      barlib:
+        source: barlib2_1
+      helloworld:
+        source: helloworld_main
+      stepping_demo:
+        source: stepping_demo_main
+      benchmarks:
+        source: benchmarks
+      tests:
+        options:
+          option_num: 5
+        source: tests
+  linux-riscv64:
+    platform: linux
+    cpu: RISCV64
+    backend: llvm
+    modules:
+      syscall:
+        source: syscall
+      posix:
+        source: posix
+      RUNTIME:
+        source: runtime
+      std:
+        source: std
+      io:
+        source: io
+      net:
+        source: net
+      foolib:
+        source: foolib1_0
+      barlib:
+        source: barlib2_1
+      helloworld:
+        source: helloworld_main
+      stepping_demo:
+        source: stepping_demo_main
+      benchmarks:
+        source: benchmarks
+      tests:
+        options:
+          option_num: 5
+        source: tests
   linux-arm32:
     platform: linux
     cpu: ARM32
@@ -392,3 +454,65 @@ outputs:
     build_type: Release
     main_module: benchmark_files
     benchmark: "::copy"
+
+  linux-riscv32/helloworld:
+    target: linux-riscv32
+    type: executable
+    main_module: helloworld
+    build_type: Quick
+  linux-riscv32/helloworld.dbg:
+    target: linux-riscv32
+    type: executable
+    main_module: helloworld
+    build_type: Debug
+  linux-riscv32/helloworld.release:
+    target: linux-riscv32
+    type: executable
+    main_module: helloworld
+    build_type: Release
+  linux-riscv32/stepping-demo:
+    target: linux-riscv32
+    type: executable
+    main_module: stepping_demo
+    build_type: Release
+  linux-riscv32/tests:
+    target: linux-riscv32
+    type: unit_test_suite
+    test_modules: [RUNTIME, std, syscall, posix, io, net, tests]
+    build_type: Quick
+  linux-riscv32/tests.release:
+    target: linux-riscv32
+    type: unit_test_suite
+    test_modules: [RUNTIME, std, syscall, posix, io, net, tests]
+    build_type: Release
+
+  linux-riscv64/helloworld:
+    target: linux-riscv64
+    type: executable
+    main_module: helloworld
+    build_type: Quick
+  linux-riscv64/helloworld.dbg:
+    target: linux-riscv64
+    type: executable
+    main_module: helloworld
+    build_type: Debug
+  linux-riscv64/helloworld.release:
+    target: linux-riscv64
+    type: executable
+    main_module: helloworld
+    build_type: Release
+  linux-riscv64/stepping-demo:
+    target: linux-riscv64
+    type: executable
+    main_module: stepping_demo
+    build_type: Release
+  linux-riscv64/tests:
+    target: linux-riscv64
+    type: unit_test_suite
+    test_modules: [RUNTIME, std, syscall, posix, io, net, tests]
+    build_type: Quick
+  linux-riscv64/tests.release:
+    target: linux-riscv64
+    type: unit_test_suite
+    test_modules: [RUNTIME, std, syscall, posix, io, net, tests]
+    build_type: Release

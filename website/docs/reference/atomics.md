@@ -112,6 +112,16 @@ operation returns `FALSE` and writes the observed payload to `expected`.
 | `ATOMIC_ACQREL` | `ATOMIC_RELAXED`, `ATOMIC_ACQUIRE` |
 | `ATOMIC_SEQCST` | `ATOMIC_RELAXED`, `ATOMIC_ACQUIRE`, `ATOMIC_SEQCST` |
 
+The runtime module serializes atomic operations wider than the target's native
+atomic width through a shared lock. RV32 uses this path for 64-bit atomics.
+These operations preserve their synchronization contract and are not lock-free.
+For each member operation `OP`, the compiler resolves the runtime function
+`ATOMIC_OP#T`. Its named `THIS` argument refers to the atomic storage; its
+remaining arguments and return type match the corresponding member operation.
+These runtime declarations are restricted to `MODULE(RUNTIME)`. The standard
+runtime uses sequentially consistent locking and bypasses locking during
+compile-time evaluation.
+
 The synchronization types in `std` provide higher-level ownership models.
 Related language features are described in
 [Thread-Local Variables](thread-local-variables.md) and

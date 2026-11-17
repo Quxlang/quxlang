@@ -53,6 +53,24 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V epoll create1 operation. $>
+  ::epoll_create1 ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@flags I32; RETURN I32)
+  {
+    LI a7, 20
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V epoll create1 operation. $>
+  ::epoll_create1 ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@flags I32; RETURN I32)
+  {
+    LI a7, 20
+    ECALL
+    RET
+  }
+
   DOC <$ Creates an epoll instance. $>
   ::epoll_create1 ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(@flags I32; RETURN I32)
@@ -103,6 +121,24 @@ LANGUAGE QUXLANG EN 0.0;
   {
     MOV X8, 19
     SVC 0
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V eventfd2 operation. $>
+  ::eventfd2 ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@initial U32, @flags I32; RETURN I32)
+  {
+    LI a7, 19
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V eventfd2 operation. $>
+  ::eventfd2 ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@initial U32, @flags I32; RETURN I32)
+  {
+    LI a7, 19
+    ECALL
     RET
   }
 
@@ -164,6 +200,24 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V epoll ctl operation. $>
+  ::epoll_ctl ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@queue I32, @operation I32, @descriptor I32, @event CONST->epoll_event; RETURN I32)
+  {
+    LI a7, 21
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V epoll ctl operation. $>
+  ::epoll_ctl ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@queue I32, @operation I32, @descriptor I32, @event CONST->epoll_event; RETURN I32)
+  {
+    LI a7, 21
+    ECALL
+    RET
+  }
+
   DOC <$ Updates an epoll registration. $>
   ::epoll_ctl ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(@queue I32, @operation I32, @descriptor I32, @event CONST->epoll_event; RETURN I32)
@@ -221,6 +275,28 @@ LANGUAGE QUXLANG EN 0.0;
     MOV X5, 8
     MOV X8, 22
     SVC 0
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V epoll wait operation. $>
+  ::epoll_wait ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@queue I32, @event MUT->epoll_event, @maximum I32, @timeout I32; RETURN I32)
+  {
+    LI a4, 0
+    LI a5, 8
+    LI a7, 22
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V epoll wait operation. $>
+  ::epoll_wait ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@queue I32, @event MUT->epoll_event, @maximum I32, @timeout I32; RETURN I32)
+  {
+    LI a4, 0
+    LI a5, 8
+    LI a7, 22
+    ECALL
     RET
   }
 
@@ -291,6 +367,24 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V pread64 operation. $>
+  ::pread64 ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@descriptor I32, @buffer MUT=>>BYTE, @count SZ, @offset U64; RETURN SZ)
+  {
+    LI a7, 67
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V pread64 operation. $>
+  ::pread64 ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@descriptor I32, @buffer MUT=>>BYTE, @count SZ, @offset U64; RETURN SZ)
+  {
+    LI a7, 67
+    ECALL
+    RET
+  }
+
   DOC <$ Reads a byte range at an explicit file offset. $>
   ::pread64 ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(@descriptor I32, @buffer MUT=>>BYTE, @count SZ, @offset U64; RETURN SZ)
@@ -358,6 +452,24 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V pwrite64 operation. $>
+  ::pwrite64 ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@descriptor I32, @buffer CONST=>>BYTE, @count SZ, @offset U64; RETURN SZ)
+  {
+    LI a7, 68
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V pwrite64 operation. $>
+  ::pwrite64 ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@descriptor I32, @buffer CONST=>>BYTE, @count SZ, @offset U64; RETURN SZ)
+  {
+    LI a7, 68
+    ECALL
+    RET
+  }
+
   DOC <$ Writes a byte range at an explicit file offset. $>
   ::pwrite64 ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(@descriptor I32, @buffer CONST=>>BYTE, @count SZ, @offset U64; RETURN SZ)
@@ -408,6 +520,24 @@ LANGUAGE QUXLANG EN 0.0;
   {
     MOV X8, 279
     SVC 0
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V memfd create operation. $>
+  ::memfd_create ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@name CONST=>>BYTE, @flags U32; RETURN I32)
+  {
+    LI a7, 279
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V memfd create operation. $>
+  ::memfd_create ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@name CONST=>>BYTE, @flags U32; RETURN I32)
+  {
+    LI a7, 279
+    ECALL
     RET
   }
 

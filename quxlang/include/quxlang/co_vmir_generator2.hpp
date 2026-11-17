@@ -5403,6 +5403,54 @@ namespace quxlang
                 throw compiler_bug("Expected builtin functanoid invocation, got non-builtin: " + to_string(what));
             }
 
+            if (!cpu_is_layoutless(machine_info.cpu_type))
+            {
+                instanciation_reference const* operation = what.temploid.templexoid.cast_ptr< instanciation_reference >();
+                submember const* member = operation ? operation->temploid.templexoid.cast_ptr< submember >() : nullptr;
+                if (member && is_atomic_type(member->of))
+                {
+                    bool atomic_access;
+                    if (member->name == "COMPARE_EXCHANGE")
+                    {
+                        std::pair< atomic_access_mode, atomic_access_mode > modes = compare_exchange_atomic_modes_from_instanciation(*operation);
+                        atomic_access = modes.first != atomic_access_mode::nonatomic || modes.second != atomic_access_mode::nonatomic;
+                    }
+                    else
+                    {
+                        atomic_access = single_atomic_mode_from_instanciation(*operation) != atomic_access_mode::nonatomic;
+                    }
+                    class_placement_info placement = co_await rpnx::querygraph::request< class_placement_info_query >(member->of);
+                    if (atomic_access && placement.size * 8 > machine_info.max_native_atomic_storage_bits())
+                    {
+                        type_symbol runtime_operation = subsymbol{.of = absolute_module_reference{.module_name = "RUNTIME"}, .name = "ATOMIC_" + member->name};
+                        if (co_await rpnx::querygraph::request< symbol_type_query >(runtime_operation) == symbol_kind::noexist)
+                        {
+                            throw semantic_compilation_error("Non-native atomic " + member->name + " requires RUNTIME_MODULE::ATOMIC_" + member->name);
+                        }
+                        initialization_reference runtime_template{.initializee = runtime_operation, .context = body_context()};
+                        runtime_template.arguments.push_back(expression_arg{.name = "T", .value = expression_symbol_reference{.symbol = *atomic_type_argument(member->of)}});
+                        std::optional< type_symbol > resolved = co_await rpnx::querygraph::request< lookup_query >(contextual_type_reference{.context = body_context(), .type = runtime_template});
+                        if (!resolved.has_value())
+                        {
+                            throw semantic_compilation_error("Could not instantiate RUNTIME_MODULE::ATOMIC_" + member->name);
+                        }
+                        codegen_invocation_args runtime_args = args;
+                        runtime_args.named.erase("RETURN");
+                        value_index result = co_await this->co_gen_call_functum(bidx, *resolved, std::move(runtime_args));
+                        if (args.named.contains("RETURN"))
+                        {
+                            type_symbol expected_type = co_await rpnx::querygraph::request< functanoid_return_type_query >(what);
+                            if (current_type(bidx, result) != expected_type)
+                            {
+                                throw semantic_compilation_error("RUNTIME_MODULE::ATOMIC_" + member->name + " returns " + to_string(current_type(bidx, result)) + ", expected " + to_string(expected_type));
+                            }
+                            this->emit(bidx, vmir2::relocate_value{.source = get_local_index(result), .target = get_local_index(args.named.at("RETURN"))});
+                        }
+                        co_return;
+                    }
+                }
+            }
+
             if (builtin_kind == builtin_function_kind::builtin_special)
             {
                 if (what.temploid.templexoid == type_symbol(builtin_symbol{"SQRT"}))
@@ -8411,6 +8459,11 @@ namespace quxlang
             if (kw.keyword == "ARCH_IS_ARM64")
             {
                 co_return this->create_bool_value(bidx, arch.cpu_type == cpu::arm_64);
+            }
+
+            if (kw.keyword == "ARCH_IS_RISCV32")
+            {
+                co_return this->create_bool_value(bidx, arch.cpu_type == cpu::riscv_32);
             }
 
             if (kw.keyword == "ARCH_IS_RISCV64")

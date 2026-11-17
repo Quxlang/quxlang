@@ -85,6 +85,30 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V futex waitv operation. $>
+  ::futex_waitv ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(
+      @waiters ADDRESS, @count U32, @flags U32, @timeout ADDRESS, @clock I32;
+      RETURN I32
+    )
+  {
+    LI a7, 449
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V futex waitv operation. $>
+  ::futex_waitv ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(
+      @waiters ADDRESS, @count U32, @flags U32, @timeout ADDRESS, @clock I32;
+      RETURN I32
+    )
+  {
+    LI a7, 449
+    ECALL
+    RET
+  }
+
   DOC <$
     Invokes Linux futex_waitv and returns a waiter index or a negative errno.
     Waiters points to count Linux futex_waitv records; timeout is null or points

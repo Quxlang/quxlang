@@ -72,6 +72,7 @@ namespace quxlang
                 "ARCH_IS_X86",
                 "ARCH_IS_ARM32",
                 "ARCH_IS_ARM64",
+                "ARCH_IS_RISCV32",
                 "ARCH_IS_RISCV64",
                 "ARCH_IS_Z_ARCH",
                 "ARCH_IS_JVM",

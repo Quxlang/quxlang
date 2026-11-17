@@ -182,6 +182,11 @@ DOC <$ Selects Quxlang TRY boundaries and installs platform cleanup contexts wit
         unwind_set_register(@context context, @index 0, @value record);
         unwind_set_register(@context context, @index 1, @value ADDRESS() + selector);
       }
+      STATIC_ELSE STATIC_IF(ARCH_IS_RISCV32 || ARCH_IS_RISCV64)
+      {
+        unwind_set_register(@context context, @index 10, @value record);
+        unwind_set_register(@context context, @index 11, @value ADDRESS() + selector);
+      }
       STATIC_ELSE STATIC_IF(ARCH_IS_X86)
       {
         unwind_set_register(@context context, @index 0, @value record);

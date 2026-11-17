@@ -591,6 +591,20 @@ DOC <$ Allocation and placement preserve ARG constructor priority. $>
   RET
 }
 
+DOC <$ Supplies a native-only procedure for constexpr rejection tests on RV32. $>
+::constexpr_asm_size ASM_PROCEDURE RISCV32
+  CALLABLE CALLCONV CCALL(@value SZ; RETURN SZ)
+{
+  RET
+}
+
+DOC <$ Supplies a native-only procedure for constexpr rejection tests on RV64. $>
+::constexpr_asm_size ASM_PROCEDURE RISCV64
+  CALLABLE CALLCONV CCALL(@value SZ; RETURN SZ)
+{
+  RET
+}
+
 ::constexpr_asm_size ASM_PROCEDURE Z_ARCH
   CALLABLE CALLCONV CCALL(@value SZ; RETURN SZ)
 {

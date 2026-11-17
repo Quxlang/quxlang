@@ -111,10 +111,10 @@ namespace quxlang
             {
             case cpu::none:
                 throw std::invalid_argument("Native atomic size requires a CPU target");
-            case cpu::x86_32:
-            case cpu::arm_32:
             case cpu::riscv_32:
                 return 32;
+            case cpu::x86_32:
+            case cpu::arm_32:
             case cpu::x86_64:
             case cpu::arm_64:
             case cpu::riscv_64:
@@ -224,10 +224,18 @@ namespace quxlang
             {
             case cpu::none:
                 throw std::invalid_argument("Float alignment requires a CPU target");
-            case cpu::x86_32:
-            case cpu::riscv_32: {
+            case cpu::x86_32: {
                 std::uint64_t alignment = 1;
                 while (alignment * 2 <= byte_count && alignment * 2 <= 4)
+                {
+                    alignment *= 2;
+                }
+                return alignment;
+            }
+            case cpu::riscv_32:
+            case cpu::riscv_64: {
+                std::uint64_t alignment = 1;
+                while (alignment * 2 <= byte_count && alignment * 2 <= 16)
                 {
                     alignment *= 2;
                 }
@@ -237,7 +245,6 @@ namespace quxlang
                 return byte_count >= 8 ? max_int_align() : byte_count >= 4 ? 4 : byte_count >= 2 ? 2 : 1;
             case cpu::x86_64:
             case cpu::arm_64:
-            case cpu::riscv_64:
             case cpu::z_arch: {
                 std::uint64_t alignment = 1;
                 while (alignment * 2 <= byte_count && alignment * 2 <= 8)

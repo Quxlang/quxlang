@@ -70,6 +70,7 @@
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Target/TargetMachine.h>
+#include <llvm/TargetParser/RISCVISAInfo.h>
 #include <llvm/TargetParser/Triple.h>
 #include <llvm/Transforms/Utils/Cloning.h>
 #include <llvm/Transforms/Utils/IntegerDivision.h>
@@ -383,6 +384,30 @@ namespace quxlang::llvm_backend::detail
         }
 
     public:
+        /** Returns the canonical RISC-V ISA string for the configured LLVM target features. */
+        static auto riscv_architecture_string(quxlang::llvm_backend::llvm_compilation_target const& target) -> std::string
+        {
+            std::vector< std::string > features;
+            std::string_view remaining = target.target_features;
+            while (!remaining.empty())
+            {
+                std::size_t separator = remaining.find(',');
+                features.emplace_back(remaining.substr(0, separator));
+                if (separator == std::string_view::npos)
+                {
+                    break;
+                }
+                remaining.remove_prefix(separator + 1);
+            }
+            llvm::Expected< std::unique_ptr< llvm::RISCVISAInfo > > isa = llvm::RISCVISAInfo::parseFeatures(
+                static_cast< unsigned >(target.machine.pointer_size_bytes() * 8), features);
+            if (!isa)
+            {
+                throw quxlang::semantic_compilation_error("Invalid RISC-V ISA configuration: " + llvm::toString(isa.takeError()));
+            }
+            return (*isa)->toString();
+        }
+
         /** Serializes one LLVM module in the binary bitcode format. */
         static auto module_bitcode(llvm::Module const& source_module) -> std::vector< std::byte >
         {
@@ -1111,6 +1136,10 @@ namespace quxlang::llvm_backend::detail
 
             llvm::TargetOptions options;
             options.ExceptionModel = llvm::ExceptionHandling::DwarfCFI;
+            if (machine.cpu_type == quxlang::cpu::riscv_32 || machine.cpu_type == quxlang::cpu::riscv_64)
+            {
+                options.MCOptions.ABIName = machine.cpu_type == quxlang::cpu::riscv_32 ? "ilp32d" : "lp64d";
+            }
             // The native runtime requires DWARF records for every frame, including compact-unwind candidates.
             options.MCOptions.EmitDwarfUnwind = llvm::EmitDwarfUnwindType::Always;
             llvm::Reloc::Model reloc_model = llvm::Reloc::Model::Static;
@@ -1118,6 +1147,11 @@ namespace quxlang::llvm_backend::detail
             if (machine.pointer_size_bytes() == 8)
             {
                 code_model = llvm::CodeModel::Large;
+            }
+
+            if (machine.cpu_type == quxlang::cpu::riscv_32 || machine.cpu_type == quxlang::cpu::riscv_64)
+            {
+                code_model = llvm::CodeModel::Medium;
             }
 
             std::string codegen_features = compilation_target.target_features;
@@ -1587,6 +1621,14 @@ namespace quxlang::llvm_backend::detail
                 llvm::Type* arg_types[] = {pointer_integer_type()};
                 llvm::FunctionType* const exit_type = llvm::FunctionType::get(llvm::Type::getVoidTy(context), llvm::ArrayRef< llvm::Type* >(arg_types), false);
                 llvm::InlineAsm* const exit_asm = llvm::InlineAsm::get(exit_type, "mov x8, #93\n\tsvc #0\n\tbrk #1", "{x0},~{x8},~{memory}", true);
+                builder.CreateCall(exit_asm, {exit_code_value});
+                return;
+            }
+            case quxlang::cpu::riscv_32:
+            case quxlang::cpu::riscv_64: {
+                llvm::Type* arg_types[] = {pointer_integer_type()};
+                llvm::FunctionType* exit_type = llvm::FunctionType::get(llvm::Type::getVoidTy(context), llvm::ArrayRef< llvm::Type* >(arg_types), false);
+                llvm::InlineAsm* exit_asm = llvm::InlineAsm::get(exit_type, "li a7, 93\n\tecall\n\tunimp", "{a0},~{a7},~{memory}", true);
                 builder.CreateCall(exit_asm, {exit_code_value});
                 return;
             }
@@ -2570,13 +2612,18 @@ namespace quxlang::llvm_backend::detail
         auto assembly_text(quxlang::asm_procedure const& procedure) const -> std::string
         {
             std::string text;
-            if (procedure.architecture == "ARM32" || procedure.architecture == "ARM64")
+            std::string instruction_set;
+            if (input.machine_target.machine.cpu_type == quxlang::cpu::riscv_32 || input.machine_target.machine.cpu_type == quxlang::cpu::riscv_64)
             {
-                text = quxlang::convert_to_gnu_asm(procedure.instructions.begin(), procedure.instructions.end(), procedure.name, input.machine_target.machine.cpu_type, input.machine_target.machine.binary_type == quxlang::binary::elf);
+                instruction_set = riscv_architecture_string(input.machine_target);
+            }
+            if (procedure.architecture == "ARM32" || procedure.architecture == "ARM64" || procedure.architecture == "RISCV32" || procedure.architecture == "RISCV64")
+            {
+                text = quxlang::convert_to_gnu_asm(procedure.instructions.begin(), procedure.instructions.end(), procedure.name, input.machine_target.machine.cpu_type, instruction_set, input.machine_target.machine.binary_type == quxlang::binary::elf);
             }
             else if (procedure.architecture == "Z_ARCH")
             {
-                text = quxlang::convert_to_gnu_asm(procedure.instructions.begin(), procedure.instructions.end(), procedure.name, input.machine_target.machine.cpu_type, true);
+                text = quxlang::convert_to_gnu_asm(procedure.instructions.begin(), procedure.instructions.end(), procedure.name, input.machine_target.machine.cpu_type, instruction_set, true);
             }
             else if (procedure.architecture == "X64" || procedure.architecture == "X86")
             {
@@ -6471,6 +6518,9 @@ namespace quxlang::llvm_backend::detail
                 return subtarget->checkFeatures(binary32 ? "+sse" : "+sse2");
             case quxlang::cpu::arm_64:
                 return subtarget->checkFeatures("+fp-armv8");
+            case quxlang::cpu::riscv_32:
+            case quxlang::cpu::riscv_64:
+                return subtarget->checkFeatures(binary32 ? "+f" : "+d");
             default:
                 return false;
             }
@@ -7749,6 +7799,7 @@ namespace quxlang::llvm_backend::detail
                 {
                     throw quxlang::semantic_compilation_error("Atomic compare_exchange requires integer or pointer storage in LLVM lowering");
                 }
+
                 std::uint64_t const storage_bits = storage_type->isPointerTy() ? input.machine_target.machine.pointer_size_bytes() * 8 : llvm::cast< llvm::IntegerType >(storage_type)->getBitWidth();
                 if (storage_bits > target_machine->getSubtargetImpl(*state.function)->getTargetLowering()->getMaxAtomicSizeInBitsSupported())
                 {
@@ -10212,6 +10263,16 @@ auto quxlang::llvm_backend::llvm_compilation_target_for_stepping(quxlang::machin
         .build_type = optimization,
         .policies = resolve_compilation_policies(optimization, {}),
     };
+    bool riscv_target = machine.cpu_type == quxlang::cpu::riscv_32 || machine.cpu_type == quxlang::cpu::riscv_64;
+    if (riscv_target)
+    {
+        result.cpu_name = machine.cpu_type == quxlang::cpu::riscv_32 ? "generic-rv32" : "generic-rv64";
+        result.target_features = "+i,+m,+a,+f,+d,+c,+zicsr,+zifencei,-relax";
+        for (std::string_view extension : {"I", "M", "A", "F", "D", "C", "ZICSR", "ZIFENCEI"})
+        {
+            result.fixed_cpu_attribute_values.emplace(format_cpu_attribute_stem(machine.cpu_type, "FEATURE_" + std::string(extension)), true);
+        }
+    }
     for (std::pair< std::string const, bool > const& attribute_setting : stepping.attributes)
     {
         std::map< std::string, quxlang::cpu_attribute_group >::const_iterator const group = quxlang::cpu_attribute_groups.find(attribute_setting.first);
@@ -10481,6 +10542,11 @@ auto quxlang::llvm_backend::llvm_compilation_target_for_stepping(quxlang::machin
     };
 
     std::vector< std::string > feature_settings;
+    result.target_features.clear();
+    if (riscv_target)
+    {
+        feature_settings.emplace_back("-relax");
+    }
     for (std::pair< std::string const, bool > const& attribute_setting : result.fixed_cpu_attribute_values)
     {
         std::optional< std::pair< quxlang::cpu, std::string > > parsed = quxlang::parse_cpu_attribute_stem(attribute_setting.first);
@@ -10639,15 +10705,20 @@ auto quxlang::llvm_backend::llvm_backend::post_codegen(quxlang::llvm_backend::ll
 
 auto quxlang::llvm_backend::llvm_backend::assemble(quxlang::llvm_backend::llvm_compilation_target const& target, quxlang::asm_procedure const& procedure) const -> quxlang::llvm_backend::llvm_assembled_procedure
 {
+    std::string instruction_set;
+    if (target.machine.cpu_type == cpu::riscv_32 || target.machine.cpu_type == cpu::riscv_64)
+    {
+        instruction_set = detail::llvm_module_codegen::riscv_architecture_string(target);
+    }
     auto assembly_text = [&]() -> std::string
     {
-        if (procedure.architecture == "ARM32" || procedure.architecture == "ARM64")
+        if (procedure.architecture == "ARM32" || procedure.architecture == "ARM64" || procedure.architecture == "RISCV32" || procedure.architecture == "RISCV64")
         {
-            return quxlang::convert_to_gnu_asm(procedure.instructions.begin(), procedure.instructions.end(), procedure.name, target.machine.cpu_type, target.machine.binary_type == quxlang::binary::elf);
+            return quxlang::convert_to_gnu_asm(procedure.instructions.begin(), procedure.instructions.end(), procedure.name, target.machine.cpu_type, instruction_set, target.machine.binary_type == quxlang::binary::elf);
         }
         if (procedure.architecture == "Z_ARCH")
         {
-            return quxlang::convert_to_gnu_asm(procedure.instructions.begin(), procedure.instructions.end(), procedure.name, target.machine.cpu_type, true);
+            return quxlang::convert_to_gnu_asm(procedure.instructions.begin(), procedure.instructions.end(), procedure.name, target.machine.cpu_type, instruction_set, true);
         }
         if (procedure.architecture == "X64" || procedure.architecture == "X86")
         {
@@ -10671,7 +10742,11 @@ auto quxlang::llvm_backend::llvm_backend::assemble(quxlang::llvm_backend::llvm_c
     source_manager.AddNewSourceBuffer(::llvm::MemoryBuffer::getMemBufferCopy(assembly_text), ::llvm::SMLoc());
 
     ::llvm::MCTargetOptions mc_options;
-    std::unique_ptr< ::llvm::MCSubtargetInfo > subtarget_info(llvm_target->createMCSubtargetInfo(triple, "generic", ""));
+    if (target.machine.cpu_type == cpu::riscv_32 || target.machine.cpu_type == cpu::riscv_64)
+    {
+        mc_options.ABIName = target.machine.cpu_type == cpu::riscv_32 ? "ilp32d" : "lp64d";
+    }
+    std::unique_ptr< ::llvm::MCSubtargetInfo > subtarget_info(llvm_target->createMCSubtargetInfo(triple, target.cpu_name, target.target_features));
     std::unique_ptr< ::llvm::MCRegisterInfo > register_info(llvm_target->createMCRegInfo(triple));
     if (!subtarget_info || !register_info)
     {

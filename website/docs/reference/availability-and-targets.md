@@ -40,7 +40,7 @@ The compiler provides these predicate families as compile-time `BOOL` values:
 
 | Category | Predicates |
 | --- | --- |
-| Architecture | `ARCH_IS_X64`, `ARCH_IS_X86`, `ARCH_IS_ARM32`, `ARCH_IS_ARM64`, `ARCH_IS_RISCV64`, `ARCH_IS_Z_ARCH`, `ARCH_IS_JVM`, `ARCH_IS_LAYOUTLESS` |
+| Architecture | `ARCH_IS_X64`, `ARCH_IS_X86`, `ARCH_IS_ARM32`, `ARCH_IS_ARM64`, `ARCH_IS_RISCV32`, `ARCH_IS_RISCV64`, `ARCH_IS_Z_ARCH`, `ARCH_IS_JVM`, `ARCH_IS_LAYOUTLESS` |
 | Backend | `BACKEND_LLVM`, `BACKEND_CORTADO` |
 | Operating system | `OS_LINUX`, `OS_WINDOWS`, `OS_MACOS` |
 | Binary format | `BINARY_ELF`, `BINARY_MACHO`, `BINARY_PE`, `BINARY_WASM` |
@@ -62,9 +62,10 @@ architecture. `ARCH_IS_LAYOUTLESS` is `TRUE` when the managed runtime controls
 type representations and those types have no fixed byte layout visible to
 Quxlang code.
 
-The capability registry reserves `ARCH_IS_RISCV64` and RISC-V capability names.
-The current public `qxcbuild.yml` target loader does not yet accept a RISC-V
-target.
+Linux targets accept `cpu: RISCV32` and `cpu: RISCV64`. These targets use the
+RV32GC and RV64GC instruction sets with the ILP32D and LP64D calling conventions,
+respectively. The target configuration contract is specified in
+[`qxcbuild.yml`](qxcbuild-file.md).
 
 ## Runtime CPU capability queries
 

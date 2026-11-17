@@ -222,6 +222,10 @@ PRIVATE(MODULE)
     {
       RETURN 0;
     }
+    STATIC_ELSE STATIC_IF(ARCH_IS_RISCV32 || ARCH_IS_RISCV64)
+    {
+      RETURN template_offset;
+    }
     STATIC_ELSE
     {
       VAR variant_two_end SZ := static_linux_tls_variant_two_offset();
@@ -278,6 +282,24 @@ LABEL static_linux_x86_set_thread_area_done;
     MSR TPIDR_EL0, X0
     ISB
     MOV X0, 0
+    RET
+  }
+
+  DOC <$ Installs the RISC-V thread pointer for the current thread. $>
+  ::static_linux_install_thread_pointer_riscv32 ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@thread_pointer MUT=>>TYPED_STORAGE(BYTE); RETURN I32)
+  {
+    MV tp, a0
+    LI a0, 0
+    RET
+  }
+
+  DOC <$ Installs the RISC-V thread pointer for the current thread. $>
+  ::static_linux_install_thread_pointer_riscv64 ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@thread_pointer MUT=>>TYPED_STORAGE(BYTE); RETURN I32)
+  {
+    MV tp, a0
+    LI a0, 0
     RET
   }
 
@@ -339,7 +361,7 @@ DOC <$ Allocates and initializes one independent PT_TLS image. $>
   {
     layout_size := thread_pointer_offset;
   }
-  STATIC_IF((ARCH_IS_ARM32 || ARCH_IS_ARM64) == FALSE)
+  STATIC_IF((ARCH_IS_ARM32 || ARCH_IS_ARM64 || ARCH_IS_RISCV32 || ARCH_IS_RISCV64) == FALSE)
   {
     VAR thread_control_block_end SZ := static_linux_checked_size_add(
       @left thread_pointer_offset,
@@ -536,6 +558,14 @@ DOC <$ Installs the initial thread's PT_TLS image when no hosted loader provides
     STATIC_ELSE STATIC_IF(ARCH_IS_ARM64)
     {
       status := static_linux_install_thread_pointer_arm64(@thread_pointer block.thread_pointer);
+    }
+    STATIC_ELSE STATIC_IF(ARCH_IS_RISCV32)
+    {
+      status := static_linux_install_thread_pointer_riscv32(@thread_pointer block.thread_pointer);
+    }
+    STATIC_ELSE STATIC_IF(ARCH_IS_RISCV64)
+    {
+      status := static_linux_install_thread_pointer_riscv64(@thread_pointer block.thread_pointer);
     }
     STATIC_ELSE STATIC_IF(ARCH_IS_Z_ARCH)
     {

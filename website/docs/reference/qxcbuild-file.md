@@ -59,7 +59,7 @@ The current target-level keys are:
 | Key | Accepted current values or shape | Default or requirement |
 | --- | --- | --- |
 | `platform` | `linux`, `windows`, `macos`, or `jvm` | Required for a native target |
-| `cpu` | `x64`, `x86`, `ARM32`, `ARM64`, `z_arch`, or `jvm` | Required for a native target |
+| `cpu` | `x64`, `x86`, `ARM32`, `ARM64`, `RISCV32`, `RISCV64`, `z_arch`, or `jvm` | Required for a native target |
 | `binary` | `elf`, `macho`, `pe`, or `wasm` on a native target | Derived from `platform` |
 | `environment` | `glibc`, `musl`, `bionic`, `msvc`, `ucrt`, `cygwin`, `static`, `libsystem`, or `freestanding` | Derived from `platform` |
 | `macho_config` | Mach-O metadata mapping with `minimum_os_version` | Minimum OS version `11.0.0`; valid only for Mach-O targets |
@@ -122,6 +122,23 @@ VFP, little-endian ELF32, and the GNU EABI core-register calling convention for
 floating-point arguments. Static executables provide process startup, system
 calls, thread-local storage, native threads, and DWARF `.eh_frame` exception
 unwinding. ARM32 assembly procedures execute in ARM state.
+
+Linux targets with `cpu: RISCV32` or `cpu: RISCV64` use little-endian ELF32 or
+ELF64, respectively. Both targets require the GC extensions: `I`, `M`,
+`A`, `F`, `D`, `C`, `ZICSR`, and `ZIFENCEI`. RV32 uses the ILP32D calling
+convention, and RV64 uses LP64D. The stack alignment is 16 bytes. Static
+executables provide process startup, system calls, thread-local storage,
+native threads, and DWARF `.eh_frame` exception unwinding. Assembly procedures
+select `RISCV32` or `RISCV64`; dotted instruction mnemonics use GNU assembly
+syntax. Code generation and assembly disable linker relaxation.
+
+```yaml
+targets:
+  linux-riscv64:
+    platform: linux
+    cpu: RISCV64
+    backend: llvm
+```
 
 ## Module mappings
 

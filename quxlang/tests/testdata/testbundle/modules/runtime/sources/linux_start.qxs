@@ -109,3 +109,51 @@ DOC <$ Initializes Linux ARM EABI process state and invokes the selected steppin
   MOV R7, 1
   SVC 0
 }
+
+DOC <$ Initializes Linux RISC-V process state and invokes the selected stepping. $>
+::PROGRAM_START INCLUDE_IF(OS_LINUX) ASM_PROCEDURE RISCV32
+{
+  MV a0, sp
+  ANDI sp, sp, -16
+  CALL PROCEDURE_REF("", linux_parse_initial_stack!$[0])
+  CALL PROCEDURE_REF("", linux_initial_tls_start!$[0])
+  CALL DETECT_CPU_ARCHINFO
+  CALL PICK_STEPPING
+  MV s0, a0
+  LA t0, OBJECT_REF(ACTIVE_STEPPING)
+  SW s0, 0(t0)
+  LA t0, OBJECT_REF(POST_DETECT_FUNCTION_ARRAY)
+  LW t0, 0(t0)
+  SLLI t1, s0, 2
+  ADD t0, t0, t1
+  LW t0, 0(t0)
+  JALR ra, t0, 0
+  LI a0, 127
+  LI a7, 93
+  ECALL
+  UNIMP
+}
+
+DOC <$ Initializes Linux RISC-V process state and invokes the selected stepping. $>
+::PROGRAM_START INCLUDE_IF(OS_LINUX) ASM_PROCEDURE RISCV64
+{
+  MV a0, sp
+  ANDI sp, sp, -16
+  CALL PROCEDURE_REF("", linux_parse_initial_stack!$[0])
+  CALL PROCEDURE_REF("", linux_initial_tls_start!$[0])
+  CALL DETECT_CPU_ARCHINFO
+  CALL PICK_STEPPING
+  MV s0, a0
+  LA t0, OBJECT_REF(ACTIVE_STEPPING)
+  SD s0, 0(t0)
+  LA t0, OBJECT_REF(POST_DETECT_FUNCTION_ARRAY)
+  LD t0, 0(t0)
+  SLLI t1, s0, 3
+  ADD t0, t0, t1
+  LD t0, 0(t0)
+  JALR ra, t0, 0
+  LI a0, 127
+  LI a7, 93
+  ECALL
+  UNIMP
+}

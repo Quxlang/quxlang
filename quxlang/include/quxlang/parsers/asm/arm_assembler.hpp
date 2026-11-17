@@ -237,6 +237,17 @@ namespace quxlang::parsers
             return std::nullopt;
         }
 
+        while (pos != end && *pos == '.')
+        {
+            ++pos;
+            std::string suffix = parse_keyword(pos, end);
+            if (suffix.empty())
+            {
+                throw syntax_compilation_error("Expected assembly mnemonic suffix after .");
+            }
+            kw += "." + suffix;
+        }
+
         ast2_asm_instruction ret;
 
         ret.opcode_mnemonic = kw;

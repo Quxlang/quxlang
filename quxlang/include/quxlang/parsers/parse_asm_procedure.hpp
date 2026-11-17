@@ -79,7 +79,7 @@ namespace quxlang::parsers
             throw syntax_compilation_error("Expected {");
         }
 
-        if (arch == "ARM32" || arch == "ARM64" || arch == "X64" || arch == "X86" || arch == "Z_ARCH")
+        if (arch == "ARM32" || arch == "ARM64" || arch == "X64" || arch == "X86" || arch == "Z_ARCH" || arch == "RISCV32" || arch == "RISCV64")
         {
             while (true)
             {

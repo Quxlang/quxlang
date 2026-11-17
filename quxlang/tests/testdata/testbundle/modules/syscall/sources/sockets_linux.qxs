@@ -47,6 +47,24 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V socket operation. $>
+  ::socket ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@family I32, @kind I32, @protocol I32; RETURN I32)
+  {
+    LI a7, 198
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V socket operation. $>
+  ::socket ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@family I32, @kind I32, @protocol I32; RETURN I32)
+  {
+    LI a7, 198
+    ECALL
+    RET
+  }
+
   DOC <$ The socket procedure invokes the Linux socket operation through the Z_ARCH system-call ABI. $>
   ::socket ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(@family I32, @kind I32, @protocol I32; RETURN I32)
@@ -98,6 +116,24 @@ LANGUAGE QUXLANG EN 0.0;
   {
     MOV X8, 200
     SVC 0
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V bind operation. $>
+  ::bind ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@socket I32, @address CONST->socket_address_storage, @length U32; RETURN I32)
+  {
+    LI a7, 200
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V bind operation. $>
+  ::bind ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@socket I32, @address CONST->socket_address_storage, @length U32; RETURN I32)
+  {
+    LI a7, 200
+    ECALL
     RET
   }
 
@@ -155,6 +191,24 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V connect operation. $>
+  ::connect ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@socket I32, @address CONST->socket_address_storage, @length U32; RETURN I32)
+  {
+    LI a7, 203
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V connect operation. $>
+  ::connect ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@socket I32, @address CONST->socket_address_storage, @length U32; RETURN I32)
+  {
+    LI a7, 203
+    ECALL
+    RET
+  }
+
   DOC <$ The connect procedure invokes the Linux connect operation through the Z_ARCH system-call ABI. $>
   ::connect ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(@socket I32, @address CONST->socket_address_storage, @length U32; RETURN I32)
@@ -205,6 +259,24 @@ LANGUAGE QUXLANG EN 0.0;
   {
     MOV X8, 201
     SVC 0
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V listen operation. $>
+  ::listen ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@socket I32, @backlog I32; RETURN I32)
+  {
+    LI a7, 201
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V listen operation. $>
+  ::listen ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@socket I32, @backlog I32; RETURN I32)
+  {
+    LI a7, 201
+    ECALL
     RET
   }
 
@@ -266,6 +338,24 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V accept operation. $>
+  ::accept ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@socket I32, @address MUT->socket_address_storage, @length MUT->U32, @flags I32; RETURN I32)
+  {
+    LI a7, 242
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V accept operation. $>
+  ::accept ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@socket I32, @address MUT->socket_address_storage, @length MUT->U32, @flags I32; RETURN I32)
+  {
+    LI a7, 242
+    ECALL
+    RET
+  }
+
   DOC <$ The accept procedure invokes the Linux accept operation through the Z_ARCH system-call ABI. $>
   ::accept ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(@socket I32, @address MUT->socket_address_storage, @length MUT->U32, @flags I32; RETURN I32)
@@ -317,6 +407,24 @@ LANGUAGE QUXLANG EN 0.0;
   {
     MOV X8, 204
     SVC 0
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V socket name operation. $>
+  ::socket_name ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@socket I32, @address MUT->socket_address_storage, @length MUT->U32; RETURN I32)
+  {
+    LI a7, 204
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V socket name operation. $>
+  ::socket_name ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@socket I32, @address MUT->socket_address_storage, @length MUT->U32; RETURN I32)
+  {
+    LI a7, 204
+    ECALL
     RET
   }
 
@@ -381,6 +489,24 @@ LANGUAGE QUXLANG EN 0.0;
   {
     MOV X8, 208
     SVC 0
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V set socket option operation. $>
+  ::set_socket_option ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@socket I32, @level I32, @option I32, @value CONST->I32, @length U32; RETURN I32)
+  {
+    LI a7, 208
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V set socket option operation. $>
+  ::set_socket_option ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@socket I32, @level I32, @option I32, @value CONST->I32, @length U32; RETURN I32)
+  {
+    LI a7, 208
+    ECALL
     RET
   }
 
@@ -451,6 +577,24 @@ LANGUAGE QUXLANG EN 0.0;
   {
     MOV X8, 207
     SVC 0
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V receive from operation. $>
+  ::receive_from ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@socket I32, @buffer MUT=>>BYTE, @count SZ, @flags I32, @address MUT->socket_address_storage, @length MUT->U32; RETURN signed_byte_count)
+  {
+    LI a7, 207
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V receive from operation. $>
+  ::receive_from ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@socket I32, @buffer MUT=>>BYTE, @count SZ, @flags I32, @address MUT->socket_address_storage, @length MUT->U32; RETURN signed_byte_count)
+  {
+    LI a7, 207
+    ECALL
     RET
   }
 
@@ -529,6 +673,24 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V send to operation. $>
+  ::send_to ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@socket I32, @buffer CONST=>>BYTE, @count SZ, @flags I32, @address CONST->socket_address_storage, @length U32; RETURN signed_byte_count)
+  {
+    LI a7, 206
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V send to operation. $>
+  ::send_to ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@socket I32, @buffer CONST=>>BYTE, @count SZ, @flags I32, @address CONST->socket_address_storage, @length U32; RETURN signed_byte_count)
+  {
+    LI a7, 206
+    ECALL
+    RET
+  }
+
   DOC <$ The send_to procedure invokes the Linux send operation through the Z_ARCH system-call ABI. $>
   ::send_to ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(@socket I32, @buffer CONST=>>BYTE, @count SZ, @flags I32, @address CONST->socket_address_storage, @length U32; RETURN signed_byte_count)
@@ -588,6 +750,24 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V receive message operation. $>
+  ::receive_message ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@socket I32, @message MUT->datagram_message, @flags I32; RETURN signed_byte_count)
+  {
+    LI a7, 212
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V receive message operation. $>
+  ::receive_message ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@socket I32, @message MUT->datagram_message, @flags I32; RETURN signed_byte_count)
+  {
+    LI a7, 212
+    ECALL
+    RET
+  }
+
   DOC <$ The receive_message procedure invokes Linux recvmsg through the Z_ARCH system-call ABI. $>
   ::receive_message ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(@socket I32, @message MUT->datagram_message, @flags I32; RETURN signed_byte_count)
@@ -623,6 +803,24 @@ LANGUAGE QUXLANG EN 0.0;
   {
     MOV X8, 210
     SVC 0
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V shutdown operation. $>
+  ::shutdown ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@socket I32, @direction I32; RETURN I32)
+  {
+    LI a7, 210
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V shutdown operation. $>
+  ::shutdown ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@socket I32, @direction I32; RETURN I32)
+  {
+    LI a7, 210
+    ECALL
     RET
   }
   DOC <$ The shutdown procedure invokes Linux connection shutdown through the native system-call ABI. $>

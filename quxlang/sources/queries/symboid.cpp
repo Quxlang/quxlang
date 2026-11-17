@@ -227,6 +227,14 @@ rpnx::querygraph::coroutine< quxlang::symboid_spec > quxlang::symboid_impl(type_
         {
             return machine.cpu_type == cpu::arm_64;
         }
+        if (declaration.architecture == "RISCV32")
+        {
+            return machine.cpu_type == cpu::riscv_32;
+        }
+        if (declaration.architecture == "RISCV64")
+        {
+            return machine.cpu_type == cpu::riscv_64;
+        }
         if (declaration.architecture == "Z_ARCH")
         {
             return machine.cpu_type == cpu::z_arch;

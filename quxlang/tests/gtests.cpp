@@ -9815,7 +9815,7 @@ TEST(quxlang, machine_target_info_models_atomic_alignment_and_native_width)
     EXPECT_THROW(none_target.atomic_integer_alignment_for_bits(32), std::invalid_argument);
 
     quxlang::machine_target_info x86_32_target{.cpu_type = quxlang::cpu::x86_32};
-    EXPECT_EQ(x86_32_target.max_native_atomic_storage_bits(), 32);
+    EXPECT_EQ(x86_32_target.max_native_atomic_storage_bits(), 64);
     EXPECT_EQ(x86_32_target.atomic_integer_alignment_for_bits(24), 4);
     EXPECT_EQ(x86_32_target.atomic_integer_alignment_for_bits(128), 16);
 

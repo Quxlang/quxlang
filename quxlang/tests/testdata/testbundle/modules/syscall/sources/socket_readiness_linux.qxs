@@ -47,6 +47,24 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V fcntl operation. $>
+  ::fcntl ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@socket I32, @command I32, @argument I32; RETURN I32)
+  {
+    LI a7, 25
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V fcntl operation. $>
+  ::fcntl ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@socket I32, @command I32, @argument I32; RETURN I32)
+  {
+    LI a7, 25
+    ECALL
+    RET
+  }
+
   DOC <$ Updates or queries descriptor flags. $>
   ::fcntl ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(@socket I32, @command I32, @argument I32; RETURN I32)
@@ -111,6 +129,24 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V get socket option operation. $>
+  ::get_socket_option ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@socket I32, @level I32, @option I32, @value MUT->I32, @length MUT->U32; RETURN I32)
+  {
+    LI a7, 209
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V get socket option operation. $>
+  ::get_socket_option ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@socket I32, @level I32, @option I32, @value MUT->I32, @length MUT->U32; RETURN I32)
+  {
+    LI a7, 209
+    ECALL
+    RET
+  }
+
   DOC <$ Reads a socket integer option. $>
   ::get_socket_option ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(@socket I32, @level I32, @option I32, @value MUT->I32, @length MUT->U32; RETURN I32)
@@ -172,6 +208,24 @@ LANGUAGE QUXLANG EN 0.0;
   {
     MOV X8, 73
     SVC 0
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V ppoll operation. $>
+  ::ppoll ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@descriptors MUT->poll_descriptor, @count SZ, @timeout ADDRESS, @signal_mask ADDRESS, @signal_size SZ; RETURN I32)
+  {
+    LI a7, 414
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V ppoll operation. $>
+  ::ppoll ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@descriptors MUT->poll_descriptor, @count SZ, @timeout ADDRESS, @signal_mask ADDRESS, @signal_size SZ; RETURN I32)
+  {
+    LI a7, 73
+    ECALL
     RET
   }
 

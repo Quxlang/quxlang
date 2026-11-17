@@ -152,6 +152,32 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V io uring setup operation. $>
+  ::io_uring_setup ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(
+      @entries U32,
+      @parameters MUT->io_uring_parameters;
+      RETURN I32
+    )
+  {
+    LI a7, 425
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V io uring setup operation. $>
+  ::io_uring_setup ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(
+      @entries U32,
+      @parameters MUT->io_uring_parameters;
+      RETURN I32
+    )
+  {
+    LI a7, 425
+    ECALL
+    RET
+  }
+
   DOC <$ Creates one Linux io_uring instance. $>
   ::io_uring_setup ASM_PROCEDURE Z_ARCH
     CALLABLE CALLCONV CCALL(
@@ -266,6 +292,40 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
+  DOC <$ Implements the Linux RISC-V io uring enter operation. $>
+  ::io_uring_enter ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(
+      @descriptor I32,
+      @submission_count U32,
+      @minimum_completion_count U32,
+      @flags U32,
+      @signal_mask CONST=>>BYTE,
+      @signal_mask_size SZ;
+      RETURN I32
+    )
+  {
+    LI a7, 426
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V io uring enter operation. $>
+  ::io_uring_enter ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(
+      @descriptor I32,
+      @submission_count U32,
+      @minimum_completion_count U32,
+      @flags U32,
+      @signal_mask CONST=>>BYTE,
+      @signal_mask_size SZ;
+      RETURN I32
+    )
+  {
+    LI a7, 426
+    ECALL
+    RET
+  }
+
   DOC <$
     Submits entries and optionally waits for Linux io_uring completions.
     $>
@@ -339,6 +399,30 @@ LANGUAGE QUXLANG EN 0.0;
   {
     MOV X8, 427
     SVC 0
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V io uring register operation. $>
+  ::io_uring_register ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(
+      @descriptor I32, @operation U32, @argument ADDRESS, @count U32;
+      RETURN I32
+    )
+  {
+    LI a7, 427
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V io uring register operation. $>
+  ::io_uring_register ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(
+      @descriptor I32, @operation U32, @argument ADDRESS, @count U32;
+      RETURN I32
+    )
+  {
+    LI a7, 427
+    ECALL
     RET
   }
 

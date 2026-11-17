@@ -211,6 +211,10 @@ namespace quxlang::detail
                 refresh_got_slots();
             }
             populate_dynamic_link_sections();
+            if (machine.cpu_type == quxlang::cpu::riscv_32 || machine.cpu_type == quxlang::cpu::riscv_64)
+            {
+                index_riscv_relocations();
+            }
             apply_relocations();
             populate_unwind_header();
             if (options.preserve_symbols)
@@ -237,6 +241,10 @@ namespace quxlang::detail
         std::map< std::string, resolved_global_symbol > global_symbols;
         std::map< std::string, common_symbol_allocation > common_symbol_allocations;
         std::map< std::uint64_t, got_slot > got_slots_by_target_address;
+        /** Final displacements indexed by the input section and AUIPC instruction offset. */
+        std::map< std::pair< input_section_id, std::uint64_t >, std::int64_t > riscv_pcrel_values;
+        /** Paired ULEB128 differences indexed by relocation section and byte offset. */
+        std::map< std::pair< input_section_id, std::uint64_t >, std::uint64_t > riscv_uleb128_values;
         std::optional< std::size_t > common_bss_section_index;
         std::optional< std::size_t > got_section_index;
         std::vector< dynamic_import_layout > dynamic_imports;
@@ -297,6 +305,8 @@ namespace quxlang::detail
                 return;
             case quxlang::cpu::arm_32:
             case quxlang::cpu::arm_64:
+            case quxlang::cpu::riscv_32:
+            case quxlang::cpu::riscv_64:
                 return;
             case quxlang::cpu::z_arch:
                 return;
@@ -320,6 +330,9 @@ namespace quxlang::detail
                 return llvm::ELF::EM_ARM;
             case quxlang::cpu::arm_64:
                 return llvm::ELF::EM_AARCH64;
+            case quxlang::cpu::riscv_32:
+            case quxlang::cpu::riscv_64:
+                return llvm::ELF::EM_RISCV;
             case quxlang::cpu::z_arch:
                 return llvm::ELF::EM_S390;
             default:
@@ -1325,6 +1338,8 @@ namespace quxlang::detail
             case quxlang::cpu::x86_64:
             case quxlang::cpu::arm_32:
             case quxlang::cpu::arm_64:
+            case quxlang::cpu::riscv_32:
+            case quxlang::cpu::riscv_64:
                 executable_base_address = 0x00400000;
                 break;
             case quxlang::cpu::z_arch:
@@ -2009,6 +2024,9 @@ namespace quxlang::detail
             std::uint64_t const alignment_mask = tls_segment_info->alignment - 1;
             switch (machine.cpu_type)
             {
+            case quxlang::cpu::riscv_32:
+            case quxlang::cpu::riscv_64:
+                return checked_i64(symbol_offset, "ELF TLS symbol offset is too large");
             case quxlang::cpu::x86_32:
             case quxlang::cpu::x86_64:
             case quxlang::cpu::z_arch:
@@ -2132,6 +2150,12 @@ namespace quxlang::detail
                        relocation_addend(output_section, relocation_section, relocation, relocation_output_offset);
             }
 
+            if ((machine.cpu_type == quxlang::cpu::riscv_32 || machine.cpu_type == quxlang::cpu::riscv_64) && relocation_type == llvm::ELF::R_RISCV_GOT_HI20)
+            {
+                return relocation_target_address(object_index, relocation) +
+                       relocation_addend(output_section, relocation_section, relocation, relocation_output_offset);
+            }
+
             if (machine.cpu_type != quxlang::cpu::z_arch || relocation_type != llvm::ELF::R_390_GOTENT)
             {
                 return std::nullopt;
@@ -2162,7 +2186,7 @@ namespace quxlang::detail
          */
         void collect_got_slots()
         {
-            if (machine.cpu_type != quxlang::cpu::arm_64 && machine.cpu_type != quxlang::cpu::z_arch)
+            if (machine.cpu_type != quxlang::cpu::arm_64 && machine.cpu_type != quxlang::cpu::z_arch && machine.cpu_type != quxlang::cpu::riscv_32 && machine.cpu_type != quxlang::cpu::riscv_64)
             {
                 return;
             }
@@ -2241,19 +2265,19 @@ namespace quxlang::detail
             linked_section got_section;
             got_section.name = ".got";
             got_section.input_index = static_cast< std::uint64_t >(sections.size() + 1);
-            got_section.alignment = 8;
+            got_section.alignment = machine.pointer_size_bytes();
             got_section.writable = false;
             got_section.executable = false;
             got_section.nobits = false;
             got_section.synthetic = true;
-            got_section.memory_size = got_slots_by_target_address.size() * 8;
+            got_section.memory_size = got_slots_by_target_address.size() * machine.pointer_size_bytes();
             got_section.contents.resize(static_cast< std::size_t >(got_section.memory_size), std::byte{0});
             got_section_index = sections.size();
             sections.push_back(std::move(got_section));
 
             for (std::pair< std::uint64_t const, got_slot > const& slot_entry : got_slots_by_target_address)
             {
-                write_u64(sections.at(*got_section_index).contents, slot_entry.second.slot_index * 8, slot_entry.second.target_address);
+                write_pointer(sections.at(*got_section_index).contents, slot_entry.second.slot_index * machine.pointer_size_bytes(), slot_entry.second.target_address);
             }
         }
 
@@ -2316,7 +2340,7 @@ namespace quxlang::detail
                         }
 
                         std::size_t slot_index = got_slots_by_target_address.size();
-                        if ((slot_index + 1) * 8 > got_section.contents.size())
+                        if ((slot_index + 1) * machine.pointer_size_bytes() > got_section.contents.size())
                         {
                             throw quxlang::semantic_compilation_error("ELF GOT refresh changed the slot count");
                         }
@@ -2324,7 +2348,7 @@ namespace quxlang::detail
                             .target_address = *target_address,
                             .slot_index = slot_index,
                         };
-                        write_u64(got_section.contents, slot_index * 8, *target_address);
+                        write_pointer(got_section.contents, slot_index * machine.pointer_size_bytes(), *target_address);
                     }
                 }
             }
@@ -2352,6 +2376,23 @@ namespace quxlang::detail
                 value |= std::uint64_t(std::to_integer< std::uint8_t >(bytes[offset + i])) << (shift_byte * 8);
             }
             return value;
+        }
+
+        /** Writes one address in the configured target's pointer width and byte order. */
+        void write_pointer(std::vector< std::byte >& bytes, std::size_t offset, std::uint64_t value) const
+        {
+            if (machine.pointer_size_bytes() == 8)
+            {
+                write_u64(bytes, offset, value);
+            }
+            else
+            {
+                if (value > std::numeric_limits< std::uint32_t >::max())
+                {
+                    throw quxlang::semantic_compilation_error("ELF pointer value is out of range");
+                }
+                write_u32(bytes, offset, static_cast< std::uint32_t >(value));
+            }
         }
 
         void write_u16(std::vector< std::byte >& bytes, std::size_t offset, std::uint16_t value) const
@@ -2688,7 +2729,313 @@ namespace quxlang::detail
             }
 
             linked_section const& got_section = sections.at(*got_section_index);
-            return got_section.virtual_address + static_cast< std::uint64_t >(slot_iter->second.slot_index) * 8;
+            return got_section.virtual_address + static_cast< std::uint64_t >(slot_iter->second.slot_index) * machine.pointer_size_bytes();
+        }
+
+        /** Writes the low twelve bits of an I-format instruction immediate. */
+        void patch_riscv_i_immediate(linked_section& section, std::size_t offset, std::int64_t value) const
+        {
+            std::uint32_t instruction = read_u32(section.contents, offset);
+            instruction = (instruction & 0x000fffff) | ((static_cast< std::uint32_t >(value) & 0xfff) << 20);
+            write_u32(section.contents, offset, instruction);
+        }
+
+        /** Writes the low twelve bits of an S-format instruction immediate. */
+        void patch_riscv_s_immediate(linked_section& section, std::size_t offset, std::int64_t value) const
+        {
+            std::uint32_t immediate = static_cast< std::uint32_t >(value) & 0xfff;
+            std::uint32_t instruction = read_u32(section.contents, offset);
+            instruction = (instruction & 0x01fff07f) | ((immediate & 0xfe0) << 20) | ((immediate & 0x1f) << 7);
+            write_u32(section.contents, offset, instruction);
+        }
+
+        /** Writes the rounded high twenty bits of a U-format instruction immediate. */
+        void patch_riscv_u_immediate(linked_section& section, std::size_t offset, std::int64_t value) const
+        {
+            std::uint32_t instruction = read_u32(section.contents, offset);
+            instruction = (instruction & 0xfff) | (static_cast< std::uint32_t >(value + 0x800) & 0xfffff000);
+            write_u32(section.contents, offset, instruction);
+        }
+
+        /** Indexes paired RISC-V relocations after final section and GOT layout. */
+        void index_riscv_relocations()
+        {
+            riscv_pcrel_values.clear();
+            riscv_uleb128_values.clear();
+            std::map< std::pair< input_section_id, std::uint64_t >, std::uint64_t > subtrahends;
+            for (std::size_t object_index = 0; object_index < input_objects.size(); ++object_index)
+            {
+                llvm::object::ObjectFile const& object = *input_objects.at(object_index).object_file;
+                for (llvm::object::SectionRef const& section : object.sections())
+                {
+                    llvm::object::ELFSectionRef elf_section(section);
+                    if (elf_section.getType() != llvm::ELF::SHT_RELA)
+                    {
+                        continue;
+                    }
+                    llvm::object::section_iterator relocated = take_or_throw(section.getRelocatedSection(), "Failed to read RISC-V relocated section");
+                    if (relocated == object.section_end())
+                    {
+                        continue;
+                    }
+                    input_section_id input_section{.object_index = object_index, .section_index = relocated->getIndex()};
+                    std::map< input_section_id, input_section_placement >::const_iterator placement = output_section_placements_by_input_index.find(input_section);
+                    if (placement == output_section_placements_by_input_index.end())
+                    {
+                        continue;
+                    }
+                    linked_section const& output = sections.at(placement->second.output_section_index);
+                    for (llvm::object::RelocationRef const& relocation : section.relocations())
+                    {
+                        std::uint64_t kind = relocation.getType();
+                        if (kind != llvm::ELF::R_RISCV_PCREL_HI20 && kind != llvm::ELF::R_RISCV_GOT_HI20 &&
+                            kind != llvm::ELF::R_RISCV_SET_ULEB128 && kind != llvm::ELF::R_RISCV_SUB_ULEB128)
+                        {
+                            continue;
+                        }
+                        std::int64_t addend = take_or_throw(llvm::object::ELFRelocationRef(relocation).getAddend(), "Failed to read RISC-V paired relocation addend");
+                        std::uint64_t target = relocation_target_address(object_index, relocation) + addend;
+                        if (kind == llvm::ELF::R_RISCV_SET_ULEB128 || kind == llvm::ELF::R_RISCV_SUB_ULEB128)
+                        {
+                            std::pair< input_section_id, std::uint64_t > key{input_section_id{.object_index = object_index, .section_index = section.getIndex()}, relocation.getOffset()};
+                            if (kind == llvm::ELF::R_RISCV_SET_ULEB128)
+                            {
+                                if (!riscv_uleb128_values.emplace(key, target).second)
+                                {
+                                    throw quxlang::semantic_compilation_error("Duplicate RISC-V ULEB128 set relocation");
+                                }
+                            }
+                            else if (!subtrahends.emplace(key, target).second)
+                            {
+                                throw quxlang::semantic_compilation_error("Duplicate RISC-V ULEB128 subtraction relocation");
+                            }
+                            continue;
+                        }
+                        if (kind == llvm::ELF::R_RISCV_GOT_HI20)
+                        {
+                            target = got_slot_address(target);
+                        }
+                        std::uint64_t place = output.virtual_address + placement->second.output_offset + relocation.getOffset();
+                        std::pair< input_section_id, std::uint64_t > key{input_section, relocation.getOffset()};
+                        if (!riscv_pcrel_values.emplace(key, static_cast< std::int64_t >(target) - static_cast< std::int64_t >(place)).second)
+                        {
+                            throw quxlang::semantic_compilation_error("Duplicate RISC-V PC-relative high relocation");
+                        }
+                    }
+                }
+            }
+            if (subtrahends.size() != riscv_uleb128_values.size())
+            {
+                throw quxlang::semantic_compilation_error("RISC-V ULEB128 relocation has no matching pair");
+            }
+            for (std::pair< std::pair< input_section_id, std::uint64_t > const, std::uint64_t >& entry : riscv_uleb128_values)
+            {
+                std::map< std::pair< input_section_id, std::uint64_t >, std::uint64_t >::const_iterator subtraction = subtrahends.find(entry.first);
+                if (subtraction == subtrahends.end() || entry.second < subtraction->second)
+                {
+                    throw quxlang::semantic_compilation_error("Invalid RISC-V ULEB128 subtraction pair");
+                }
+                entry.second -= subtraction->second;
+            }
+        }
+
+        /** Resolves a PC-relative low relocation through its indexed AUIPC relocation. */
+        auto riscv_pcrel_pair_value(std::size_t object_index, llvm::object::RelocationRef const& low) const -> std::int64_t
+        {
+            input_symbol_reference anchor = relocation_target_symbol(object_index, low);
+            llvm::object::ObjectFile const& object = *input_objects.at(anchor.object_index).object_file;
+            llvm::object::section_iterator section = take_or_throw(anchor.symbol.getSection(), "Failed to read RISC-V relocation anchor section");
+            if (section == object.section_end())
+            {
+                throw quxlang::semantic_compilation_error("RISC-V PC-relative relocation requires a section-relative anchor");
+            }
+            std::uint64_t offset = take_or_throw(anchor.symbol.getAddress(), "Failed to read RISC-V relocation anchor") - section->getAddress();
+            std::pair< input_section_id, std::uint64_t > key{input_section_id{.object_index = anchor.object_index, .section_index = section->getIndex()}, offset};
+            std::map< std::pair< input_section_id, std::uint64_t >, std::int64_t >::const_iterator found = riscv_pcrel_values.find(key);
+            if (found == riscv_pcrel_values.end())
+            {
+                throw quxlang::semantic_compilation_error("RISC-V PC-relative low relocation has no matching high relocation");
+            }
+            return found->second;
+        }
+
+        /** Applies one RISC-V static relocation to its output section. */
+        auto apply_riscv_relocation(linked_section& section, std::size_t object_index, llvm::object::SectionRef const& relocation_section,
+                                    llvm::object::RelocationRef const& relocation, std::size_t offset, std::uint64_t place, std::int64_t addend) const -> bool
+        {
+            std::uint64_t kind = relocation.getType();
+            switch (kind)
+            {
+            case llvm::ELF::R_RISCV_NONE:
+            case llvm::ELF::R_RISCV_RELAX:
+            case llvm::ELF::R_RISCV_TPREL_ADD:
+                return true;
+            case llvm::ELF::R_RISCV_32:
+                write_u32(section.contents, offset, static_cast< std::uint32_t >(relocation_target_address(object_index, relocation) + addend));
+                return true;
+            case llvm::ELF::R_RISCV_64:
+                write_u64(section.contents, offset, relocation_target_address(object_index, relocation) + addend);
+                return true;
+            case llvm::ELF::R_RISCV_32_PCREL:
+                patch_signed32(section, offset, static_cast< std::int64_t >(relocation_target_address(object_index, relocation)) + addend - static_cast< std::int64_t >(place), "RISC-V PC-relative data relocation is out of range");
+                return true;
+            case llvm::ELF::R_RISCV_GOT_HI20:
+                patch_riscv_u_immediate(section, offset, static_cast< std::int64_t >(got_slot_address(relocation_target_address(object_index, relocation) + addend)) - static_cast< std::int64_t >(place));
+                return true;
+            case llvm::ELF::R_RISCV_PCREL_HI20:
+                patch_riscv_u_immediate(section, offset, static_cast< std::int64_t >(relocation_target_address(object_index, relocation)) + addend - static_cast< std::int64_t >(place));
+                return true;
+            case llvm::ELF::R_RISCV_PCREL_LO12_I:
+                patch_riscv_i_immediate(section, offset, riscv_pcrel_pair_value(object_index, relocation) + addend);
+                return true;
+            case llvm::ELF::R_RISCV_PCREL_LO12_S:
+                patch_riscv_s_immediate(section, offset, riscv_pcrel_pair_value(object_index, relocation) + addend);
+                return true;
+            case llvm::ELF::R_RISCV_HI20:
+                patch_riscv_u_immediate(section, offset, static_cast< std::int64_t >(relocation_target_address(object_index, relocation)) + addend);
+                return true;
+            case llvm::ELF::R_RISCV_LO12_I:
+                patch_riscv_i_immediate(section, offset, static_cast< std::int64_t >(relocation_target_address(object_index, relocation)) + addend);
+                return true;
+            case llvm::ELF::R_RISCV_LO12_S:
+                patch_riscv_s_immediate(section, offset, static_cast< std::int64_t >(relocation_target_address(object_index, relocation)) + addend);
+                return true;
+            case llvm::ELF::R_RISCV_TPREL_HI20:
+                patch_riscv_u_immediate(section, offset, relocation_target_tls_thread_pointer_offset(object_index, relocation) + addend);
+                return true;
+            case llvm::ELF::R_RISCV_TPREL_LO12_I:
+                patch_riscv_i_immediate(section, offset, relocation_target_tls_thread_pointer_offset(object_index, relocation) + addend);
+                return true;
+            case llvm::ELF::R_RISCV_TPREL_LO12_S:
+                patch_riscv_s_immediate(section, offset, relocation_target_tls_thread_pointer_offset(object_index, relocation) + addend);
+                return true;
+            case llvm::ELF::R_RISCV_CALL:
+            case llvm::ELF::R_RISCV_CALL_PLT: {
+                std::int64_t delta = static_cast< std::int64_t >(relocation_target_address(object_index, relocation)) + addend - static_cast< std::int64_t >(place);
+                if (delta < std::numeric_limits< std::int32_t >::min() || delta > std::numeric_limits< std::int32_t >::max())
+                {
+                    throw quxlang::semantic_compilation_error("RISC-V call relocation is out of range");
+                }
+                patch_riscv_u_immediate(section, offset, delta);
+                patch_riscv_i_immediate(section, offset + 4, delta);
+                return true;
+            }
+            case llvm::ELF::R_RISCV_JAL: {
+                std::int64_t delta = static_cast< std::int64_t >(relocation_target_address(object_index, relocation)) + addend - static_cast< std::int64_t >(place);
+                if ((delta & 1) != 0 || delta < -(std::int64_t{1} << 20) || delta >= (std::int64_t{1} << 20))
+                {
+                    throw quxlang::semantic_compilation_error("RISC-V JAL relocation is out of range");
+                }
+                std::uint32_t immediate = static_cast< std::uint32_t >(delta);
+                std::uint32_t instruction = read_u32(section.contents, offset) & 0xfff;
+                instruction |= ((immediate & 0x100000) << 11) | ((immediate & 0x7fe) << 20) | ((immediate & 0x800) << 9) | (immediate & 0xff000);
+                write_u32(section.contents, offset, instruction);
+                return true;
+            }
+            case llvm::ELF::R_RISCV_BRANCH: {
+                std::int64_t delta = static_cast< std::int64_t >(relocation_target_address(object_index, relocation)) + addend - static_cast< std::int64_t >(place);
+                if ((delta & 1) != 0 || delta < -4096 || delta >= 4096)
+                {
+                    throw quxlang::semantic_compilation_error("RISC-V branch relocation is out of range");
+                }
+                std::uint32_t immediate = static_cast< std::uint32_t >(delta);
+                std::uint32_t instruction = read_u32(section.contents, offset) & 0x01fff07f;
+                instruction |= ((immediate & 0x1000) << 19) | ((immediate & 0x7e0) << 20) | ((immediate & 0x1e) << 7) | ((immediate & 0x800) >> 4);
+                write_u32(section.contents, offset, instruction);
+                return true;
+            }
+            case llvm::ELF::R_RISCV_RVC_BRANCH:
+            case llvm::ELF::R_RISCV_RVC_JUMP: {
+                std::int64_t delta = static_cast< std::int64_t >(relocation_target_address(object_index, relocation)) + addend - static_cast< std::int64_t >(place);
+                std::int64_t limit = kind == llvm::ELF::R_RISCV_RVC_BRANCH ? 256 : 2048;
+                if ((delta & 1) != 0 || delta < -limit || delta >= limit)
+                {
+                    throw quxlang::semantic_compilation_error("RISC-V compressed branch relocation is out of range");
+                }
+                std::uint16_t instruction = std::to_integer< std::uint8_t >(section.contents.at(offset)) |
+                    (std::uint16_t(std::to_integer< std::uint8_t >(section.contents.at(offset + 1))) << 8);
+                std::uint32_t immediate = static_cast< std::uint32_t >(delta);
+                if (kind == llvm::ELF::R_RISCV_RVC_BRANCH)
+                {
+                    instruction = (instruction & 0xe383) | ((immediate & 0x100) << 4) |
+                        ((immediate & 0x18) << 7) | ((immediate & 0xc0) >> 1) |
+                        ((immediate & 0x6) << 2) | ((immediate & 0x20) >> 3);
+                }
+                else
+                {
+                    instruction = (instruction & 0xe003) | ((immediate & 0x800) << 1) |
+                        ((immediate & 0x10) << 7) | ((immediate & 0x300) << 1) |
+                        ((immediate & 0x400) >> 2) | ((immediate & 0x40) << 1) |
+                        ((immediate & 0x80) >> 1) | ((immediate & 0xe) << 2) | ((immediate & 0x20) >> 3);
+                }
+                write_u16(section.contents, offset, instruction);
+                return true;
+            }
+            case llvm::ELF::R_RISCV_SET6:
+            case llvm::ELF::R_RISCV_SUB6: {
+                std::uint8_t current = std::to_integer< std::uint8_t >(section.contents.at(offset));
+                std::uint64_t target = relocation_target_address(object_index, relocation) + addend;
+                std::uint8_t value = static_cast< std::uint8_t >(kind == llvm::ELF::R_RISCV_SET6 ? target : (current & 0x3f) - target);
+                section.contents.at(offset) = static_cast< std::byte >((current & 0xc0) | (value & 0x3f));
+                return true;
+            }
+            case llvm::ELF::R_RISCV_SET8:
+                section.contents.at(offset) = static_cast< std::byte >((relocation_target_address(object_index, relocation) + addend) & 0xff);
+                return true;
+            case llvm::ELF::R_RISCV_SET16:
+                write_u16(section.contents, offset, static_cast< std::uint16_t >(relocation_target_address(object_index, relocation) + addend));
+                return true;
+            case llvm::ELF::R_RISCV_SET32:
+                write_u32(section.contents, offset, static_cast< std::uint32_t >(relocation_target_address(object_index, relocation) + addend));
+                return true;
+            case llvm::ELF::R_RISCV_SET_ULEB128: {
+                std::pair< input_section_id, std::uint64_t > key{input_section_id{.object_index = object_index, .section_index = relocation_section.getIndex()}, relocation.getOffset()};
+                std::uint64_t value = riscv_uleb128_values.at(key);
+                std::size_t index = offset;
+                while (true)
+                {
+                    bool continues = (std::to_integer< std::uint8_t >(section.contents.at(index)) & 0x80) != 0;
+                    section.contents.at(index) = static_cast< std::byte >((value & 0x7f) | (continues ? 0x80 : 0));
+                    value >>= 7;
+                    if (!continues)
+                    {
+                        break;
+                    }
+                    ++index;
+                }
+                if (value != 0)
+                {
+                    throw quxlang::semantic_compilation_error("RISC-V ULEB128 relocation exceeds its allocated size");
+                }
+                return true;
+            }
+            case llvm::ELF::R_RISCV_SUB_ULEB128:
+                return true;
+            case llvm::ELF::R_RISCV_ADD8:
+            case llvm::ELF::R_RISCV_ADD16:
+            case llvm::ELF::R_RISCV_ADD32:
+            case llvm::ELF::R_RISCV_ADD64:
+            case llvm::ELF::R_RISCV_SUB8:
+            case llvm::ELF::R_RISCV_SUB16:
+            case llvm::ELF::R_RISCV_SUB32:
+            case llvm::ELF::R_RISCV_SUB64: {
+                std::size_t width = std::size_t{1} << ((kind - llvm::ELF::R_RISCV_ADD8) % 4);
+                std::uint64_t value = 0;
+                for (std::size_t index = 0; index < width; ++index)
+                {
+                    value |= std::uint64_t(std::to_integer< std::uint8_t >(section.contents.at(offset + index))) << (index * 8);
+                }
+                std::uint64_t target = relocation_target_address(object_index, relocation) + addend;
+                value = kind <= llvm::ELF::R_RISCV_ADD64 ? value + target : value - target;
+                for (std::size_t index = 0; index < width; ++index)
+                {
+                    section.contents.at(offset + index) = static_cast< std::byte >((value >> (index * 8)) & 0xff);
+                }
+                return true;
+            }
+            default:
+                return false;
+            }
         }
 
         void apply_relocations()
@@ -2771,6 +3118,13 @@ namespace quxlang::detail
                         }
                         switch (machine.cpu_type)
                         {
+                        case quxlang::cpu::riscv_32:
+                        case quxlang::cpu::riscv_64:
+                            if (apply_riscv_relocation(section, object_index, generic_section, relocation, static_cast< std::size_t >(offset), place_address, addend))
+                            {
+                                continue;
+                            }
+                            break;
                         case quxlang::cpu::x86_64:
                             if (relocation_type == llvm::ELF::R_X86_64_64 || relocation_type == llvm::ELF::R_X86_64_PC64)
                             {
@@ -3068,6 +3422,21 @@ namespace quxlang::detail
             }
         }
 
+        /** Returns the target ABI flags recorded in the executable ELF header. */
+        auto executable_elf_flags() const -> std::uint32_t
+        {
+            switch (machine.cpu_type)
+            {
+            case quxlang::cpu::arm_32:
+                return llvm::ELF::EF_ARM_EABI_VER5 | llvm::ELF::EF_ARM_ABI_FLOAT_SOFT;
+            case quxlang::cpu::riscv_32:
+            case quxlang::cpu::riscv_64:
+                return llvm::ELF::EF_RISCV_RVC | llvm::ELF::EF_RISCV_FLOAT_ABI_DOUBLE;
+            default:
+                return 0;
+            }
+        }
+
         void write_elf_header(std::vector< std::byte >& output_file_bytes, std::uint64_t entry_point) const
         {
             if (machine.pointer_size_bytes() == 8)
@@ -3081,21 +3450,12 @@ namespace quxlang::detail
                 output_file_bytes[6] = std::byte{1};
                 output_file_bytes[7] = std::byte{0};
                 write_u16(output_file_bytes, 16, llvm::ELF::ET_EXEC);
-                std::uint16_t machine_type = llvm::ELF::EM_AARCH64;
-                if (machine.cpu_type == quxlang::cpu::x86_64)
-                {
-                    machine_type = llvm::ELF::EM_X86_64;
-                }
-                else if (machine.cpu_type == quxlang::cpu::z_arch)
-                {
-                    machine_type = llvm::ELF::EM_S390;
-                }
-                write_u16(output_file_bytes, 18, machine_type);
+                write_u16(output_file_bytes, 18, expected_elf_machine());
                 write_u32(output_file_bytes, 20, 1);
                 write_u64(output_file_bytes, 24, entry_point);
                 write_u64(output_file_bytes, 32, 64);
                 write_u64(output_file_bytes, 40, section_header_offset);
-                write_u32(output_file_bytes, 48, 0);
+                write_u32(output_file_bytes, 48, executable_elf_flags());
                 write_u16(output_file_bytes, 52, 64);
                 write_u16(output_file_bytes, 54, 56);
                 write_u16(output_file_bytes, 56, program_header_count >= llvm::ELF::PN_XNUM ? llvm::ELF::PN_XNUM : static_cast< std::uint16_t >(program_header_count));
@@ -3119,7 +3479,7 @@ namespace quxlang::detail
             write_u32(output_file_bytes, 24, static_cast< std::uint32_t >(entry_point));
             write_u32(output_file_bytes, 28, 52);
             write_u32(output_file_bytes, 32, static_cast< std::uint32_t >(section_header_offset));
-            write_u32(output_file_bytes, 36, machine.cpu_type == quxlang::cpu::arm_32 ? llvm::ELF::EF_ARM_EABI_VER5 | llvm::ELF::EF_ARM_ABI_FLOAT_SOFT : 0);
+            write_u32(output_file_bytes, 36, executable_elf_flags());
             write_u16(output_file_bytes, 40, 52);
             write_u16(output_file_bytes, 42, 32);
             write_u16(output_file_bytes, 44, program_header_count >= llvm::ELF::PN_XNUM ? llvm::ELF::PN_XNUM : static_cast< std::uint16_t >(program_header_count));

@@ -15,10 +15,12 @@ Examples include `X64_FEATURE_AVX2`, `X64_FEATURE_SSE4_1`,
 `X64_PERF_FAST_GATHER`, and `X64_VENDOR_AMD`. Experimental names begin with
 `EXPERIMENTAL_`.
 
-The capability registry includes RISC-V identifiers, but the current public
-`qxcbuild.yml` loader does not yet accept a RISC-V target. Those identifiers
-therefore describe the stable naming surface for that architecture rather than
-a currently emitted public target.
+Linux RV32 and RV64 targets require the `I`, `M`, `A`, `F`, `D`, `C`, `ZICSR`,
+and `ZIFENCEI` extensions. The corresponding `RISCV32_FEATURE_*` or
+`RISCV64_FEATURE_*` capabilities are fixed to `TRUE` in every stepping. A
+configuration that disables a required extension is rejected. Additional
+features can be configured through the capability registry; runtime selection
+of a feature requires a matching detector in the runtime module.
 
 ## Stepping configuration
 
