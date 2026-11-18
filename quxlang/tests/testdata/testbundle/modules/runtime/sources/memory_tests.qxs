@@ -153,9 +153,9 @@ PRIVATE(MODULE) ::slab_allocator_shutdown_cursor_reset_unit_test INCLUDE_IF(ARCH
 
   allocator_thread_cache_shutdown_begin();
   TEST_ASSERT(allocator_thread_caches_disabled);
-  TEST_ASSERT(slab_allocator#(@block_size 8, @block_align 8)::layer1_cache_control.entry!?);
-  TEST_ASSERT(slab_allocator#(@block_size 8, @block_align 8)::layer1_cache_control.top!?);
-  TEST_ASSERT(slab_allocator#(@block_size 8, @block_align 8)::layer1_cache_control.bottom!?);
+  TEST_ASSERT(slab_allocator#(@block_size 8, @block_align 8)::layer1_cursor().entry!?);
+  TEST_ASSERT(slab_allocator#(@block_size 8, @block_align 8)::layer1_cursor().top!?);
+  TEST_ASSERT(slab_allocator#(@block_size 8, @block_align 8)::layer1_cursor().bottom!?);
   LOOP VALUE(buffer_index) FROM(0 AS SZ) UNTIL(blocks.count) DO
   {
     VAR block MUT& ADDRESS := blocks.at(@index buffer_index);
@@ -166,9 +166,9 @@ PRIVATE(MODULE) ::slab_allocator_shutdown_cursor_reset_unit_test INCLUDE_IF(ARCH
     VAR block MUT& ADDRESS := blocks.at(@index buffer_index);
     slab_allocator#(@block_size 8, @block_align 8)::layer0_deallocate(@ptr block);
   }
-  TEST_ASSERT(slab_allocator#(@block_size 8, @block_align 8)::layer1_cache_control.entry!?);
-  TEST_ASSERT(slab_allocator#(@block_size 8, @block_align 8)::layer1_cache_control.top!?);
-  TEST_ASSERT(slab_allocator#(@block_size 8, @block_align 8)::layer1_cache_control.bottom!?);
+  TEST_ASSERT(slab_allocator#(@block_size 8, @block_align 8)::layer1_cursor().entry!?);
+  TEST_ASSERT(slab_allocator#(@block_size 8, @block_align 8)::layer1_cursor().top!?);
+  TEST_ASSERT(slab_allocator#(@block_size 8, @block_align 8)::layer1_cursor().bottom!?);
   TEST_ASSERT(slab_allocator#(@block_size 8, @block_align 8)::thread_cached_block_count() == 0);
   allocator_thread_cache_shutdown_finish();
   allocator_thread_caches_disabled := previous_disabled;
@@ -382,6 +382,9 @@ PRIVATE(MODULE) ::allocator_generated_layout_routing_test INCLUDE_IF(ARCH_IS_LAY
     VAR fixed ADDRESS := allocator_allocate_static#(@size SNAPSHOT(size) + 1, @align 4096)();
     TEST_ASSERT(fixed?? && fixed % 4096 == 0);
     allocator_deallocate_dynamic(@bytes SNAPSHOT(size) + 1, @align 4096, @ptr fixed);
+    VAR aligned ADDRESS := allocator_allocate_dynamic(@bytes SNAPSHOT(size) + 1, @align 16);
+    TEST_ASSERT(aligned?? && aligned % 16 == 0);
+    allocator_deallocate_static#(@size SNAPSHOT(size) + 1, @align 16)(@ptr aligned);
     STATIC_EVAL size += step;
     STATIC_IF(size / step == 4)
     { STATIC_EVAL step *= 2; }
@@ -485,7 +488,7 @@ PRIVATE(MODULE) ::layer2_partial_aggregation_test INCLUDE_IF(ARCH_IS_LAYOUTLESS 
     }
     TEST_ASSERT(found);
   }
-  layer2_drain_cache#(@count slab_allocator#(@block_size 40, @block_align 8)::address_cache_count)(@cache combined->.cache);
+  layer3_region_return_plate#(@count slab_allocator#(@block_size 40, @block_align 8)::address_cache_count, @block_size 40)(@cache combined->.cache);
   layer2_release_empty_cache_node#(@count slab_allocator#(@block_size 40, @block_align 8)::address_cache_count)(@node combined);
 }
 

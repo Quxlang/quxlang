@@ -59,7 +59,7 @@ def build(args):
     config = (ROOT / "qxcbuild.yml").read_text()
     config = config.replace("platform: macos", "platform: " + host_os).replace("cpu: ARM64", "cpu: " + host_cpu)
     (bundle / "qxcbuild.yml").write_text(config)
-    command = [str(args.qxc), str(bundle), str(args.work_dir / "quxlang"), "native"]
+    command = [str(args.qxc), "build", str(bundle), str(args.work_dir / "quxlang"), "native"]
     with (args.work_dir / "build.log").open("w") as log:
         subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True)
     return command

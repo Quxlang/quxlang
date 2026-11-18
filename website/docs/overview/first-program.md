@@ -46,7 +46,7 @@ The compiler operates on the enclosing source bundle. Given a bundle directory,
 a direct compiler invocation has this shape:
 
 ```console
-qxc ./example-bundle ./out
+qxc build ./example-bundle ./out
 ```
 
 The current public invocation compiles the targets configured in

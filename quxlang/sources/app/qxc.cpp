@@ -1,4 +1,5 @@
 // Copyright 2024-2026 Ryan P. Nicholl, rnicholl@protonmail.com
+#include <quxlang/queries/output_binaries_check.hpp>
 #include <quxlang/queries/run_static_tests.hpp>
 #include <quxlang/queries/test_execution_status.hpp>
 #include <quxlang/queries/llvm_compilation_unit_identities.hpp>
@@ -102,9 +103,9 @@ class qxc_implementation
     /**
      * Returns true when qxc should emit detailed VMIR/LLVM/object diagnostic artifacts.
      */
-    auto parse_debug_compile_output(int arg_count, char** arg_values) -> bool
+    auto parse_debug_compile_output(int arg_count, char** arg_values, int first_option_index) -> bool
     {
-        for (int i = 3; i < arg_count; i++)
+        for (int i = first_option_index; i < arg_count; i++)
         {
             if (std::string_view(arg_values[i]) == "--debug-compile-output")
             {
@@ -604,21 +605,40 @@ class qxc_implementation
     try
     {
         bool verbose = true;
-        if (argc < 3)
+        static constexpr std::string_view usage =
+            "Usage: qxc build <input directory> <output directory> [--debug-compile-output] [--debug-timing] [target,...]\n"
+            "       qxc check <input directory> [--debug-timing] [target,...]";
+        if (argc < 2)
         {
-            throw quxlang::compilation_error("Usage: qxc <input directory> <output directory> [--debug-compile-output] [--debug-timing] [target,...]");
+            throw quxlang::compilation_error(std::string(usage));
+        }
+        std::string_view const command(argv[1]);
+        if (command != "build" && command != "check")
+        {
+            throw quxlang::compilation_error("Unknown command: " + std::string(command) + "\n" + std::string(usage));
+        }
+        // The check command evaluates the frontend of every configured output and writes no files.
+        bool const check_only = command == "check";
+        int const first_option_index = check_only ? 3 : 4;
+        if (argc < first_option_index)
+        {
+            throw quxlang::compilation_error(std::string(usage));
         }
 
-        std::filesystem::path input = argv[1];
-        std::filesystem::path output = argv[2];
-        bool const debug_compile_output = parse_debug_compile_output(argc, argv);
+        std::filesystem::path input = argv[2];
+        std::filesystem::path output;
+        if (!check_only)
+        {
+            output = argv[3];
+        }
+        bool const debug_compile_output = !check_only && parse_debug_compile_output(argc, argv, first_option_index);
 
         bool debug_timing = false;
         std::optional< std::set< std::string > > configured_targets;
-        for (std::size_t argument_index = 3; argument_index < static_cast< std::size_t >(argc); ++argument_index)
+        for (std::size_t argument_index = static_cast< std::size_t >(first_option_index); argument_index < static_cast< std::size_t >(argc); ++argument_index)
         {
             std::string_view argument(argv[argument_index]);
-            if (argument == "--debug-compile-output")
+            if (argument == "--debug-compile-output" && !check_only)
             {
                 continue;
             }
@@ -674,6 +694,25 @@ class qxc_implementation
                 quxlang::compiler_querygraph graph(
                     scheduler, *input_srcs, target_name, target_config.target_output_config, std::nullopt,
                     rpnx::querygraph::graph::options{.enable_timing = debug_timing});
+
+                if (check_only)
+                {
+                    std::future< bool > check_request = graph.raw_graph().async_make_request< quxlang::output_binaries_check_query >(std::monostate{});
+                    std::future< quxlang::static_test_results > static_tests_request;
+                    if (target_config.run_static_tests)
+                    {
+                        static_tests_request = graph.raw_graph().async_make_request< quxlang::run_static_tests_query >(std::monostate{});
+                    }
+                    check_request.get();
+                    if (target_config.run_static_tests)
+                    {
+                        quxlang::static_test_results test_results = static_tests_request.get();
+                        std::cout << test_results.passed << " static tests passed, " << test_results.known_broken << " known broken, " << test_results.known_failing << " known failing" << std::endl;
+                    }
+                    std::cout << "Checked target: " << target_name << std::endl;
+                    active_target_name.reset();
+                    continue;
+                }
 
                 std::filesystem::path const build_dir = output / "build" / target_name;
                 std::filesystem::path const output_dir = output / "output";

@@ -33,7 +33,7 @@ the bundle's `modules/` directory.
 
 The `linux-x64/app` output selects the `linux-x64` target and uses the logical
 `app` module's entry point. Its key is the exact artifact path below the output
-directory: `qxc ./bundle ./out` writes `./out/output/linux-x64/app`. Unless
+directory: `qxc build ./bundle ./out` writes `./out/output/linux-x64/app`. Unless
 configured otherwise, an executable uses `::main#()`.
 
 Both top-level sections are required. An empty `outputs: {}` mapping runs

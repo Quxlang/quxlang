@@ -12,6 +12,8 @@
 #include <quxlang/queries/specs/llvm_post_codegen_spec.hpp>
 #include <quxlang/queries/specs/llvm_postoptimize_spec.hpp>
 #include <quxlang/queries/specs/llvm_preoptimize_spec.hpp>
+#include <quxlang/queries/specs/llvm_unit_check_spec.hpp>
+#include <quxlang/queries/specs/output_binaries_check_spec.hpp>
 #include <quxlang/queries/specs/output_binaries_information_spec.hpp>
 #include <quxlang/queries/specs/output_binary_artifact_spec.hpp>
 #include <quxlang/queries/specs/output_binary_artifacts_spec.hpp>
@@ -50,6 +52,8 @@ auto quxlang::detail::register_compiler_querygraph_handlers_14(compiler_querygra
     graph.register_handler_function< llvm_postoptimize_spec >(llvm_postoptimize_impl);
     graph.register_handler_function< llvm_preoptimize_spec >(llvm_preoptimize_impl);
     graph.register_handler_function< llvm_function_module_spec >(llvm_function_module_impl);
+    graph.register_handler_function< llvm_unit_check_spec >(llvm_unit_check_impl);
+    graph.register_handler_function< output_binaries_check_spec >(output_binaries_check_impl);
     graph.register_handler_function< llvm_output_binary_artifact_spec >(llvm_output_binary_artifact_impl);
     graph.register_handler_function< output_binaries_information_spec >(output_binaries_information_impl);
     graph.register_handler_function< output_binary_artifact_spec >(output_binary_artifact_impl);

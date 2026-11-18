@@ -1,0 +1,182 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+DOC <$
+  The benchmark measures arrays whose element count is known only at run time. Every
+  allocation and deallocation passes through the counted allocator interface, which
+  selects a size class or the direct-mapping path from the runtime byte count.
+  $>
+::dynamic_array_workload STRUCT
+{
+  ::array_pointer ALIAS =>>TYPED_STORAGE(U64);
+
+  DOC <$ The window owns one array pointer and one element count per slot. $>
+  ::array_window STRUCT
+  {
+    .arrays VAR =>>TYPED_STORAGE(array_pointer);
+    .lengths VAR =>>TYPED_STORAGE(SZ);
+    .count VAR SZ;
+
+    .CONSTRUCTOR FUNCTION(@count SZ)
+    {
+      .count := count;
+      .arrays := RUNTIME_MODULE::DEFAULT_ALLOCATOR#(array_pointer)::MULTI_ALLOC(@COUNT count);
+      .lengths := RUNTIME_MODULE::DEFAULT_ALLOCATOR#(SZ)::MULTI_ALLOC(@COUNT count);
+      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(count) DO
+      {
+        PLACE AT(.arrays[index]) array_pointer;
+        PLACE AT(.lengths[index]) SZ;
+      }
+    }
+
+    .DESTRUCTOR FUNCTION()
+    {
+      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(.count) DO
+      {
+        DESTROY AT(.arrays[index]) array_pointer;
+        DESTROY AT(.lengths[index]) SZ;
+      }
+      RUNTIME_MODULE::DEFAULT_ALLOCATOR#(array_pointer)::MULTI_DEALLOC(@PTR .arrays, @COUNT .count);
+      RUNTIME_MODULE::DEFAULT_ALLOCATOR#(SZ)::MULTI_DEALLOC(@PTR .lengths, @COUNT .count);
+    }
+
+    DOC <$ The accessor returns the array pointer of one slot when index is less than count. $>
+    .array FUNCTION(@ARG:index SZ) MUT: MUT& array_pointer
+    { RETURN PUN .arrays[index] AS array_pointer; }
+
+    DOC <$ The accessor returns the element count of one slot when index is less than count. $>
+    .length FUNCTION(@ARG:index SZ) MUT: MUT& SZ
+    { RETURN PUN .lengths[index] AS SZ; }
+  }
+
+  DOC <$ The generator advances a 64-bit xorshift state and returns the new state. $>
+  ::next_random FUNCTION(@state MUT& SZ): SZ
+  {
+    state := state #^^ (state #++ 13);
+    state := state #^^ (state #-- 7);
+    state := state #^^ (state #++ 17);
+    RETURN state;
+  }
+
+  DOC <$
+    The selector returns an element count whose binary magnitude is uniform over the
+    given number of levels. Level k yields counts in the half-open range from two to
+    the power k up to two to the power k plus one.
+    $>
+  ::random_count FUNCTION(@state MUT& SZ, @levels SZ): SZ
+  {
+    VAR word SZ := next_random(@state state);
+    VAR base SZ := (1 AS SZ) #++ ((word #-- 32) % levels);
+    RETURN base + ((word #&& 4294967295) % base);
+  }
+
+  DOC <$ The function allocates an uninitialized array and writes the identity to its first and last elements. $>
+  ::acquire FUNCTION(@count SZ, @identity U64): array_pointer
+  {
+    VAR result array_pointer := RUNTIME_MODULE::DEFAULT_ALLOCATOR#(U64)::MULTI_ALLOC(@COUNT count);
+    VAR address ADDRESS := IBC_GETADDR(@PTR result);
+    benchmark_barrier::write_word(@address address, @value identity);
+    benchmark_barrier::write_word(@address address + (count - 1) * 8, @value identity);
+    RETURN result;
+  }
+
+  DOC <$ The function reads the first and last elements, releases the array, and returns the sum of the elements read. $>
+  ::release FUNCTION(@array array_pointer, @count SZ): U64
+  {
+    VAR address ADDRESS := IBC_GETADDR(@PTR array);
+    VAR sum U64 := IBC_LOAD#U64(@ADDR address) + IBC_LOAD#U64(@ADDR address + (count - 1) * 8);
+    RUNTIME_MODULE::DEFAULT_ALLOCATOR#(U64)::MULTI_DEALLOC(@PTR array, @COUNT count);
+    RETURN sum;
+  }
+
+  DOC <$
+    The rolling workload retains a window of live arrays and replaces the oldest array
+    after the window fills. A fixed workload gives every array the maximum element
+    count; a random workload draws each element count from the generator.
+    $>
+  ::rolling FUNCTION(@n SZ, @batch SZ, @elements SZ, @random BOOL, @slots MUT& array_window): U64
+  {
+    VAR levels SZ := 0;
+    LOOP WHILE (((1 AS SZ) #++ levels) < elements) DO { levels++; }
+    VAR state SZ := 88172645463325252;
+    VAR checksum U64 := 0;
+    VAR window SZ := batch;
+    IF (window > n) { window := n; }
+    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(window) DO
+    {
+      VAR count SZ := elements;
+      IF (random) { count := random_count(@state state, @levels levels); }
+      slots.length(index) := count;
+      slots.array(index) := acquire(@count count, @identity (index + 1) AS U64);
+    }
+    VAR position SZ := 0;
+    LOOP VALUE(completed) FROM(window) UNTIL(n) DO
+    {
+      checksum += release(@array slots.array(position), @count slots.length(position));
+      VAR count SZ := elements;
+      IF (random) { count := random_count(@state state, @levels levels); }
+      slots.length(position) := count;
+      slots.array(position) := acquire(@count count, @identity (completed + 1) AS U64);
+      position++;
+      IF (position == window) { position := 0; }
+    }
+    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(window) DO
+    { checksum += release(@array slots.array(index), @count slots.length(index)); }
+    RETURN checksum;
+  }
+
+  DOC <$
+    The growth workload repeats the capacity sequence of an appended array: each step
+    allocates twice the previous capacity and releases the previous array, from one
+    element up to the maximum element count. Element copying is excluded.
+    $>
+  ::growth FUNCTION(@n SZ, @elements SZ): U64
+  {
+    VAR checksum U64 := 0;
+    VAR identity U64 := 0;
+    LOOP VALUE(sequence) FROM(0 AS SZ) UNTIL(n) DO
+    {
+      VAR capacity SZ := 1;
+      identity++;
+      VAR array array_pointer := acquire(@count capacity, @identity identity);
+      LOOP WHILE (capacity < elements) DO
+      {
+        identity++;
+        VAR next array_pointer := acquire(@count capacity * 2, @identity identity);
+        checksum += release(@array array, @count capacity);
+        array := next;
+        capacity := capacity * 2;
+      }
+      checksum += release(@array array, @count capacity);
+    }
+    RETURN checksum;
+  }
+
+  ::run FUNCTION(@n SZ, @size SZ, @batch SZ, @pattern SZ)
+  {
+    VAR elements SZ := size / 8;
+    VAR slots array_window :(@count batch);
+    VAR checksum U64;
+    VAR start U64 := benchmark_barrier::ticks();
+    IF (pattern == 2) { checksum := growth(@n n, @elements elements); }
+    ELSE { checksum := rolling(@n n, @batch batch, @elements elements, @random pattern == 1, @slots slots); }
+    VAR elapsed U64 := benchmark_barrier::ticks() - start;
+    VAR output std::buffered_writer :(@EXPLICIT std::standard_output());
+    output.write_unsigned(elapsed); output.write_byte(32);
+    output.write_unsigned(benchmark_barrier::frequency()); output.write_byte(32);
+    output.write_unsigned(checksum); output.write_byte(10);
+    output.flush();
+  }
+}
+
+DOC <$
+  The entry point selects a fixed, random, or growth pattern and a maximum array size
+  in bytes. The size is a power of two from 16 bytes to 1 GiB on a 64-bit native host.
+  $>
+::dynamic_arrays BENCHMARK(@n SZ, @size SZ, @batch SZ, @pattern SZ) ONESHOT
+{
+  IF (n == 0 || batch == 0 || batch > 4096 || pattern > 2 || CELLSIZEOF(SZ) != 8) { THROW (1 AS I32); }
+  IF (size < 16 || size > 1073741824 || (size #&& (size - 1)) != 0) { THROW (1 AS I32); }
+  dynamic_array_workload::run(@n n, @size size, @batch batch, @pattern pattern);
+}

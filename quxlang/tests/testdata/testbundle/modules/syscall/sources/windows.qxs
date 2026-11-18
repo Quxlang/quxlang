@@ -67,6 +67,10 @@ LANGUAGE QUXLANG EN 0.0;
   ::exit_process EXTERN_PROCEDURE["kernel32":"ExitProcess"]
     CALLABLE CALLCONV CCALL(@code I32);
 
+  DOC <$ Suspends the calling thread for at least the requested number of milliseconds. $>
+  ::sleep EXTERN_PROCEDURE["kernel32":"Sleep"]
+    CALLABLE CALLCONV CCALL(@milliseconds U32);
+
   ::create_thread EXTERN_PROCEDURE["kernel32":"CreateThread"]
     CALLABLE CALLCONV CCALL(
       @attributes ADDRESS,

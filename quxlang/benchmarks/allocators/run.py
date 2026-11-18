@@ -25,6 +25,21 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def mimalloc_documented_interface_flags():
+    """Returns the flags that restrict mimalloc to documented operating system interfaces.
+
+    The default macOS configuration of mimalloc reads the thread register directly to load its
+    thread heap from two unassigned libpthread thread-specific slots and to read the thread
+    identifier from slot zero. Those slots and the layout behind the thread register are private
+    to libpthread. These flags select compiler thread-local storage for the thread heap and
+    pthread_self() for the thread identifier.
+    """
+    if platform.system() != 'Darwin':
+        return []
+    return ['-DMI_TLS_MODEL_THREAD_LOCAL=1', '-DMI_USE_BUILTIN_THREAD_POINTER=1',
+            '-D__builtin_thread_pointer()=((void*)pthread_self())']
+
+
 def host_configuration(config):
     """Returns the native platform and processor supported by the timer."""
     hosts = {('Darwin', 'arm64'): ('macos', 'ARM64'),
@@ -73,6 +88,10 @@ def cpp_build_flags(args):
                 linker.append('-fuse-ld=lld')
             elif shutil.which('ld.gold'):
                 linker.append('-fuse-ld=gold')
+        elif platform.system() == 'Darwin':
+            # The Darwin linker otherwise internalizes the replaced allocation operators during LTO, and
+            # libc++ then releases memory from the replacement operator new through the system allocator.
+            linker.append('-Wl,-export_dynamic')
     return common, linker
 
 
@@ -111,7 +130,7 @@ def main():
     config = host_configuration(config)
     (bundle / "qxcbuild.yml").write_text(config)
     qxc = args.qxc.resolve()
-    commands = [[str(qxc), str(bundle), str(work / "quxlang"), "native"]]
+    commands = [[str(qxc), "build", str(bundle), str(work / "quxlang"), "native"]]
     with (work / "qxc-build.log").open("w") as log:
         subprocess.run(commands[0], stdout=log, stderr=subprocess.STDOUT, check=True)
     executables = {"quxlang_alloc": work / "quxlang/output/allocations"}
@@ -123,7 +142,7 @@ def main():
     mimalloc_object = work / "mimalloc.o"
     if args.mimalloc_source:
         mimalloc_source = args.mimalloc_source.resolve()
-        command = ["clang", "-std=c17", "-O3", *cpp_flags, "-DNDEBUG", "-DMI_STATIC_LIB",
+        command = ["clang", "-std=c17", "-O3", *cpp_flags, "-DNDEBUG", "-DMI_STATIC_LIB", *mimalloc_documented_interface_flags(),
                    "-I" + str(mimalloc_source / "include"), "-c",
                    str(mimalloc_source / "src/static.c"), "-o", str(mimalloc_object)]
         subprocess.run(command, check=True)

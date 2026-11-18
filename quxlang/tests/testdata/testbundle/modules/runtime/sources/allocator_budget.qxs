@@ -9,7 +9,24 @@ DOC <$
   $>
 ::allocator_transfer_cache_memory_divisor OPTION NUMBER DEFAULT_VALUE(64);
 
+DOC <$
+  The retention divisor limits backing extents without issued regions whose pages
+  remain resident to one eighth of physical memory by default. Extents above this
+  limit are purged synchronously: their pages are offered to the operating system
+  while the mapping remains available for reuse. The collector purges extents
+  below this limit after they remain idle. The divisor must be nonzero.
+  $>
+::allocator_retained_region_memory_divisor OPTION NUMBER DEFAULT_VALUE(8);
+
+DOC <$
+  The purge divisor limits purged backing extents to one half of physical memory by
+  default. Extents above this limit are unmapped. The divisor must be nonzero.
+  $>
+::allocator_purged_region_memory_divisor OPTION NUMBER DEFAULT_VALUE(2);
+
 PRIVATE(MODULE) ::allocator_host_memory_bytes VAR U64;
+PRIVATE(MODULE) ::allocator_retained_region_bytes_limit VAR SZ;
+PRIVATE(MODULE) ::allocator_purged_region_bytes_limit VAR SZ;
 PRIVATE(MODULE) ::allocator_payload_budget_per_shard VAR SZ;
 
 PRIVATE(MODULE) ::allocator_payload_credit STRUCT
@@ -94,10 +111,28 @@ PRIVATE(MODULE) ::allocator_payload_budget FUNCTION(@memory_bytes U64, @shards S
   STATIC_ELSE { RETURN budget AS PARTIAL SZ; }
 }
 
+DOC <$
+  The limit function divides physical memory by a divisor, substitutes a fallback when
+  memory detection fails, and bounds the result to one eighth of the address space.
+  $>
+PRIVATE(MODULE) ::allocator_region_bytes_limit FUNCTION(@memory_bytes U64, @divisor U64, @fallback U64): SZ
+{
+  VAR bytes U64 := fallback;
+  IF (memory_bytes > 0) { bytes := memory_bytes / divisor; }
+  VAR limit SZ := ((0 AS SZ) #!!) / 8;
+  IF (bytes > (limit AS U64)) { RETURN limit; }
+  STATIC_IF(CELLSIZEOF(SZ) == CELLSIZEOF(U64)) { RETURN bytes AS SZ; }
+  STATIC_ELSE { RETURN bytes AS PARTIAL SZ; }
+}
+
 DOC <$ The initializer constructs independent accounting cache lines before publishing the topology. $>
 PRIVATE(MODULE) ::allocator_budget_process_start FUNCTION()
 {
   allocator_host_memory_bytes := allocator_detect_memory_bytes();
+  allocator_retained_region_bytes_limit := allocator_region_bytes_limit(@memory_bytes allocator_host_memory_bytes,
+    @divisor allocator_retained_region_memory_divisor, @fallback 16777216);
+  allocator_purged_region_bytes_limit := allocator_region_bytes_limit(@memory_bytes allocator_host_memory_bytes,
+    @divisor allocator_purged_region_memory_divisor, @fallback 268435456);
   allocator_payload_budget_per_shard := allocator_payload_budget(
     @memory_bytes allocator_host_memory_bytes, @shards allocator_transfer_shard_count);
   VAR bytes SZ := allocator_checked_bytes(@size CELLSIZEOF(allocator_payload_credit), @count allocator_transfer_shard_count);
@@ -137,6 +172,9 @@ PRIVATE(MODULE) ::allocator_memory_budget_test INCLUDE_IF(ARCH_IS_LAYOUTLESS == 
   TEST_ASSERT(allocator_memtotal_bytes(@text text.BEGIN(), @size size) == 1073741824);
   TEST_ASSERT(allocator_payload_budget(@memory_bytes 8589934592, @shards 2) == 67108864);
   TEST_ASSERT(allocator_payload_budget(@memory_bytes 0, @shards 2) == 16777216);
+  TEST_ASSERT(allocator_region_bytes_limit(@memory_bytes 1073741824, @divisor 64, @fallback 4096) == 16777216);
+  TEST_ASSERT(allocator_region_bytes_limit(@memory_bytes 0, @divisor 64, @fallback 4096) == 4096);
+  TEST_ASSERT(allocator_region_bytes_limit(@memory_bytes (0 AS U64) #!!, @divisor 1, @fallback 4096) == ((0 AS SZ) #!!) / 8);
   VAR invalid STRING_CONSTANT := "MemTotal: 18446744073709551615 kB\n";
   size := (invalid.END() - invalid.BEGIN()) AS ASSUME SZ;
   TEST_ASSERT(allocator_memtotal_bytes(@text invalid.BEGIN(), @size size) == 0);

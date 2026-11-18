@@ -31,6 +31,12 @@ LANGUAGE QUXLANG EN 0.0;
     anonymous = 32
   ];
 
+  DOC <$ Selects the treatment that the madvise system call requests for a page range. $>
+  ::memory_advice IBC_ENUM BITS(32) [
+    discard_immediately = 4,
+    release_lazily = 8
+  ];
+
   ::seek_whence IBC_ENUM [
     set = 0,
     cur = 1,
@@ -1171,6 +1177,75 @@ LANGUAGE QUXLANG EN 0.0;
     CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ, @prot prot_flags; RETURN I32)
   {
     LGHI %r1, 125
+    SVC 0
+    BR %r14
+  }
+
+  DOC <$ Invokes the Linux madvise system call and returns zero or a negated error number. $>
+  ::madvise ASM_PROCEDURE X64
+    CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ, @advice memory_advice; RETURN I32)
+  {
+    MOV RAX, 28
+    SYSCALL
+    RET
+  }
+
+  ::madvise ASM_PROCEDURE X86
+    CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ, @advice memory_advice; RETURN I32)
+  {
+    PUSH EBX
+    MOV EBX, [ESP+8]
+    MOV ECX, [ESP+12]
+    MOV EDX, [ESP+16]
+    MOV EAX, 219
+    INT 0x80
+    POP EBX
+    RET
+  }
+
+  DOC <$ Invokes the Linux ARM EABI madvise system call. $>
+  ::madvise ASM_PROCEDURE ARM32
+    CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ, @advice memory_advice; RETURN I32)
+  {
+    SUB SP, SP, 8
+    STR R7, [SP, 0]
+    MOV R7, 220
+    SVC 0
+    LDR R7, [SP, 0]
+    ADD SP, SP, 8
+    BX LR
+  }
+
+  ::madvise ASM_PROCEDURE ARM64
+    CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ, @advice memory_advice; RETURN I32)
+  {
+    MOV X8, 233
+    SVC 0
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V madvise operation. $>
+  ::madvise ASM_PROCEDURE RISCV32
+    CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ, @advice memory_advice; RETURN I32)
+  {
+    LI a7, 233
+    ECALL
+    RET
+  }
+
+  DOC <$ Implements the Linux RISC-V madvise operation. $>
+  ::madvise ASM_PROCEDURE RISCV64
+    CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ, @advice memory_advice; RETURN I32)
+  {
+    LI a7, 233
+    ECALL
+    RET
+  }
+
+  ::madvise ASM_PROCEDURE Z_ARCH
+    CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ, @advice memory_advice; RETURN I32)
+  {
+    LGHI %r1, 219
     SVC 0
     BR %r14
   }

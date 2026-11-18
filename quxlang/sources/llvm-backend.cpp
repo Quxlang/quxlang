@@ -7628,6 +7628,14 @@ namespace quxlang::llvm_backend::detail
                     global = object->second;
                 }
                 apply_access_class(global, inst.class_);
+                if (inst.class_ == quxlang::vmir2::access_class::thread)
+                {
+                    // The intrinsic makes the per-thread address an ordinary instruction result. A direct
+                    // reference to the global is a constant that instruction selection materializes again
+                    // in every basic block that uses it, repeating the thread-local address resolution.
+                    store_reference_pointer(state, builder, inst.target_ref, builder.CreateThreadLocalAddress(global));
+                    return;
+                }
                 store_reference_pointer(state, builder, inst.target_ref, global);
                 return;
             }

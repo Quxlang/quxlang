@@ -7,6 +7,7 @@
 #include <quxlang/llvm_type_dependencies.hpp>
 #include <quxlang/queries/specs/llvm_function_module_spec.hpp>
 #include <quxlang/queries/specs/llvm_preoptimize_spec.hpp>
+#include <quxlang/queries/specs/llvm_unit_check_spec.hpp>
 #include <quxlang/vmir2/routine_requirements.hpp>
 
 #include <deque>
@@ -14,7 +15,7 @@
 #include <set>
 
 template < rpnx::querygraph::query_handler_spec_c HandlerSpec >
-auto quxlang::lower_llvm_unit(llvm_output_query_input input) -> typename rpnx::querygraph::coroutine< HandlerSpec >::template cosubroutine< rpnx::cow< llvm_backend::llvm_preoptimized_unit > >
+auto quxlang::lower_llvm_unit(llvm_output_query_input input, llvm_unit_action action) -> typename rpnx::querygraph::coroutine< HandlerSpec >::template cosubroutine< std::optional< rpnx::cow< llvm_backend::llvm_preoptimized_unit > > >
 {
     std::vector< llvm_output_query_input > const& component_identities =
         co_await rpnx::querygraph::request< llvm_output_component_identities_query >(input.output_name);
@@ -412,6 +413,10 @@ auto quxlang::lower_llvm_unit(llvm_output_query_input input) -> typename rpnx::q
     llvm_backend::llvm_backend backend;
     if (input.component != llvm_output_component::early_init || !compilable.owns_support_data)
     {
+        if (action == llvm_unit_action::check)
+        {
+            co_return std::nullopt;
+        }
         co_return rpnx::cow< llvm_backend::llvm_preoptimized_unit >(backend.preoptimize(compilable));
     }
 
@@ -440,7 +445,17 @@ auto quxlang::lower_llvm_unit(llvm_output_query_input input) -> typename rpnx::q
     {
         early_init_compilable.unit_test_objects = llvm_backend::unit_test_object_emission::definitions;
     }
+    if (action == llvm_unit_action::check)
+    {
+        co_return std::nullopt;
+    }
     co_return rpnx::cow< llvm_backend::llvm_preoptimized_unit >(backend.preoptimize(early_init_compilable));
+}
+
+rpnx::querygraph::coroutine< quxlang::llvm_unit_check_spec > quxlang::llvm_unit_check_impl(llvm_output_query_input input)
+{
+    co_await lower_llvm_unit< llvm_unit_check_spec >(std::move(input), llvm_unit_action::check);
+    co_return true;
 }
 
 rpnx::querygraph::coroutine< quxlang::llvm_function_module_spec > quxlang::llvm_function_module_impl(llvm_output_query_input input)
@@ -449,7 +464,7 @@ rpnx::querygraph::coroutine< quxlang::llvm_function_module_spec > quxlang::llvm_
     {
         throw compiler_bug("LLVM function module requires a procedure identity");
     }
-    co_return co_await lower_llvm_unit< llvm_function_module_spec >(std::move(input));
+    co_return (co_await lower_llvm_unit< llvm_function_module_spec >(std::move(input), llvm_unit_action::lower)).value();
 }
 
 rpnx::querygraph::coroutine< quxlang::llvm_preoptimize_spec > quxlang::llvm_preoptimize_impl(llvm_output_query_input input)
@@ -473,7 +488,7 @@ rpnx::querygraph::coroutine< quxlang::llvm_preoptimize_spec > quxlang::llvm_preo
             co_yield rpnx::querygraph::dependency(modules.back());
         }
         input.unit = llvm_support_data_unit{};
-        rpnx::cow< llvm_backend::llvm_preoptimized_unit > support = co_await lower_llvm_unit< llvm_preoptimize_spec >(std::move(input));
+        rpnx::cow< llvm_backend::llvm_preoptimized_unit > support = (co_await lower_llvm_unit< llvm_preoptimize_spec >(std::move(input), llvm_unit_action::lower)).value();
         std::vector< std::reference_wrapper< llvm_backend::llvm_preoptimized_unit const > > definitions;
         definitions.reserve(modules.size());
         for (rpnx::querygraph::request< llvm_function_module_query >& module : modules)
@@ -485,7 +500,7 @@ rpnx::querygraph::coroutine< quxlang::llvm_preoptimize_spec > quxlang::llvm_preo
     }
     if (*options.build_type != build_type::quick || !input.unit.type_is< type_symbol >())
     {
-        co_return co_await lower_llvm_unit< llvm_preoptimize_spec >(std::move(input));
+        co_return (co_await lower_llvm_unit< llvm_preoptimize_spec >(std::move(input), llvm_unit_action::lower)).value();
     }
 
     llvm_component_catalog const& catalog = co_await rpnx::querygraph::request< output_llvm_catalog_query >({input.output_name, input.component});

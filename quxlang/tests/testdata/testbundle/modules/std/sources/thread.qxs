@@ -24,6 +24,8 @@ PRIVATE(MODULE)
       VAR RUNTIME_MODULE::static_linux_mapping;
     .tls_block INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC)
       VAR RUNTIME_MODULE::static_linux_tls_block;
+    .launch INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC)
+      VAR RUNTIME_MODULE::static_linux_thread_launch;
   }
 
   ::macos_pthread_create INCLUDE_IF(OS_MACOS) EXTERN_PROCEDURE["/usr/lib/libSystem.B.dylib":"pthread_create"]
@@ -51,233 +53,6 @@ PRIVATE(MODULE)
     );
   ::glibc_pthread_join INCLUDE_IF(ENVIRONMENT_IS_GLIBC) EXTERN_PROCEDURE["glibc":"pthread_join" VERSION "GLIBC_2.34"]
     CALLABLE CALLCONV CCALL(@thread UINTPTR, @result MUT->VOID; RETURN I32);
-
-  ::static_linux_clone_flags INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC)
-    STATIC UINTPTR := 4001536;
-
-  ::static_linux_clone INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC && ARCH_IS_X64)
-    ASM_PROCEDURE X64
-    CALLABLE CALLCONV CCALL(
-      @flags UINTPTR,
-      @child_stack MUT=>>TYPED_STORAGE(BYTE),
-      @parent_tid MUT->ATOMIC#I32,
-      @child_tid MUT->ATOMIC#I32,
-      @tls MUT=>>TYPED_STORAGE(BYTE),
-      @control MUT->thread_control;
-      RETURN I32
-    )
-  {
-    MOV R10, RCX
-    MOV RAX, 56
-    SYSCALL
-    TEST RAX, RAX
-    JNZ static_linux_clone_x64_parent
-    MOV RDI, R9
-    MOVABS RAX, OFFSET PROCEDURE_REF("", static_linux_thread_worker!$[0])
-    CALL RAX
-    XOR RDI, RDI
-    MOV RAX, 60
-    SYSCALL
-    UD2
-  LABEL static_linux_clone_x64_parent;
-    RET
-  }
-
-  ::static_linux_clone INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC && ARCH_IS_X86)
-    ASM_PROCEDURE X86
-    CALLABLE CALLCONV CCALL(
-      @flags UINTPTR,
-      @child_stack MUT=>>TYPED_STORAGE(BYTE),
-      @parent_tid MUT->ATOMIC#I32,
-      @child_tid MUT->ATOMIC#I32,
-      @tls MUT->RUNTIME_MODULE::static_linux_x86_user_desc,
-      @control MUT->thread_control;
-      RETURN I32
-  )
-  {
-    PUSH EBX
-    PUSH ESI
-    PUSH EDI
-    PUSH EBP
-    MOV EBX, [ESP+20]
-    MOV ECX, [ESP+24]
-    MOV EDX, [ESP+28]
-    MOV EDI, [ESP+32]
-    MOV ESI, [ESP+36]
-    MOV EBP, [ESP+40]
-    MOV EAX, 120
-    INT 0x80
-    TEST EAX, EAX
-    JZ static_linux_clone_x86_child
-    POP EBP
-    POP EDI
-    POP ESI
-    POP EBX
-    RET
-LABEL static_linux_clone_x86_child;
-    SUB ESP, 12
-    PUSH EBP
-    MOV EAX, OFFSET PROCEDURE_REF("", static_linux_thread_worker!$[0])
-    CALL EAX
-    XOR EBX, EBX
-    MOV EAX, 1
-    INT 0x80
-    UD2
-  }
-
-  DOC <$ Creates a Linux ARM EABI thread with an independent stack and TLS image. $>
-  ::static_linux_clone INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC && ARCH_IS_ARM32)
-    ASM_PROCEDURE ARM32
-    CALLABLE CALLCONV CCALL(
-      @flags UINTPTR,
-      @child_stack MUT=>>TYPED_STORAGE(BYTE),
-      @parent_tid MUT->ATOMIC#I32,
-      @tls MUT=>>TYPED_STORAGE(BYTE),
-      @child_tid MUT->ATOMIC#I32,
-      @control MUT->thread_control;
-      RETURN I32
-    )
-  {
-    SUB SP, SP, 16
-    STR R4, [SP]
-    STR R5, [SP, 4]
-    STR R7, [SP, 8]
-    STR LR, [SP, 12]
-    LDR R4, [SP, 16]
-    LDR R5, [SP, 20]
-    SUB R1, R1, 8
-    STR R5, [R1]
-    MOV R7, 120
-    SVC 0
-    CMP R0, 0
-    BNE static_linux_clone_arm32_parent
-    LDR R0, [SP]
-    ADD SP, SP, 8
-    LDR R12, PROCEDURE_REF("", static_linux_thread_worker!$[0])
-    BLX R12
-    MOV R0, 0
-    MOV R7, 1
-    SVC 0
-    UDF 0
-LABEL static_linux_clone_arm32_parent;
-    LDR R4, [SP]
-    LDR R5, [SP, 4]
-    LDR R7, [SP, 8]
-    LDR LR, [SP, 12]
-    ADD SP, SP, 16
-    BX LR
-  }
-
-  ::static_linux_clone INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC && ARCH_IS_ARM64)
-    ASM_PROCEDURE ARM64
-    CALLABLE CALLCONV CCALL(
-      @flags UINTPTR,
-      @child_stack MUT=>>TYPED_STORAGE(BYTE),
-      @parent_tid MUT->ATOMIC#I32,
-      @tls MUT=>>TYPED_STORAGE(BYTE),
-      @child_tid MUT->ATOMIC#I32,
-      @control MUT->thread_control;
-      RETURN I32
-    )
-  {
-    MOV X8, 220
-    SVC 0
-    CBNZ X0, static_linux_clone_arm64_parent
-    MOV X0, X5
-    BL PROCEDURE_REF("", static_linux_thread_worker!$[0])
-    MOV X0, 0
-    MOV X8, 93
-    SVC 0
-    BRK 0
-LABEL static_linux_clone_arm64_parent;
-    RET
-  }
-
-  DOC <$ Creates a Linux RISC-V thread and enters its worker on the child stack. $>
-  ::static_linux_clone INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC && ARCH_IS_RISCV32)
-    ASM_PROCEDURE RISCV32
-    CALLABLE CALLCONV CCALL(
-      @flags UINTPTR,
-      @child_stack MUT=>>TYPED_STORAGE(BYTE),
-      @parent_tid MUT->ATOMIC#I32,
-      @tls MUT=>>TYPED_STORAGE(BYTE),
-      @child_tid MUT->ATOMIC#I32,
-      @control MUT->thread_control;
-      RETURN I32
-    )
-  {
-    LI a7, 220
-    ECALL
-    BNEZ a0, clone_parent
-    MV a0, a5
-    CALL PROCEDURE_REF("", static_linux_thread_worker!$[0])
-    LI a0, 0
-    LI a7, 93
-    ECALL
-    UNIMP
-    LABEL clone_parent;
-    RET
-  }
-
-  DOC <$ Creates a Linux RISC-V thread and enters its worker on the child stack. $>
-  ::static_linux_clone INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC && ARCH_IS_RISCV64)
-    ASM_PROCEDURE RISCV64
-    CALLABLE CALLCONV CCALL(
-      @flags UINTPTR,
-      @child_stack MUT=>>TYPED_STORAGE(BYTE),
-      @parent_tid MUT->ATOMIC#I32,
-      @tls MUT=>>TYPED_STORAGE(BYTE),
-      @child_tid MUT->ATOMIC#I32,
-      @control MUT->thread_control;
-      RETURN I32
-    )
-  {
-    LI a7, 220
-    ECALL
-    BNEZ a0, clone_parent
-    MV a0, a5
-    CALL PROCEDURE_REF("", static_linux_thread_worker!$[0])
-    LI a0, 0
-    LI a7, 93
-    ECALL
-    UNIMP
-    LABEL clone_parent;
-    RET
-  }
-
-  ::static_linux_clone INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC && ARCH_IS_Z_ARCH)
-    ASM_PROCEDURE Z_ARCH
-    CALLABLE CALLCONV CCALL(
-      @child_stack MUT=>>TYPED_STORAGE(BYTE),
-      @flags UINTPTR,
-      @parent_tid MUT->ATOMIC#I32,
-      @child_tid MUT->ATOMIC#I32,
-      @tls MUT=>>TYPED_STORAGE(BYTE),
-      @control MUT->thread_control;
-      RETURN I32
-    )
-  {
-    AGHI %r15, -168
-    STG %r7, 160(%r15)
-    LG %r7, 328(%r15)
-    LGHI %r1, 120
-    SVC 0
-    LTGR %r2, %r2
-    BRC 7, static_linux_clone_z_parent
-    AGHI %r15, -160
-    LGR %r2, %r7
-    BRASL %r14, PROCEDURE_REF("", static_linux_thread_worker!$[0])
-    LGHI %r2, 0
-    LGHI %r1, 1
-    SVC 0
-    J static_linux_clone_z_child_trap
-  LABEL static_linux_clone_z_child_trap;
-    J static_linux_clone_z_child_trap
-  LABEL static_linux_clone_z_parent;
-    LG %r7, 160(%r15)
-    AGHI %r15, 168
-    BR %r14
-  }
 
   ::null_void_pointer FUNCTION(): MUT->VOID
   {
@@ -311,9 +86,10 @@ LABEL static_linux_clone_arm64_parent;
     RETURN 0;
   }
 
-  ::static_linux_thread_worker INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC)
-    FUNCTION(@control MUT->thread_control)
+  ::static_linux_thread_entry INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC)
+    FUNCTION(@ARG:argument ADDRESS)
   {
+    VAR control MUT->thread_control := ADDRESS_LAUNDER_DISCOVER_EXISTING argument TO MUT->thread_control;
     run_thread_entry(@control control);
   }
 
@@ -404,6 +180,8 @@ DOC <$ Owns one native thread and joins it before releasing its control block. $
       RUNTIME_MODULE::static_linux_stack_allocate(@result control_ref.stack_mapping);
       RUNTIME_MODULE::static_linux_tls_allocate(@result control_ref.tls_block);
       control_ref.child_tid.STORE#ATOMIC_RELEASE(0);
+      control_ref.launch.entry := static_linux_thread_entry<-;
+      control_ref.launch.argument := IBC_GETADDR(@PTR .control);
       VAR child_stack MUT=>>TYPED_STORAGE(BYTE) := control_ref.stack_mapping.storage +
         control_ref.stack_mapping.size;
       control_ref.published.STORE#ATOMIC_RELEASE(TRUE);
@@ -416,35 +194,35 @@ DOC <$ Owns one native thread and joins it before releasing its control block. $
           @thread_pointer control_ref.tls_block.thread_pointer,
           @entry_number RUNTIME_MODULE::static_linux_x86_tls_entry_number
         );
-        clone_result := static_linux_clone(
-          @flags static_linux_clone_flags,
+        clone_result := RUNTIME_MODULE::static_linux_clone(
+          @flags RUNTIME_MODULE::static_linux_clone_flags,
           @child_stack child_stack,
           @parent_tid control_ref.child_tid<-,
           @child_tid control_ref.child_tid<-,
           @tls descriptor<-,
-          @control .control
+          @launch control_ref.launch<-
         );
       }
       STATIC_ELSE STATIC_IF(ARCH_IS_Z_ARCH)
       {
-        clone_result := static_linux_clone(
+        clone_result := RUNTIME_MODULE::static_linux_clone(
           @child_stack child_stack,
-          @flags static_linux_clone_flags,
+          @flags RUNTIME_MODULE::static_linux_clone_flags,
           @parent_tid control_ref.child_tid<-,
           @child_tid control_ref.child_tid<-,
           @tls control_ref.tls_block.thread_pointer,
-          @control .control
+          @launch control_ref.launch<-
         );
       }
       STATIC_ELSE
       {
-        clone_result := static_linux_clone(
-          @flags static_linux_clone_flags,
+        clone_result := RUNTIME_MODULE::static_linux_clone(
+          @flags RUNTIME_MODULE::static_linux_clone_flags,
           @child_stack child_stack,
           @parent_tid control_ref.child_tid<-,
           @child_tid control_ref.child_tid<-,
           @tls control_ref.tls_block.thread_pointer,
-          @control .control
+          @launch control_ref.launch<-
         );
       }
       IF (clone_result < 0)

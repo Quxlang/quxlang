@@ -62,12 +62,12 @@ lists modules whose `UNIT_TEST` declarations should be collected.
 ## Configured target compilation
 
 ```console
-qxc ./example-bundle ./out
+qxc build ./example-bundle ./out
 ```
 
 The invocation compiles every configured target and writes artifacts to
 `./out/output/<output-key>`. A comma-separated target list, such as
-`qxc ./example-bundle ./out linux-x64`, restricts compilation to selected
+`qxc build ./example-bundle ./out linux-x64`, restricts compilation to selected
 targets. The `--debug-compile-output` option emits compiler-stage artifacts for
 diagnosis.
 

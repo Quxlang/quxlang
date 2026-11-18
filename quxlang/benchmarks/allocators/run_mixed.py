@@ -13,7 +13,7 @@ import shutil
 import statistics
 import subprocess
 
-from run import add_cpp_build_arguments, cpp_build_flags, ROOT, REPOSITORY, digest, host_configuration, prepare_executables, counter_description, measure_case, minimum_seconds
+from run import add_cpp_build_arguments, cpp_build_flags, ROOT, REPOSITORY, digest, host_configuration, prepare_executables, counter_description, measure_case, minimum_seconds, mimalloc_documented_interface_flags
 
 
 def main():
@@ -62,9 +62,9 @@ def main():
         subprocess.run(command, check=True, **kwargs)
 
     with (work / 'qxc-build.log').open('w') as log:
-        execute([qxc, bundle, work / 'quxlang', 'native'], stdout=log, stderr=subprocess.STDOUT)
+        execute([qxc, 'build', bundle, work / 'quxlang', 'native'], stdout=log, stderr=subprocess.STDOUT)
     mimalloc = args.mimalloc_source.resolve()
-    execute(['clang', '-std=c17', '-O3', *cpp_flags, '-DNDEBUG', '-DMI_STATIC_LIB', '-I' + str(mimalloc / 'include'),
+    execute(['clang', '-std=c17', '-O3', *cpp_flags, '-DNDEBUG', '-DMI_STATIC_LIB', *mimalloc_documented_interface_flags(), '-I' + str(mimalloc / 'include'),
              '-c', mimalloc / 'src/static.c', '-o', work / 'mimalloc.o'])
     execute(['clang++', '-std=c++17', '-O3', *cpp_flags, *cpp_linker_flags, '-fsized-deallocation', '-DNDEBUG', '-DMI_STATIC_LIB', '-pthread',
              '-fno-builtin-malloc', '-fno-builtin-free', '-I' + str(mimalloc / 'include'),

@@ -68,20 +68,37 @@ PRIVATE(MODULE) ::allocation_region_lifecycle_test INCLUDE_IF(ARCH_IS_LAYOUTLESS
 }
 
 DOC <$
-    Returns more regions than the shared pool can retain, exercising OS release
-    and verifying that the retained stack stays within its configured limit.
+    A region returned while its extent retains issued regions is reissued from the
+    same extent, and an extent without issued regions remains mapped for reuse.
     $>
-PRIVATE(MODULE) ::allocation_region_backing_limit_test INCLUDE_IF(ARCH_IS_LAYOUTLESS == FALSE) UNIT_TEST
+PRIVATE(MODULE) ::allocation_region_backing_reuse_test INCLUDE_IF(ARCH_IS_LAYOUTLESS == FALSE) UNIT_TEST
 {
-  VAR regions [layer4_region_backing_limit + 4]MUT->layer3_region;
-  LOOP ITEM(region) IN(regions) DO { region := layer4_region_acquire(); }
+  VAR regions [8]MUT->layer3_region;
+  LOOP ITEM(region) IN(regions) DO { region := layer4_region_acquire(); TEST_ASSERT(region??); }
+  LOOP VALUE(index) FROM(0 AS SZ) UNTIL(8 AS SZ) DO
+  {
+    VAR extent MUT->layer4_backing_extent := regions[index]->.backing;
+    layer4_region_backing.mtx.lock();
+    VAR issued SZ := extent->.issued;
+    layer4_region_backing.mtx.unlock();
+    TEST_ASSERT(issued > 0);
+    IF (issued > 1)
+    {
+      // The newest partial extent supplies the next region, so a region returned to a shared extent is reissued.
+      VAR returned MUT->layer3_region := regions[index];
+      layer4_region_release(@region returned);
+      regions[index] := layer4_region_acquire();
+      TEST_ASSERT(regions[index] == returned);
+      TEST_ASSERT(regions[index]->.backing == extent);
+    }
+  }
   LOOP VALUE(region) IN(regions) DO { layer4_region_release(@region region); }
-  layer4_region_backing.mtx.lock();
-  TEST_ASSERT(layer4_region_backing.count == layer4_region_backing_limit);
-  layer4_region_backing.mtx.unlock();
 }
 
-DOC <$ Backing remains valid until the final inventory or region reference is released. $>
+DOC <$
+    An extent records its complete inventory at creation, restores that inventory
+    when its final issued region is returned, and joins a list of reusable extents.
+    $>
 PRIVATE(MODULE) ::allocation_region_extent_lifetime_test INCLUDE_IF(ARCH_IS_LAYOUTLESS == FALSE) UNIT_TEST
 {
   LOOP VALUE(kind) FROM(0 AS SZ) UNTIL(2 AS SZ) DO
@@ -91,24 +108,36 @@ PRIVATE(MODULE) ::allocation_region_extent_lifetime_test INCLUDE_IF(ARCH_IS_LAYO
     VAR extent MUT->layer4_backing_extent := layer4_extent_create(@span requested_span);
     TEST_ASSERT(extent??);
     TEST_ASSERT(extent->.unissued > 0);
+    TEST_ASSERT(extent->.next == extent->.first);
     TEST_ASSERT(extent->.next % allocator_slab_region_size == 0);
     VAR span SZ := extent->.mapping_bytes / 2;
     TEST_ASSERT(extent->.next % span == 0);
     TEST_ASSERT(extent->.unissued * allocator_slab_region_size == span);
-    TEST_ASSERT(extent->.references.LOAD#ATOMIC_ACQUIRE() == 1);
+    TEST_ASSERT(extent->.region_count == extent->.unissued);
+    TEST_ASSERT(extent->.issued == 0);
+    TEST_ASSERT(extent->.list == layer4_extent_membership::unlisted);
     VAR address ADDRESS := extent->.next;
     VAR storage MUT->TYPED_STORAGE(U64) := ADDRESS_LAUNDER_DISCOVER_EXISTING address TO MUT->TYPED_STORAGE(U64);
     PLACE AT(storage->) U64 := 123;
-    extent->.references.FETCH_ADD#ATOMIC_RELAXED(2);
-    layer4_extent_release(@extent extent);
-    TEST_ASSERT(extent->.references.LOAD#ATOMIC_ACQUIRE() == 2);
-    TEST_ASSERT(IBC_LOAD#U64(@ADDR address) == 123);
-    layer4_extent_release(@extent extent);
-    TEST_ASSERT(extent->.references.LOAD#ATOMIC_ACQUIRE() == 1);
     TEST_ASSERT(IBC_LOAD#U64(@ADDR address) == 123);
     DESTROY AT(storage->) U64;
-    layer4_extent_release(@extent extent);
+    layer5_purge_region(@address extent->.first, @bytes span);
+    PLACE AT(storage->) U64 := 456;
+    TEST_ASSERT(IBC_LOAD#U64(@ADDR address) == 456);
+    DESTROY AT(storage->) U64;
+    layer4_extent_unmap(@extent extent);
   }
+  VAR region MUT->layer3_region := layer4_region_acquire();
+  TEST_ASSERT(region??);
+  VAR owner MUT->layer4_backing_extent := region->.backing;
+  layer4_region_release(@region region);
+  layer4_region_backing.mtx.lock();
+  VAR list layer4_extent_membership := owner->.list;
+  VAR issued SZ := owner->.issued;
+  VAR complete BOOL := issued > 0 || (owner->.unissued == owner->.region_count && owner->.next == owner->.first);
+  layer4_region_backing.mtx.unlock();
+  TEST_ASSERT(list != layer4_extent_membership::unlisted);
+  TEST_ASSERT(complete);
 }
 
 DOC <$ An unordered region group returns every bitmap slot except a held allocation. $>
@@ -126,12 +155,12 @@ PRIVATE(MODULE) ::allocation_region_unordered_return_test INCLUDE_IF(ARCH_IS_LAY
   LOOP ITEM(address) IN(addresses) DO { address := cache.pop(); }
   LOOP VALUE(index) FROM(0 AS SZ) UNTIL((layer3_bitmap_word_bits * 2) + 6) DO
   { cache.push(addresses[(index * 11) % ((layer3_bitmap_word_bits * 2) + 6)]); }
-  layer3_region_return_batch#(@count ((layer3_bitmap_word_bits * 2) + 7))(@cache cache);
+  layer3_region_return_batch#(@count ((layer3_bitmap_word_bits * 2) + 7), @block_size 0)(@cache cache);
   TEST_ASSERT(cache.used == 0);
   TEST_ASSERT(control->.region == region);
   TEST_ASSERT(layer3_region_empty(@region region) == FALSE);
   cache.push(held);
-  layer3_region_return_batch#(@count ((layer3_bitmap_word_bits * 2) + 7))(@cache cache);
+  layer3_region_return_batch#(@count ((layer3_bitmap_word_bits * 2) + 7), @block_size 0)(@cache cache);
   TEST_ASSERT((control->.region??) == FALSE);
 }
 
@@ -188,7 +217,7 @@ PRIVATE(MODULE) ::layer3_region_batch_return_test INCLUDE_IF(ARCH_IS_LAYOUTLESS 
   VAR mixed addr_cache#(@count (layer3_bitmap_word_bits * 4 + 10));
   LOOP WHILE (first.used > 0) DO
   { mixed.push(first.pop()); mixed.push(second.pop()); }
-  layer2_drain_cache#(@count (layer3_bitmap_word_bits * 4 + 10))(@cache mixed);
+  layer3_region_return_plate#(@count (layer3_bitmap_word_bits * 4 + 10), @block_size 0)(@cache mixed);
   TEST_ASSERT(mixed.used == 0);
   TEST_ASSERT(first_control->.region == first_region);
   TEST_ASSERT(second_control->.region == second_region);
@@ -201,7 +230,7 @@ PRIVATE(MODULE) ::layer3_region_batch_return_test INCLUDE_IF(ARCH_IS_LAYOUTLESS 
   }
   mixed.push(held_first);
   mixed.push(held_second);
-  layer2_drain_cache#(@count (layer3_bitmap_word_bits * 4 + 10))(@cache mixed);
+  layer3_region_return_plate#(@count (layer3_bitmap_word_bits * 4 + 10), @block_size 0)(@cache mixed);
   TEST_ASSERT((first_control->.region??) == FALSE);
   TEST_ASSERT((second_control->.region??) == FALSE);
 }
@@ -225,7 +254,7 @@ PRIVATE(MODULE) ::layer3_refill_across_full_regions_test INCLUDE_IF(ARCH_IS_LAYO
     LOOP VALUE(previous) FROM(0 AS SZ) UNTIL(index) DO
     { TEST_ASSERT(address != (PUN cache.entries[previous] AS ADDRESS)); }
   }
-  layer2_drain_cache#(@count 32)(@cache cache);
+  layer3_region_return_plate#(@count 32, @block_size 0)(@cache cache);
   TEST_ASSERT(cache.used == 0);
   TEST_ASSERT(root.available.next == root.available<-);
   TEST_ASSERT(root.issued.next == root.issued<-);

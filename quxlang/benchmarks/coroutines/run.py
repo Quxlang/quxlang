@@ -100,7 +100,7 @@ def build(args):
     host_cpu = {"arm64": "ARM64", "aarch64": "ARM64", "x86_64": "x64", "AMD64": "x64"}[platform.machine()]
     config = config.replace("platform: macos", "platform: " + host_os).replace("cpu: ARM64", "cpu: " + host_cpu)
     (bundle / "qxcbuild.yml").write_text(config)
-    commands = [[str(args.qxc), str(bundle), str(work / "quxlang"), "native"],
+    commands = [[str(args.qxc), "build", str(bundle), str(work / "quxlang"), "native"],
                 [args.cxx, "-std=c++20", "-O3", "-DNDEBUG", str(ROOT / "algorithms.cpp"), "-o", str(work / "cpp")]]
     for index, command in enumerate(commands):
         with (work / f"build-{index}.log").open("w") as log:

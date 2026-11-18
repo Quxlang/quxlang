@@ -17,6 +17,11 @@ LANGUAGE QUXLANG EN 0.0;
   ];
   ::rdonly STATIC open_flags := (0 AS U32) AS open_flags;
 
+  DOC <$ Selects the treatment that the madvise function requests for a page range. $>
+  ::memory_advice IBC_ENUM BITS(32) [
+    release_lazily = 5
+  ];
+
   ::seek_whence IBC_ENUM [
     set = 0,
     cur = 1,
@@ -80,6 +85,10 @@ LANGUAGE QUXLANG EN 0.0;
   ::close EXTERN_PROCEDURE["/usr/lib/libSystem.B.dylib":"close"]
     CALLABLE CALLCONV CCALL(@fd I32; RETURN I32);
 
+  DOC <$ Suspends the calling thread for the requested interval or until a signal is delivered. $>
+  ::nanosleep EXTERN_PROCEDURE["/usr/lib/libSystem.B.dylib":"nanosleep"]
+    CALLABLE CALLCONV CCALL(@request CONST->timespec64, @remaining MUT->timespec64; RETURN I32);
+
   ::exit EXTERN_PROCEDURE["/usr/lib/libSystem.B.dylib":"_exit"]
     CALLABLE CALLCONV CCALL(@code I32);
 
@@ -96,6 +105,9 @@ LANGUAGE QUXLANG EN 0.0;
 
   ::munmap EXTERN_PROCEDURE["/usr/lib/libSystem.B.dylib":"munmap"]
     CALLABLE CALLCONV CCALL(@address ADDRESS, @size SZ; RETURN I32);
+
+  ::madvise EXTERN_PROCEDURE["/usr/lib/libSystem.B.dylib":"madvise"]
+    CALLABLE CALLCONV CCALL(@address ADDRESS, @size SZ, @advice memory_advice; RETURN I32);
 
   ::sysctlbyname EXTERN_PROCEDURE["/usr/lib/libSystem.B.dylib":"sysctlbyname"]
     CALLABLE CALLCONV CCALL(

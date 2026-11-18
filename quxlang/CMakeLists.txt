@@ -371,6 +371,10 @@ set(QUXLANG_QUERY_SPEC_HEADERS
         include/quxlang/queries/specs/llvm_postoptimize_spec.hpp
         include/quxlang/queries/llvm_function_module.hpp
         include/quxlang/queries/specs/llvm_function_module_spec.hpp
+        include/quxlang/queries/llvm_unit_check.hpp
+        include/quxlang/queries/specs/llvm_unit_check_spec.hpp
+        include/quxlang/queries/output_binaries_check.hpp
+        include/quxlang/queries/specs/output_binaries_check_spec.hpp
         sources/queries/llvm_lowering.hpp
         include/quxlang/queries/specs/llvm_preoptimize_spec.hpp
         include/quxlang/queries/specs/llvm_output_binary_artifact_spec.hpp
@@ -595,6 +599,7 @@ set(QUXLANG_QUERY_SOURCES
         sources/queries/output_binary_artifact.cpp
         sources/queries/cortado_output_binary_artifact.cpp
         sources/queries/output_binary_artifacts.cpp
+        sources/queries/output_binaries_check.cpp
         sources/queries/output_binary_information.cpp
         sources/queries/output_llvm_backend_options.cpp
         sources/queries/output_cortado_backend_options.cpp
@@ -817,14 +822,14 @@ if (BUILD_TESTING)
     target_compile_definitions(quxlang_gtests PRIVATE QUXLANG_TESTS_TESTDDATA_PATH="${QUXLANG_TESTS_TESTDATA_PATH}")
     target_compile_definitions(quxlang_static_gtests PRIVATE QUXLANG_TESTS_TESTDDATA_PATH="${QUXLANG_TESTS_TESTDATA_PATH}")
     foreach (test_target IN ITEMS linux-x64 linux-x64-glibc linux-arm64 linux-x86 linux-z-arch windows-x64 macos-arm64)
+        # The check command evaluates every frontend stage of the target without optimization, code generation, or linking.
         add_test(
-                NAME qxc_compile_test.${test_target}
-                COMMAND $<TARGET_FILE:qxc>
+                NAME qxc_check_test.${test_target}
+                COMMAND $<TARGET_FILE:qxc> check
                         "${QUXLANG_TESTS_TESTDATA_PATH}/testbundle"
-                        "${CMAKE_CURRENT_BINARY_DIR}/qxc_compile_test_output/$<CONFIG>/${test_target}"
                         "${test_target}")
-        # Each target has its own timeout while compilation retains one active target at a time.
-        set_tests_properties(qxc_compile_test.${test_target} PROPERTIES RESOURCE_LOCK qxc_compile_test)
+        # Each target has its own timeout while checking retains one active target at a time.
+        set_tests_properties(qxc_check_test.${test_target} PROPERTIES RESOURCE_LOCK qxc_check_test)
     endforeach ()
     gtest_discover_tests(quxlang_math_gtests)
     gtest_discover_tests(quxlang_gtests DISCOVERY_TIMEOUT 30)

@@ -1,0 +1,329 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT syscall;
+
+DOC <$
+  The collector period is the interval in milliseconds between collection passes
+  while the collector is active. A period of zero disables the collector; the
+  synchronous byte limits then remain the only bounds on idle backing memory.
+  $>
+::allocator_collector_period_milliseconds OPTION NUMBER DEFAULT_VALUE(250);
+
+DOC <$
+  A retained extent is purged after it remains on the retained list for this
+  number of collection passes.
+  $>
+::allocator_collector_purge_periods OPTION NUMBER DEFAULT_VALUE(4);
+
+DOC <$
+  A purged extent is unmapped after it remains on the purged list for this number
+  of collection passes.
+  $>
+::allocator_collector_unmap_periods OPTION NUMBER DEFAULT_VALUE(40);
+
+DOC <$
+  The collector is started or resumed when the retained list or the purged list
+  holds at least this number of bytes. A process that never accumulates this
+  quantity of idle backing memory never creates the collector thread.
+  $>
+::allocator_collector_minimum_bytes OPTION NUMBER DEFAULT_VALUE(1048576);
+
+PRIVATE(MODULE) ::layer4_collector_unstarted STATIC U32 := 0;
+PRIVATE(MODULE) ::layer4_collector_active STATIC U32 := 1;
+PRIVATE(MODULE) ::layer4_collector_parked STATIC U32 := 2;
+PRIVATE(MODULE) ::layer4_collector_unavailable STATIC U32 := 3;
+
+DOC <$
+  The activity word records whether the collector thread has not been created,
+  executes periodic collection passes, waits for a resumption, or could not be
+  created. Transitions other than the transition to the unavailable state occur
+  while the pool mutex of the global region pool is held.
+  $>
+PRIVATE(MODULE) ::layer4_collector_activity VAR ATOMIC#U32;
+
+DOC <$ Identifies the action that a releasing thread performs after it unlocks the pool. $>
+PRIVATE(MODULE) ::layer4_collector_request IBC_ENUM BITS(8) [
+  none DEFAULT = 0,
+  resume = 1,
+  start = 2
+];
+
+DOC <$ The predicate reports whether the pool holds enough idle bytes to justify periodic collection passes. The caller holds the pool mutex. $>
+PRIVATE(MODULE) ::layer4_pool_collectable FUNCTION(@pool MUT& layer4_region_pool): BOOL
+{
+  VAR minimum SZ := allocator_collector_minimum_bytes;
+  RETURN pool.retained.bytes >= minimum || pool.purged.bytes >= minimum;
+}
+
+DOC <$
+  The collection pass advances the pool epoch, purges every retained extent that
+  has been idle for the purge period count, and unmaps every purged extent that
+  has been idle for the unmap period count. Each list is ordered by insertion, so
+  the pass inspects only the oldest member. Purging and unmapping occur outside
+  the pool lock on unlisted extents.
+  $>
+PRIVATE(MODULE) ::layer4_pool_collect FUNCTION(@pool MUT& layer4_region_pool, @purge_periods SZ, @unmap_periods SZ)
+{
+  pool.mtx.lock();
+  pool.epoch++;
+  LOOP WHILE ((pool.retained.oldest??) && pool.epoch - pool.retained.oldest->.idle_epoch >= purge_periods) DO
+  {
+    VAR victim MUT->layer4_backing_extent := pool.retained.oldest;
+    pool.retained.remove(@extent victim);
+    pool.mtx.unlock();
+    layer5_purge_region(@address victim->.first, @bytes victim->.region_count * allocator_slab_region_size);
+    pool.mtx.lock();
+    victim->.idle_epoch := pool.epoch;
+    pool.purged.insert(@extent victim, @kind layer4_extent_membership::purged);
+  }
+  LOOP WHILE ((pool.purged.oldest??) && pool.epoch - pool.purged.oldest->.idle_epoch >= unmap_periods) DO
+  {
+    VAR victim MUT->layer4_backing_extent := pool.purged.oldest;
+    pool.purged.remove(@extent victim);
+    pool.mtx.unlock();
+    layer4_extent_unmap(@extent victim);
+    pool.mtx.lock();
+  }
+  pool.mtx.unlock();
+}
+
+DOC <$ Suspends the collector thread for one collector period. An early return caused by a signal only advances the next collection pass. $>
+PRIVATE(MODULE) ::layer4_collector_sleep FUNCTION()
+{
+  STATIC_IF(OS_LINUX)
+  {
+    VAR none MUT =>>BYTE;
+    STATIC_IF(SIZEOF(UINTPTR) == 8 || ARCH_IS_RISCV32)
+    {
+      VAR milliseconds I64 := allocator_collector_period_milliseconds;
+      VAR request syscall::timespec64;
+      request.seconds := milliseconds / 1000;
+      request.nanoseconds := (milliseconds % 1000) * 1000000;
+      syscall::linux::nanosleep(@req IBC_PUN#(CONST =>>BYTE)(@ADDR IBC_GETADDR(@PTR request<-)), @rem none);
+    }
+    STATIC_ELSE
+    {
+      // The legacy system call of the remaining 32-bit targets reads two 32-bit fields.
+      VAR milliseconds I32 := allocator_collector_period_milliseconds;
+      VAR request [2]I32;
+      request[0] := milliseconds / 1000;
+      request[1] := (milliseconds % 1000) * 1000000;
+      syscall::linux::nanosleep(@req IBC_PUN#(CONST =>>BYTE)(@ADDR IBC_GETADDR(@PTR request[0]<-)), @rem none);
+    }
+  }
+  STATIC_IF(OS_MACOS)
+  {
+    VAR milliseconds I64 := allocator_collector_period_milliseconds;
+    VAR request syscall::timespec64;
+    request.seconds := milliseconds / 1000;
+    request.nanoseconds := (milliseconds % 1000) * 1000000;
+    VAR none MUT->syscall::timespec64;
+    syscall::macos::nanosleep(@request request<-, @remaining none);
+  }
+  STATIC_IF(OS_WINDOWS)
+  {
+    syscall::windows::sleep(@milliseconds allocator_collector_period_milliseconds);
+  }
+}
+
+DOC <$
+  The collector executes one collection pass per period while the global pool
+  holds enough idle bytes. The collector otherwise records the parked state while
+  it holds the pool mutex and waits until a releasing thread resumes it.
+  $>
+PRIVATE(MODULE) ::layer4_collector_run FUNCTION()
+{
+  LOOP DO
+  {
+    layer4_collector_sleep();
+    layer4_pool_collect(@pool layer4_region_backing, @purge_periods allocator_collector_purge_periods,
+      @unmap_periods allocator_collector_unmap_periods);
+    layer4_region_backing.mtx.lock();
+    IF (layer4_pool_collectable(@pool layer4_region_backing) == FALSE)
+    { layer4_collector_activity.STORE#ATOMIC_RELEASE(layer4_collector_parked); }
+    layer4_region_backing.mtx.unlock();
+    LOOP WHILE (layer4_collector_activity.LOAD#ATOMIC_ACQUIRE() == layer4_collector_parked) DO
+    {
+      wait_at_u32_address(@address IBC_GETADDR(@PTR layer4_collector_activity<-), @expected layer4_collector_parked);
+    }
+  }
+}
+
+PRIVATE(MODULE) ::layer4_collector_pthread_create INCLUDE_IF(OS_MACOS) EXTERN_PROCEDURE["/usr/lib/libSystem.B.dylib":"pthread_create"]
+  CALLABLE CALLCONV CCALL(
+    @thread MUT->UINTPTR,
+    @attributes CONST->VOID,
+    @start CONST->PROCEDURE(@ARG MUT->VOID: MUT->VOID),
+    @argument MUT->VOID;
+    RETURN I32
+  );
+
+PRIVATE(MODULE) ::layer4_collector_pthread_create INCLUDE_IF(ENVIRONMENT_IS_GLIBC) EXTERN_PROCEDURE["glibc":"pthread_create" VERSION "GLIBC_2.34"]
+  CALLABLE CALLCONV CCALL(
+    @thread MUT->UINTPTR,
+    @attributes CONST->VOID,
+    @start CONST->PROCEDURE(@ARG MUT->VOID: MUT->VOID),
+    @argument MUT->VOID;
+    RETURN I32
+  );
+
+PRIVATE(MODULE) ::layer4_collector_entry INCLUDE_IF(OS_MACOS || ENVIRONMENT_IS_GLIBC) FUNCTION(@ARG:argument MUT->VOID): MUT->VOID
+{
+  layer4_collector_run();
+  RETURN argument;
+}
+
+PRIVATE(MODULE) ::layer4_collector_entry INCLUDE_IF(OS_WINDOWS) FUNCTION(@argument ADDRESS): U32
+{
+  layer4_collector_run();
+  RETURN 0;
+}
+
+PRIVATE(MODULE) ::layer4_collector_entry INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC) FUNCTION(@ARG:argument ADDRESS)
+{
+  layer4_collector_run();
+}
+
+PRIVATE(MODULE) ::layer4_collector_stack INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC) VAR static_linux_mapping;
+PRIVATE(MODULE) ::layer4_collector_tls INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC) VAR static_linux_tls_block;
+PRIVATE(MODULE) ::layer4_collector_launch INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC) VAR static_linux_thread_launch;
+PRIVATE(MODULE) ::layer4_collector_thread_identifier INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC) VAR ATOMIC#I32;
+
+DOC <$
+  The start function creates the collector thread and returns false when the
+  operating system refuses the thread or the target has no thread support. The
+  collector thread executes until the process exits and is never joined.
+  $>
+PRIVATE(MODULE) ::layer4_collector_start FUNCTION(): BOOL
+{
+  STATIC_IF(OS_MACOS || ENVIRONMENT_IS_GLIBC)
+  {
+    VAR thread UINTPTR;
+    VAR attributes CONST->VOID;
+    VAR argument MUT->VOID;
+    RETURN layer4_collector_pthread_create(@thread thread<-, @attributes attributes,
+      @start layer4_collector_entry<-, @argument argument) == 0;
+  }
+  STATIC_ELSE STATIC_IF(OS_WINDOWS)
+  {
+    VAR identifier U32;
+    VAR handle ADDRESS := syscall::windows::create_thread(@attributes NULL, @stack_size 0,
+      @start layer4_collector_entry<-, @argument NULL, @creation_flags 0, @thread_id identifier<-);
+    IF (handle!?) { RETURN FALSE; }
+    syscall::windows::close_handle(@handle handle);
+    RETURN TRUE;
+  }
+  STATIC_ELSE STATIC_IF(OS_LINUX && ENVIRONMENT_IS_STATIC)
+  {
+    static_linux_stack_allocate(@result layer4_collector_stack);
+    static_linux_tls_allocate(@result layer4_collector_tls);
+    layer4_collector_launch.entry := layer4_collector_entry<-;
+    layer4_collector_launch.argument := NULL;
+    VAR child_stack MUT=>>TYPED_STORAGE(BYTE) := layer4_collector_stack.storage + layer4_collector_stack.size;
+    VAR clone_result I32 := 0;
+    STATIC_IF(ARCH_IS_X86)
+    {
+      VAR descriptor static_linux_x86_user_desc;
+      static_linux_x86_descriptor_initialize(@descriptor descriptor<-,
+        @thread_pointer layer4_collector_tls.thread_pointer, @entry_number static_linux_x86_tls_entry_number);
+      clone_result := static_linux_clone(@flags static_linux_clone_flags, @child_stack child_stack,
+        @parent_tid layer4_collector_thread_identifier<-, @child_tid layer4_collector_thread_identifier<-,
+        @tls descriptor<-, @launch layer4_collector_launch<-);
+    }
+    STATIC_ELSE
+    {
+      clone_result := static_linux_clone(@flags static_linux_clone_flags, @child_stack child_stack,
+        @parent_tid layer4_collector_thread_identifier<-, @child_tid layer4_collector_thread_identifier<-,
+        @tls layer4_collector_tls.thread_pointer, @launch layer4_collector_launch<-);
+    }
+    IF (clone_result < 0)
+    {
+      static_linux_tls_release(@block layer4_collector_tls);
+      static_linux_mapping_release(@mapping layer4_collector_stack);
+      RETURN FALSE;
+    }
+    RETURN TRUE;
+  }
+  STATIC_ELSE { RETURN FALSE; }
+}
+
+DOC <$
+  The request function selects the collector transition for a pool that has just
+  received an idle extent. The caller holds the pool mutex and passes the result
+  to the fulfillment function after it unlocks the pool.
+  $>
+PRIVATE(MODULE) ::layer4_collector_request_locked FUNCTION(@pool MUT& layer4_region_pool): layer4_collector_request
+{
+  STATIC_IF(allocator_collector_period_milliseconds != 0)
+  {
+    IF (layer4_pool_collectable(@pool pool))
+    {
+      VAR activity U32 := layer4_collector_activity.LOAD#ATOMIC_RELAXED();
+      IF (activity == layer4_collector_parked)
+      {
+        layer4_collector_activity.STORE#ATOMIC_RELEASE(layer4_collector_active);
+        RETURN layer4_collector_request::resume;
+      }
+      IF (activity == layer4_collector_unstarted)
+      {
+        layer4_collector_activity.STORE#ATOMIC_RELEASE(layer4_collector_active);
+        RETURN layer4_collector_request::start;
+      }
+    }
+  }
+  RETURN layer4_collector_request::none;
+}
+
+DOC <$ The fulfillment function wakes a parked collector or creates the collector thread outside the pool lock. $>
+PRIVATE(MODULE) ::layer4_collector_fulfill FUNCTION(@request layer4_collector_request)
+{
+  IF (request == layer4_collector_request::resume)
+  { notify_one_at_address(@address IBC_GETADDR(@PTR layer4_collector_activity<-), @size SIZEOF(U32)); }
+  ELSE IF (request == layer4_collector_request::start)
+  {
+    IF (layer4_collector_start() == FALSE)
+    { layer4_collector_activity.STORE#ATOMIC_RELEASE(layer4_collector_unavailable); }
+  }
+}
+
+DOC <$
+  The test verifies that a collection pass purges retained extents and unmaps
+  purged extents only after the configured number of idle passes.
+  $>
+PRIVATE(MODULE) ::layer4_pool_collection_test INCLUDE_IF(ARCH_IS_LAYOUTLESS == FALSE) UNIT_TEST
+{
+  VAR pool layer4_region_pool;
+  VAR extent_bytes SZ := allocator_slab_region_size;
+  LOOP VALUE(index) FROM(0 AS SZ) UNTIL(3 AS SZ) DO
+  {
+    VAR extent MUT->layer4_backing_extent := layer4_extent_create(@span allocator_slab_region_size);
+    TEST_ASSERT(extent??);
+    extent->.idle_epoch := pool.epoch;
+    pool.retained.insert(@extent extent, @kind layer4_extent_membership::retained);
+  }
+  layer4_pool_collect(@pool pool, @purge_periods 2, @unmap_periods 3);
+  TEST_ASSERT(pool.retained.bytes == 3 * extent_bytes);
+  TEST_ASSERT(pool.purged.bytes == 0);
+  VAR reused MUT->layer4_backing_extent := pool.retained.newest;
+  pool.retained.remove(@extent reused);
+  layer4_pool_collect(@pool pool, @purge_periods 2, @unmap_periods 3);
+  TEST_ASSERT(pool.retained.bytes == 0);
+  TEST_ASSERT(pool.purged.bytes == 2 * extent_bytes);
+  TEST_ASSERT(pool.purged.oldest->.list == layer4_extent_membership::purged);
+  reused->.idle_epoch := pool.epoch;
+  pool.retained.insert(@extent reused, @kind layer4_extent_membership::retained);
+  layer4_pool_collect(@pool pool, @purge_periods 2, @unmap_periods 3);
+  TEST_ASSERT(pool.retained.bytes == extent_bytes);
+  TEST_ASSERT(pool.purged.bytes == 2 * extent_bytes);
+  layer4_pool_collect(@pool pool, @purge_periods 2, @unmap_periods 3);
+  TEST_ASSERT(pool.retained.bytes == 0);
+  TEST_ASSERT(pool.purged.bytes == 3 * extent_bytes);
+  layer4_pool_collect(@pool pool, @purge_periods 2, @unmap_periods 3);
+  TEST_ASSERT(pool.purged.bytes == extent_bytes);
+  TEST_ASSERT(pool.purged.oldest == reused);
+  LOOP VALUE(pass) FROM(0 AS SZ) UNTIL(2 AS SZ) DO
+  { layer4_pool_collect(@pool pool, @purge_periods 2, @unmap_periods 3); }
+  TEST_ASSERT(pool.purged.bytes == 0);
+  TEST_ASSERT((pool.purged.oldest??) == FALSE);
+  TEST_ASSERT(pool.epoch == 7);
+}

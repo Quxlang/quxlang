@@ -289,6 +289,28 @@ PRIVATE(MODULE) ::layer5_unmap_region FUNCTION(@address ADDRESS, @bytes SZ)
 }
 
 DOC <$
+  Offers the pages of a mapped range to the operating system. The range remains
+  mapped and writable, and its contents are unspecified after the call.
+  $>
+PRIVATE(MODULE) ::layer5_purge_region FUNCTION(@address ADDRESS, @bytes SZ)
+{
+  STATIC_IF(OS_LINUX)
+  {
+    // Kernels without lazy release reject that advice; immediate discard is supported by every kernel.
+    IF (syscall::linux::madvise(@addr address, @len bytes, @advice syscall::linux::memory_advice::release_lazily) != 0)
+    { syscall::linux::madvise(@addr address, @len bytes, @advice syscall::linux::memory_advice::discard_immediately); }
+  }
+  STATIC_IF(OS_MACOS)
+  {
+    syscall::macos::madvise(@address address, @size bytes, @advice syscall::macos::memory_advice::release_lazily);
+  }
+  STATIC_IF(OS_WINDOWS)
+  {
+    syscall::windows::virtual_alloc(@address address, @size bytes, @allocation_type 524288, @protect 4);
+  }
+}
+
+DOC <$
   Computes an even address-cache capacity for one slab block size.
   $>
 PRIVATE(MODULE) ::allocator_address_cache_entry_count FUNCTION(@block_size SZ): SZ
@@ -361,6 +383,28 @@ PRIVATE(MODULE) ::addr_cache TEMPLATE(@count VALUE SZ) STRUCT
     };
     .used := source_start;
     destination.used := destination_start + entry_count;
+  }
+
+  DOC <$
+    Reports whether the live prefix contains more than the given number of positions at
+    which adjacent addresses belong to different regions. The scan stops at the limit.
+    $>
+  .region_changes_exceed FUNCTION(@limit SZ): BOOL
+  {
+    IF (.used < 2) { RETURN FALSE; }
+    VAR changes SZ := 0;
+    VAR previous SZ := (((PUN .entries[0] AS ADDRESS) - NULL) AS SZ) #-- allocator_allocation_region_bits;
+    LOOP VALUE(index) FROM(1 AS SZ) UNTIL(.used) DO
+    {
+      VAR current SZ := (((PUN .entries[index] AS ADDRESS) - NULL) AS SZ) #-- allocator_allocation_region_bits;
+      IF (current != previous)
+      {
+        changes++;
+        IF (changes > limit) { RETURN TRUE; }
+        previous := current;
+      }
+    }
+    RETURN FALSE;
   }
 
   DOC <$ The grouping function partitions an address prefix by region using only varying region-address bytes. $>
@@ -567,17 +611,6 @@ PRIVATE(MODULE) ::layer2_acquire_empty_cache_node TEMPLATE(@count VALUE SZ)
 }
 
 DOC <$
-  The drain function groups a privately owned plate by allocation region and returns each group
-  with one atomic update per occupied bitmap word. The empty plate remains owned by the caller.
-  $>
-PRIVATE(MODULE) ::layer2_drain_cache TEMPLATE(@count VALUE SZ)
-  FUNCTION(@cache MUT& addr_cache#(@count count))
-{
-  cache.group_regions();
-  LOOP WHILE (cache.used > 0) DO { layer3_region_return_batch#(@count count)(@cache cache); }
-}
-
-DOC <$
   Handles allocations above the slab limit with page-rounded direct mappings.
   $>
 PRIVATE(MODULE) ::large_allocator STRUCT
@@ -609,6 +642,39 @@ PRIVATE(MODULE) ::large_allocator STRUCT
 }
 
 DOC <$
+  Stores the cursor and bounds of the active address cache of one thread for
+  one slab size class. The layout is identical for every size class, so an
+  allocation with a runtime size selects a cursor by size class index.
+  $>
+PRIVATE(MODULE) ::allocator_thread_cursor STRUCT
+{
+  DOC <$ Points to the first unused address slot in the active cache. $>
+  .entry VAR =>>TYPED_STORAGE(ADDRESS);
+  DOC <$ Points one slot past the active cache storage capacity. $>
+  .top VAR =>>TYPED_STORAGE(ADDRESS);
+  DOC <$ Points to the first address slot, or null before initialization. $>
+  .bottom VAR =>>TYPED_STORAGE(ADDRESS);
+}
+
+DOC <$
+  Owns one thread's active cache cursors ordered by size class index.
+  $>
+PRIVATE(MODULE) ::allocator_thread_cursors VAR PER_THREAD [allocator_slab_class_count()]allocator_thread_cursor ALIGN(64);
+
+DOC <$
+  Returns the index of the slab size class with a block size.
+  $>
+PRIVATE(MODULE) ::allocator_slab_class_index FUNCTION(@ARG:block_size SZ): SZ
+{
+  VAR index SZ := 0;
+  LOOP WHILE (allocator_slab_class_size(index) != block_size) DO
+  {
+    index++;
+  }
+  RETURN index;
+}
+
+DOC <$
   Implements one fixed block-size and alignment allocator with whole-cache
   transfers between thread-local and global state.
   $>
@@ -618,16 +684,10 @@ PRIVATE(MODULE) ::slab_allocator TEMPLATE(@block_size VALUE SZ, @block_align VAL
     allocator_address_cache_entry_count(@block_size block_size);
 
   DOC <$
-    Stores the active cache cursor, bounds, and both cache ownership pointers.
+    Stores both cache ownership pointers and the transfer shard assignment.
     $>
   PRIVATE(MODULE) ::layer1_cache_control_state STRUCT
   {
-    DOC <$ Points to the first unused address slot in the active cache. $>
-    .entry VAR =>>TYPED_STORAGE(ADDRESS);
-    DOC <$ Points one slot past the active cache storage capacity. $>
-    .top VAR =>>TYPED_STORAGE(ADDRESS);
-    DOC <$ Points to the first address slot, or null before initialization. $>
-    .bottom VAR =>>TYPED_STORAGE(ADDRESS);
     DOC <$ Owns the active cache object whose used count is synchronized before transfers. $>
     .node VAR MUT->addr_cache_node#(@count address_cache_count);
     DOC <$ Owns the secondary cache, accessed during slow-path transfers. $>
@@ -640,6 +700,14 @@ PRIVATE(MODULE) ::slab_allocator TEMPLATE(@block_size VALUE SZ, @block_align VAL
     Owns one thread's active and secondary cache state for this slab specialization.
     $>
   PRIVATE(MODULE) ::layer1_cache_control VAR PER_THREAD layer1_cache_control_state ALIGN(64);
+
+  PRIVATE(MODULE) ::class_index STATIC SZ := allocator_slab_class_index(block_size);
+
+  DOC <$ Returns this thread's active cache cursor for this slab size class. $>
+  PRIVATE(MODULE) ::layer1_cursor FUNCTION(): MUT& allocator_thread_cursor
+  {
+    RETURN allocator_thread_cursors[class_index];
+  }
 
   DOC <$ Owns the stable control lists for this slab class. $>
   PRIVATE(MODULE) ::layer3_regions VAR layer2_region_bank;
@@ -686,7 +754,7 @@ PRIVATE(MODULE) ::slab_allocator TEMPLATE(@block_size VALUE SZ, @block_align VAL
       {
         IF (root.partial.try_push(@node partial) == FALSE)
         {
-          layer2_drain_cache#(@count address_cache_count)(@cache partial->.cache);
+          layer3_region_return_plate#(@count address_cache_count, @block_size block_size)(@cache partial->.cache);
           layer2_release_empty_cache_node#(@count address_cache_count)(@node partial);
         }
       }
@@ -696,7 +764,7 @@ PRIVATE(MODULE) ::slab_allocator TEMPLATE(@block_size VALUE SZ, @block_align VAL
       VAR regions MUT->layer3_region_class := layer3_regions.get(@home layer2_allocation_home());
       IF (regions!?)
       {
-        layer2_drain_cache#(@count address_cache_count)(@cache result->.cache);
+        layer3_region_return_plate#(@count address_cache_count, @block_size block_size)(@cache result->.cache);
         layer2_release_empty_cache_node#(@count address_cache_count)(@node result);
         RETURN NULL;
       }
@@ -705,7 +773,7 @@ PRIVATE(MODULE) ::slab_allocator TEMPLATE(@block_size VALUE SZ, @block_align VAL
       regions->.mtx.unlock();
       IF (layer3_region_refill#(@count address_cache_count)(@root regions->, @cache result->.cache) == FALSE)
       {
-        layer2_drain_cache#(@count address_cache_count)(@cache result->.cache);
+        layer3_region_return_plate#(@count address_cache_count, @block_size block_size)(@cache result->.cache);
         layer2_release_empty_cache_node#(@count address_cache_count)(@node result);
         VAR empty MUT->addr_cache_node#(@count address_cache_count);
         RETURN empty;
@@ -741,7 +809,7 @@ PRIVATE(MODULE) ::slab_allocator TEMPLATE(@block_size VALUE SZ, @block_align VAL
         { layer2_release_empty_cache_node#(@count address_cache_count)(@node partial); }
         ELSE IF (root.partial.try_push(@node partial) == FALSE)
         {
-          layer2_drain_cache#(@count address_cache_count)(@cache partial->.cache);
+          layer3_region_return_plate#(@count address_cache_count, @block_size block_size)(@cache partial->.cache);
           layer2_release_empty_cache_node#(@count address_cache_count)(@node partial);
         }
       }
@@ -754,7 +822,7 @@ PRIVATE(MODULE) ::slab_allocator TEMPLATE(@block_size VALUE SZ, @block_align VAL
     {
       IF (root.partial.try_push(@node node)) { RETURN; }
     }
-    layer2_drain_cache#(@count address_cache_count)(@cache node->.cache);
+    layer3_region_return_plate#(@count address_cache_count, @block_size block_size)(@cache node->.cache);
     layer2_release_empty_cache_node#(@count address_cache_count)(@node node);
   }
 
@@ -786,9 +854,9 @@ PRIVATE(MODULE) ::slab_allocator TEMPLATE(@block_size VALUE SZ, @block_align VAL
     $>
   PRIVATE(MODULE) ::layer1_activate_thread_cache FUNCTION()
   {
-    layer1_cache_control.bottom := layer1_cache_control.node->.cache.entries[&0];
-    layer1_cache_control.entry := layer1_cache_control.bottom + layer1_cache_control.node->.cache.used;
-    layer1_cache_control.top := layer1_cache_control.bottom + address_cache_count;
+    layer1_cursor().bottom := layer1_cache_control.node->.cache.entries[&0];
+    layer1_cursor().entry := layer1_cursor().bottom + layer1_cache_control.node->.cache.used;
+    layer1_cursor().top := layer1_cursor().bottom + address_cache_count;
   }
 
   DOC <$
@@ -807,19 +875,25 @@ PRIVATE(MODULE) ::slab_allocator TEMPLATE(@block_size VALUE SZ, @block_align VAL
     Returns a slot to its region after thread-local teardown.
     $>
   PRIVATE(MODULE) ::layer3_deallocate_without_thread_cache FUNCTION(@ptr ADDRESS)
-  { layer3_region_return(@address ptr); }
+  {
+    VAR cache addr_cache#(@count 1);
+    cache.push(ptr);
+    layer3_region_return_batch#(@count 1, @block_size block_size)(@cache cache);
+  }
 
   DOC <$ Allocates one block from this slab allocator or returns null on allocation failure. $>
   PRIVATE(MODULE) ::layer0_allocate FUNCTION(): ADDRESS
   {
-    VAR entry =>>TYPED_STORAGE(ADDRESS) := layer1_cache_control.entry;
-    IF LIKELY (entry != layer1_cache_control.bottom)
+    // One reference avoids repeated thread-local address resolution on the fast path.
+    VAR control MUT& allocator_thread_cursor := layer1_cursor();
+    VAR entry =>>TYPED_STORAGE(ADDRESS) := control.entry;
+    IF LIKELY (entry != control.bottom)
     {
       entry--;
       VAR result ADDRESS := PUN entry-> AS ADDRESS;
       INVARIANT(result??, "A slab address cache contains a null address.");
       DESTROY AT(entry->) ADDRESS;
-      layer1_cache_control.entry := entry;
+      control.entry := entry;
       RETURN result;
     }
 
@@ -877,21 +951,23 @@ PRIVATE(MODULE) ::slab_allocator TEMPLATE(@block_size VALUE SZ, @block_align VAL
       );
     }
     layer1_activate_thread_cache();
-    layer1_cache_control.entry--;
-    VAR result ADDRESS := PUN layer1_cache_control.entry-> AS ADDRESS;
-    DESTROY AT(layer1_cache_control.entry->) ADDRESS;
+    layer1_cursor().entry--;
+    VAR result ADDRESS := PUN layer1_cursor().entry-> AS ADDRESS;
+    DESTROY AT(layer1_cursor().entry->) ADDRESS;
     RETURN result;
   }
 
   DOC <$ Returns one block to this slab allocator. $>
   PRIVATE(MODULE) ::layer0_deallocate FUNCTION(@ptr ADDRESS)
   {
-    VAR entry =>>TYPED_STORAGE(ADDRESS) := layer1_cache_control.entry;
-    IF LIKELY (entry != layer1_cache_control.top)
+    // One reference avoids repeated thread-local address resolution on the fast path.
+    VAR control MUT& allocator_thread_cursor := layer1_cursor();
+    VAR entry =>>TYPED_STORAGE(ADDRESS) := control.entry;
+    IF LIKELY (entry != control.top)
     {
       PLACE AT(entry->) ADDRESS := ptr;
       entry++;
-      layer1_cache_control.entry := entry;
+      control.entry := entry;
       RETURN;
     }
 
@@ -955,8 +1031,8 @@ PRIVATE(MODULE) ::slab_allocator TEMPLATE(@block_size VALUE SZ, @block_align VAL
     }
 
     layer1_activate_thread_cache();
-    PLACE AT(layer1_cache_control.entry->) ADDRESS := ptr;
-    layer1_cache_control.entry++;
+    PLACE AT(layer1_cursor().entry->) ADDRESS := ptr;
+    layer1_cursor().entry++;
   }
 
   DOC <$
@@ -972,11 +1048,11 @@ PRIVATE(MODULE) ::slab_allocator TEMPLATE(@block_size VALUE SZ, @block_align VAL
     ASSERT(layer1_cache_control.secondary_node??, "A thread cache is missing its secondary cache object.");
     VAR active MUT->addr_cache_node#(@count address_cache_count) := layer1_cache_control.node;
     VAR secondary MUT->addr_cache_node#(@count address_cache_count) := layer1_cache_control.secondary_node;
-    active->.cache.used := (layer1_cache_control.entry - layer1_cache_control.bottom) AS CHECKED SZ;
+    active->.cache.used := (layer1_cursor().entry - layer1_cursor().bottom) AS CHECKED SZ;
     VAR no_entry =>>TYPED_STORAGE(ADDRESS);
-    layer1_cache_control.entry := no_entry;
-    layer1_cache_control.top := no_entry;
-    layer1_cache_control.bottom := no_entry;
+    layer1_cursor().entry := no_entry;
+    layer1_cursor().top := no_entry;
+    layer1_cursor().bottom := no_entry;
     VAR no_cache MUT->addr_cache_node#(@count address_cache_count);
     layer1_cache_control.node := no_cache;
     layer1_cache_control.secondary_node := no_cache;
@@ -993,7 +1069,7 @@ PRIVATE(MODULE) ::slab_allocator TEMPLATE(@block_size VALUE SZ, @block_align VAL
     {
       RETURN 0;
     }
-    RETURN (layer1_cache_control.entry - layer1_cache_control.bottom) AS CHECKED SZ
+    RETURN (layer1_cursor().entry - layer1_cursor().bottom) AS CHECKED SZ
       + layer1_cache_control.secondary_node->.cache.used;
   }
 }
@@ -1048,25 +1124,145 @@ PRIVATE(MODULE) ::allocator_deallocate_static TEMPLATE(@size VALUE SZ, @align VA
 }
 
 DOC <$
-  Routes a runtime layout through the generated slab size classes.
+  Returns the block size of the slab size class at an index. The size classes
+  start at 8 bytes and provide two classes for each doubling of the block size.
+  $>
+PRIVATE(MODULE) ::allocator_slab_class_size FUNCTION(@ARG:index SZ): SZ
+{
+  VAR block_size SZ := 8;
+  VAR step SZ := 4;
+  VAR position SZ := 0;
+  LOOP WHILE (position < index) DO
+  {
+    block_size += step;
+    IF (block_size / step == 4) { step *= 2; }
+    position++;
+  }
+  RETURN block_size;
+}
+
+DOC <$
+  Returns the number of slab size classes.
+  $>
+PRIVATE(MODULE) ::allocator_slab_class_count FUNCTION(): SZ
+{
+  VAR count SZ := 0;
+  LOOP WHILE (allocator_slab_class_size(count) <= allocator_slab_maximum_block_size) DO
+  {
+    count++;
+  }
+  RETURN count;
+}
+
+DOC <$
+  Returns the byte count that selects the slab size class of a runtime layout.
+  The block size of every slab size class is a multiple of the alignment of the
+  class, so the smallest class holding the byte count rounded up to a multiple
+  of the requested alignment is the smallest class satisfying both the byte
+  count and the alignment. The byte count is at most
+  allocator_slab_maximum_block_size.
+  $>
+PRIVATE(MODULE) ::allocator_slab_class_bytes FUNCTION(@bytes SZ, @align SZ): SZ
+{
+  RETURN (bytes + (align - 1)) #&& ((align - 1) #!!);
+}
+
+DOC <$
+  The number of entries in allocator_slab_class_indices. Every slab size class
+  is a multiple of four bytes, so one entry covers four byte counts.
+  $>
+PRIVATE(MODULE) ::allocator_slab_class_index_entries STATIC SZ := (allocator_slab_maximum_block_size / 4) + 1;
+
+DOC <$
+  Builds the table mapping a byte count divided by four and rounded up to the
+  index of the smallest slab size class holding that byte count.
+  $>
+PRIVATE(MODULE) ::allocator_slab_class_indices_build FUNCTION(): [allocator_slab_class_index_entries]U8
+{
+  VAR table [allocator_slab_class_index_entries]U8;
+  VAR entry SZ := 0;
+  VAR index SZ := 0;
+  LOOP WHILE (entry < allocator_slab_class_index_entries) DO
+  {
+    IF (entry * 4 > allocator_slab_class_size(index)) { index++; }
+    table[entry] := index AS CHECKED U8;
+    entry++;
+  }
+  RETURN table;
+}
+
+DOC <$ Maps a byte count divided by four and rounded up to a slab size class index. $>
+PRIVATE(MODULE) ::allocator_slab_class_indices STATIC [allocator_slab_class_index_entries]U8 := allocator_slab_class_indices_build();
+
+DOC <$
+  Builds the table of slab allocation slow-path procedures ordered by size class index.
+  $>
+PRIVATE(MODULE) ::allocator_slab_allocate_procedures_build FUNCTION(): [allocator_slab_class_count()]CONST->PROCEDURE(: ADDRESS)
+{
+  VAR table [allocator_slab_class_count()]CONST->PROCEDURE(: ADDRESS);
+  STATIC_VAR index SZ := 0;
+  STATIC_WHILE (index < allocator_slab_class_count())
+  {
+    STATIC_VAR block_size SZ := allocator_slab_class_size(index);
+    STATIC_VAR block_align SZ := block_size #&& ((block_size #!!) + 1);
+    STATIC_IF(block_align > allocator_page_size)
+    { STATIC_EVAL block_align := allocator_page_size; }
+    table[SNAPSHOT(index)] := slab_allocator#(@block_size SNAPSHOT(block_size), @block_align SNAPSHOT(block_align))::layer1_allocate<-;
+    STATIC_EVAL index += 1;
+  }
+  RETURN table;
+}
+
+DOC <$
+  Builds the table of slab deallocation slow-path procedures ordered by size class index.
+  $>
+PRIVATE(MODULE) ::allocator_slab_deallocate_procedures_build FUNCTION(): [allocator_slab_class_count()]CONST->PROCEDURE(@ptr ADDRESS)
+{
+  VAR table [allocator_slab_class_count()]CONST->PROCEDURE(@ptr ADDRESS);
+  STATIC_VAR index SZ := 0;
+  STATIC_WHILE (index < allocator_slab_class_count())
+  {
+    STATIC_VAR block_size SZ := allocator_slab_class_size(index);
+    STATIC_VAR block_align SZ := block_size #&& ((block_size #!!) + 1);
+    STATIC_IF(block_align > allocator_page_size)
+    { STATIC_EVAL block_align := allocator_page_size; }
+    table[SNAPSHOT(index)] := slab_allocator#(@block_size SNAPSHOT(block_size), @block_align SNAPSHOT(block_align))::layer1_deallocate<-;
+    STATIC_EVAL index += 1;
+  }
+  RETURN table;
+}
+
+DOC <$ The slab allocation slow-path procedures ordered by size class index. $>
+PRIVATE(MODULE) ::allocator_slab_allocate_procedures STATIC [allocator_slab_class_count()]CONST->PROCEDURE(: ADDRESS) := allocator_slab_allocate_procedures_build();
+DOC <$ The slab deallocation slow-path procedures ordered by size class index. $>
+PRIVATE(MODULE) ::allocator_slab_deallocate_procedures STATIC [allocator_slab_class_count()]CONST->PROCEDURE(@ptr ADDRESS) := allocator_slab_deallocate_procedures_build();
+
+DOC <$
+  Routes a runtime layout through the generated slab size classes. The size
+  class index is selected by table lookup and addresses the thread cursor of the
+  class directly, so the fast path contains no branch that depends on the byte
+  count. The slow path of the class is entered through a procedure pointer.
   $>
 PRIVATE(MODULE) ::allocator_allocate_dynamic FUNCTION(@bytes SZ, @align SZ): ADDRESS
 {
   allocator_validate_alignment(@align align);
-  STATIC_VAR block_size SZ := 8;
-  STATIC_VAR step SZ := 4;
-  STATIC_WHILE (block_size <= allocator_slab_maximum_block_size)
+  IF (bytes <= allocator_slab_maximum_block_size)
   {
-    STATIC_VAR block_align SZ := block_size #&& ((block_size #!!) + 1);
-    STATIC_IF(block_align > allocator_page_size) {
-      STATIC_EVAL block_align := allocator_page_size;
-    }
-    IF (bytes <= SNAPSHOT(block_size) && align <= SNAPSHOT(block_align)) {
-      RETURN slab_allocator#(@block_size SNAPSHOT(block_size), @block_align SNAPSHOT(block_align))::layer0_allocate();
-    }
-    STATIC_EVAL block_size += step;
-    STATIC_IF(block_size / step == 4) {
-      STATIC_EVAL step *= 2;
+    VAR class_bytes SZ := allocator_slab_class_bytes(@bytes bytes, @align align);
+    IF (class_bytes <= allocator_slab_maximum_block_size)
+    {
+      VAR index SZ := allocator_slab_class_indices[(class_bytes + 3) / 4];
+      VAR cursor MUT& allocator_thread_cursor := allocator_thread_cursors[index];
+      VAR entry =>>TYPED_STORAGE(ADDRESS) := cursor.entry;
+      IF LIKELY (entry != cursor.bottom)
+      {
+        entry--;
+        VAR result ADDRESS := PUN entry-> AS ADDRESS;
+        DESTROY AT(entry->) ADDRESS;
+        cursor.entry := entry;
+        RETURN result;
+      }
+      RETURN allocator_slab_allocate_procedures[index]();
     }
   }
   RETURN large_allocator::allocate(@size bytes, @align align);
@@ -1078,21 +1274,24 @@ DOC <$
 PRIVATE(MODULE) ::allocator_deallocate_dynamic FUNCTION(@bytes SZ, @align SZ, @ptr ADDRESS)
 {
   allocator_validate_alignment(@align align);
-  STATIC_VAR block_size SZ := 8;
-  STATIC_VAR step SZ := 4;
-  STATIC_WHILE (block_size <= allocator_slab_maximum_block_size)
+  IF (bytes <= allocator_slab_maximum_block_size)
   {
-    STATIC_VAR block_align SZ := block_size #&& ((block_size #!!) + 1);
-    STATIC_IF(block_align > allocator_page_size)
-    { STATIC_EVAL block_align := allocator_page_size; }
-    IF (bytes <= SNAPSHOT(block_size) && align <= SNAPSHOT(block_align))
+    VAR class_bytes SZ := allocator_slab_class_bytes(@bytes bytes, @align align);
+    IF (class_bytes <= allocator_slab_maximum_block_size)
     {
-      slab_allocator#(@block_size SNAPSHOT(block_size), @block_align SNAPSHOT(block_align))::layer0_deallocate(@ptr ptr);
+      VAR index SZ := allocator_slab_class_indices[(class_bytes + 3) / 4];
+      VAR cursor MUT& allocator_thread_cursor := allocator_thread_cursors[index];
+      VAR entry =>>TYPED_STORAGE(ADDRESS) := cursor.entry;
+      IF LIKELY (entry != cursor.top)
+      {
+        PLACE AT(entry->) ADDRESS := ptr;
+        entry++;
+        cursor.entry := entry;
+        RETURN;
+      }
+      allocator_slab_deallocate_procedures[index](@ptr ptr);
       RETURN;
     }
-    STATIC_EVAL block_size += step;
-    STATIC_IF(block_size / step == 4)
-    { STATIC_EVAL step *= 2; }
   }
   large_allocator::deallocate(@size bytes, @align align, @ptr ptr);
 }
