@@ -1448,9 +1448,15 @@ DOC <$
   }
 
   DOC <$ Inserts a key, consuming a temporary only when insertion succeeds. $>
-  .insert FUNCTION(@key AUTO& T) MUT: BOOL
+  .insert FUNCTION(@ARG:key AUTO& T) MUT: BOOL
   {
     RETURN set#(T)::insert_key(@tree .tree, @key FORWARD(key));
+  }
+
+  DOC <$ Inserts a key after implicit conversion to T when the argument cannot bind directly. $>
+  .insert FUNCTION(@ARG:key T) MUT PRIORITY(-1): BOOL
+  {
+    RETURN set#(T)::insert_key(@tree .tree, @key MOVE(key));
   }
 
   DOC <$ Removes key when present and reports whether a key was erased. $>

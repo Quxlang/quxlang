@@ -210,3 +210,13 @@ nav:
       - Runtime Module Contracts: reference/runtime-module-contracts.md
       - Backends and Layout: reference/backends-and-layout.md
       - Compiler Output: reference/compiler-output.md
+  - Standard Modules:
+      - Numeric Utilities: standard-modules/std-math.md
+      - Sequences: standard-modules/std-sequences.md
+      - Sets: standard-modules/std-associative.md
+  - Examples:
+      - Examples: examples/index.md
+      - Compute a large byte-rate quotient: examples/average-byte-rate.md
+      - Deduplicate station codes: examples/deduplicate-stations.md
+      - Dispatch jobs in priority order: examples/dispatch-jobs.md
+      - Keep a reference while telemetry grows: examples/stable-telemetry.md

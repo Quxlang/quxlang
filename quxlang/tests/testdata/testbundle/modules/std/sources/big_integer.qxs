@@ -1,9 +1,11 @@
 LANGUAGE QUXLANG EN 0.0;
 
+DOC <$ Identifies division by zero or a floor quotient outside the requested integer range. $>
+::big_integer_error ENUM [division_by_zero, quotient_out_of_range];
+
 DOC <$
   Owns a signed arbitrary-precision integer in base one billion. Addition and
-  subtraction support arbitrary magnitudes; multiplication accepts a U32 factor.
-  quotient_i32 computes a signed floor quotient when the result fits I32.
+  subtraction, multiplication, and floor division support arbitrary magnitudes.
   $>
 ::big_integer STRUCT
 {
@@ -77,21 +79,197 @@ DOC <$
       replacement.subtract_magnitude(THIS);
       THIS <-> replacement;
     }
+
+    DOC <$ Multiplies by an unsigned limb-sized factor with exact carry propagation. $>
+    .multiply_by_word FUNCTION(@factor U32) MUT
+    {
+      IF (factor == 0) { .limbs.clear(); .negative := FALSE; RETURN; }
+      VAR carry U64 := 0;
+      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(.limbs.size()) DO
+      {
+        VAR product U64 := ((.limbs[index] AS U64) * (factor AS U64)) + carry;
+        .limbs[index] := (product % 1000000000) AS CHECKED U32;
+        carry := product / 1000000000;
+      }
+      LOOP WHILE (carry != 0) DO
+      {
+        .limbs.push_back((carry % 1000000000) AS CHECKED U32);
+        carry := carry / 1000000000;
+      }
+    }
+
+    DOC <$ Adds one to the magnitude without changing the sign. $>
+    .increment_magnitude FUNCTION() MUT
+    {
+      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(.limbs.size()) DO
+      {
+        IF (.limbs[index] != 999999999)
+        {
+          .limbs[index]++;
+          RETURN;
+        }
+        .limbs[index] := 0;
+      }
+      .limbs.push_back(1);
+    }
+
+    DOC <$ Divides the magnitude by one nonzero limb and returns whether a remainder exists. $>
+    .divide_by_limb FUNCTION(@divisor U64, @result MUT& big_integer) CONST: BOOL
+    {
+      result.limbs.resize(.limbs.size());
+      VAR remainder U64 := 0;
+      LOOP INIT { VAR index SZ := .limbs.size(); } WHILE (index != 0) DO
+      {
+        index--;
+        VAR prefix U64 := (remainder * 1000000000) + (.limbs[index] AS U64);
+        result.limbs[index] := (prefix / divisor) AS ASSUME U32;
+        remainder := prefix % divisor;
+      }
+      RETURN remainder != 0;
+    }
+
+    DOC <$ Removes one quotient digit's contribution from a normalized dividend window. $>
+    .divide_digit FUNCTION(@divisor CONST& big_integer, @offset SZ) MUT: U32
+    {
+      VAR count SZ := divisor.limbs.size();
+      VAR high_index SZ := offset + count;
+      VAR leading U64 := divisor.limbs[count - 1];
+      VAR second U64 := divisor.limbs[count - 2];
+      VAR prefix U64 := ((.limbs[high_index] AS U64) * 1000000000)
+        + (.limbs[high_index - 1] AS U64);
+      VAR digit U64 := prefix / leading;
+      IF (digit >= 1000000000) { digit := 999999999; }
+      VAR trial_remainder U64 := prefix - (digit * leading);
+      VAR third U64 := .limbs[high_index - 2];
+
+      // The normalized leading limb bounds the estimate error. Testing the
+      // second limb leaves an estimate at most one greater than the true digit.
+      LOOP WHILE (trial_remainder < 1000000000
+        && (digit * second) > ((trial_remainder * 1000000000) + third)) DO
+      {
+        digit--;
+        trial_remainder += leading;
+      }
+
+      VAR carry U64 := 0;
+      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(count) DO
+      {
+        VAR product U64 := (digit * (divisor.limbs[index] AS U64)) + carry;
+        VAR low U64 := product % 1000000000;
+        VAR current U64 := .limbs[offset + index];
+        carry := product / 1000000000;
+        IF (current < low)
+        {
+          current += 1000000000;
+          carry++;
+        }
+        .limbs[offset + index] := (current - low) AS ASSUME U32;
+      }
+
+      // If the subtraction borrowed beyond the window, restore one divisor.
+      // The top limb is zero after either the subtraction or the correction.
+      IF ((.limbs[high_index] AS U64) < carry)
+      {
+        digit--;
+        VAR addition_carry U64 := 0;
+        LOOP VALUE(index) FROM(0 AS SZ) UNTIL(count) DO
+        {
+          VAR sum U64 := (.limbs[offset + index] AS U64)
+            + (divisor.limbs[index] AS U64) + addition_carry;
+          .limbs[offset + index] := (sum % 1000000000) AS ASSUME U32;
+          addition_carry := sum / 1000000000;
+        }
+      }
+      .limbs[high_index] := 0;
+      RETURN digit AS ASSUME U32;
+    }
+
+    DOC <$ Divides the unsigned magnitudes and returns whether a remainder exists. The divisor must be nonzero. $>
+    .divide_magnitude FUNCTION(@divisor CONST& big_integer, @result MUT& big_integer) CONST: BOOL
+    {
+      IF (.compare_magnitude(divisor) == ORDER::LESS) { RETURN .limbs.size() != 0; }
+      VAR divisor_count SZ := divisor.limbs.size();
+      IF (divisor_count == 1)
+      {
+        RETURN .divide_by_limb(@divisor divisor.limbs[0], @result result);
+      }
+
+      // Scaling leaves the quotient unchanged and makes the leading divisor
+      // limb at least half the radix. The dividend has a spare high limb.
+      VAR scale U32 := 1000000000 / (divisor.limbs.back() + 1);
+      VAR normalized_dividend big_integer := THIS;
+      VAR normalized_divisor big_integer := divisor;
+      normalized_dividend.multiply_by_word(@factor scale);
+      normalized_divisor.multiply_by_word(@factor scale);
+      normalized_dividend.limbs.resize(.limbs.size() + 1);
+
+      VAR quotient_count SZ := .limbs.size() - divisor_count + 1;
+      result.limbs.resize(quotient_count);
+      LOOP INIT { VAR offset SZ := quotient_count; } WHILE (offset != 0) DO
+      {
+        offset--;
+        result.limbs[offset] := normalized_dividend.divide_digit(
+          @divisor normalized_divisor, @offset offset);
+      }
+      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(divisor_count) DO
+      {
+        IF (normalized_dividend.limbs[index] != 0) { RETURN TRUE; }
+      }
+      RETURN FALSE;
+    }
   }
 
   DOC <$ Constructs zero. $>
   .CONSTRUCTOR FUNCTION() { }
-  DOC <$ Constructs an exact signed machine integer, including I64's minimum value. $>
-  .CONSTRUCTOR FUNCTION(@OTHER I64)
+  DOC <$ Constructs an exact value from an integral type of any supported width or sign. $>
+  .CONSTRUCTOR FUNCTION(@OTHER AUTO(integer_type)) ENABLE_IF(IS_INTEGRAL(integer_type))
   {
-    .negative := OTHER < 0;
-    VAR magnitude U64 := OTHER AS PARTIAL U64;
-    IF (.negative) { magnitude := (0 AS U64) - magnitude; }
-    LOOP WHILE (magnitude != 0) DO
+    VAR remaining := STATIC_CHOOSE(BITS(integer_type) < 31, OTHER AS I64, OTHER);
+    STATIC_IF(IS_SIGNED(integer_type)) { .negative := OTHER < 0; }
+    LOOP WHILE (remaining != 0) DO
     {
-      .limbs.push_back((magnitude % 1000000000) AS CHECKED U32);
-      magnitude := magnitude / 1000000000;
+      VAR digit := remaining % 1000000000;
+      STATIC_IF(IS_SIGNED(integer_type))
+      {
+        IF (digit < 0) { digit := 0 - digit; }
+      }
+      .limbs.push_back(digit AS ASSUME U32);
+      remaining /= 1000000000;
     }
+  }
+
+  DOC <$ Constructs an exact value from a decimal integer literal, including a literal wider than a machine integer. $>
+  .CONSTRUCTOR FUNCTION(@OTHER NUMERIC_LITERAL_ANY(literal_type))
+  {
+    STATIC spelling STRING_CONSTANT := OTHER AS NUMERIC_CONSTANT AS STRING_CONSTANT;
+    STATIC length SZ := (spelling.END() - spelling.BEGIN()) AS ASSUME SZ;
+    STATIC first SZ := STATIC_CHOOSE(spelling.BEGIN()[0] == '-', 1 AS SZ, 0 AS SZ);
+    STATIC_VAR check SZ := first;
+    STATIC_WHILE(check < length)
+    {
+      STATIC_IF(spelling.BEGIN()[check] < '0' || spelling.BEGIN()[check] > '9')
+      {
+        COMPILATION_ERROR "A big_integer requires a decimal integer literal.";
+      }
+      STATIC_EVAL check++;
+    }
+
+    VAR position SZ := length;
+    LOOP WHILE (position > first) DO
+    {
+      VAR limb U32 := 0;
+      VAR place U32 := 1;
+      LOOP WHILE (place < 1000000000 && position > first) DO
+      {
+        position--;
+        VAR digit U32 := (spelling.BEGIN()[position] AS U8) AS U32;
+        limb += (digit - 48) * place;
+        place *= 10;
+      }
+      .limbs.push_back(limb);
+    }
+    .negative := first != 0;
+    .normalize();
   }
 
   DOC <$ Adds other. Self-addition doubles the value. $>
@@ -102,59 +280,157 @@ DOC <$
   .subtract FUNCTION(@ARG:other CONST& big_integer) MUT
   { .combine(@other other, @negative other.negative == FALSE); }
 
-  DOC <$ Multiplies by a nonnegative machine factor with exact carry propagation. $>
-  .multiply FUNCTION(@ARG:factor U32) MUT
+  DOC <$ Multiplies by another arbitrary-precision integer, including when factor is THIS. $>
+  .multiply FUNCTION(@ARG:factor CONST& big_integer) MUT
   {
-    IF (factor == 0) { .limbs.clear(); .negative := FALSE; RETURN; }
-    VAR carry U64 := 0;
-    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(.limbs.size()) DO
+    IF (.limbs.size() == 0 || factor.limbs.size() == 0)
     {
-      VAR product U64 := ((.limbs[index] AS U64) * (factor AS U64)) + carry;
-      .limbs[index] := (product % 1000000000) AS CHECKED U32;
-      carry := product / 1000000000;
+      .limbs.clear();
+      .negative := FALSE;
+      RETURN;
     }
-    LOOP WHILE (carry != 0) DO
+    VAR negative BOOL := .negative != factor.negative;
+    IF (factor.limbs.size() == 1)
     {
-      .limbs.push_back((carry % 1000000000) AS CHECKED U32);
-      carry := carry / 1000000000;
+      VAR word U32 := factor.limbs[0];
+      .multiply_by_word(@factor word);
+      .negative := negative;
+      RETURN;
+    }
+
+    VAR result big_integer;
+    result.limbs.resize(.limbs.size() +? factor.limbs.size());
+    LOOP VALUE(left_index) FROM(0 AS SZ) UNTIL(.limbs.size()) DO
+    {
+      VAR left_limb U64 := .limbs[left_index];
+      VAR carry U64 := 0;
+      LOOP VALUE(right_index) FROM(0 AS SZ) UNTIL(factor.limbs.size()) DO
+      {
+        VAR destination SZ := left_index + right_index;
+        VAR sum U64 := (left_limb * (factor.limbs[right_index] AS U64))
+          + (result.limbs[destination] AS U64) + carry;
+        result.limbs[destination] := (sum % 1000000000) AS ASSUME U32;
+        carry := sum / 1000000000;
+      }
+      result.limbs[left_index + factor.limbs.size()] := carry AS ASSUME U32;
+    }
+    result.negative := negative;
+    result.normalize();
+    THIS <-> result;
+  }
+
+  DOC <$ Multiplies by an integral factor of the deduced width and signedness. $>
+  .multiply FUNCTION(@ARG:factor AUTO(factor_type)) MUT ENABLE_IF(IS_INTEGRAL(factor_type))
+  {
+    STATIC_IF(BITS(factor_type) <= 32)
+    {
+      VAR magnitude I64 := factor;
+      VAR negative BOOL := .negative;
+      IF (magnitude < 0)
+      {
+        magnitude := 0 - magnitude;
+        negative := negative == FALSE;
+      }
+      .multiply_by_word(@factor magnitude AS ASSUME U32);
+      .negative := negative && .limbs.size() != 0;
+    }
+    STATIC_ELSE
+    {
+      VAR promoted big_integer := factor;
+      .multiply(promoted);
     }
   }
 
-  DOC <$ Returns floor(THIS / divisor). Throws I32 for a zero divisor or an out-of-range quotient. $>
-  .quotient_i32 FUNCTION(@ARG:divisor CONST& big_integer) CONST: I32
+  DOC <$
+    Returns the signed floor quotient as a big_integer. Throws
+    big_integer_error::division_by_zero if divisor is zero.
+    $>
+  .quotient FUNCTION(@ARG:divisor CONST& big_integer) CONST: big_integer
   {
-    IF (divisor.limbs.size() == 0) { THROW (1 AS I32); }
+    IF (divisor.limbs.size() == 0) { THROW big_integer_error::division_by_zero; }
+    VAR result big_integer;
+    VAR remainder_nonzero BOOL := .divide_magnitude(@divisor divisor, @result result);
     VAR negative BOOL := .negative != divisor.negative;
-    VAR order ORDER := .compare_magnitude(divisor);
-    IF (order == ORDER::LESS)
-    { IF (negative && .limbs.size() != 0) { RETURN -1; } RETURN 0; }
-    IF (.limbs.size() > divisor.limbs.size() + 2) { THROW (1 AS I32); }
-    VAR discarded SZ := 0;
-    IF (divisor.limbs.size() > 2) { discarded := divisor.limbs.size() - 2; }
-    VAR numerator U128 := 0;
-    LOOP INIT { VAR index SZ := .limbs.size(); } WHILE (index > discarded) DO
-    { index--; numerator := (numerator * 1000000000) + (.limbs[index] AS U128); }
-    VAR denominator U128 := 0;
-    LOOP INIT { VAR index SZ := divisor.limbs.size(); } WHILE (index > discarded) DO
-    { index--; denominator := (denominator * 1000000000) + (divisor.limbs[index] AS U128); }
-    VAR estimate U128 := numerator / denominator;
-    // Truncating the same low limbs gives an upper bound. Two divisor limbs
-    // keep the overestimate small for a quotient representable as I32.
-    IF (estimate > 4294967295) { THROW (1 AS I32); }
-    VAR quotient U32 := estimate AS CHECKED U32;
-    VAR product big_integer := divisor;
-    product.negative := FALSE;
-    product.multiply(quotient);
-    LOOP WHILE (product.compare_magnitude(THIS) == ORDER::GREATER) DO
-    { quotient--; product.subtract_magnitude(divisor); }
-    IF (negative)
+    IF (negative && remainder_nonzero) { result.increment_magnitude(); }
+    result.negative := negative;
+    result.normalize();
+    RETURN MOVE(result);
+  }
+
+  DOC <$ Returns the signed decimal representation without leading zeroes. $>
+  .to_string FUNCTION() CONST: string
+  {
+    IF (.limbs.size() == 0) { RETURN "0"; }
+    VAR result string;
+    IF (.negative) { result.push_back('-'); }
+    VAR index SZ := .limbs.size();
+    VAR place U32 := 100000000;
+    LOOP WHILE (.limbs[index - 1] < place) DO { place /= 10; }
+    LOOP WHILE (index != 0) DO
     {
-      IF (product.compare_magnitude(THIS) != ORDER::EQUAL) { quotient++; }
-      IF (quotient > 2147483648) { THROW (1 AS I32); }
-      IF (quotient == 2147483648) { RETURN -2147483648; }
-      RETURN 0 - (quotient AS CHECKED I32);
+      index--;
+      VAR remaining U32 := .limbs[index];
+      LOOP WHILE (place != 0) DO
+      {
+        VAR digit U32 := remaining / place;
+        result.push_back((digit + 48) AS ASSUME U8 AS BYTE);
+        remaining %= place;
+        place /= 10;
+      }
+      place := 100000000;
     }
-    IF (quotient > 2147483647) { THROW (1 AS I32); }
-    RETURN quotient AS CHECKED I32;
+    RETURN MOVE(result);
+  }
+
+  DOC <$
+    Returns the floor quotient as integral type T. A zero divisor throws
+    big_integer_error::division_by_zero. A result outside T's range throws
+    big_integer_error::quotient_out_of_range.
+    $>
+  .quotient_as TEMPLATE(@T TYPE AUTO) ENABLE_IF(IS_INTEGRAL(T))
+    FUNCTION(@ARG:divisor CONST& big_integer) CONST: T
+  {
+    VAR result big_integer := .quotient(divisor);
+    STATIC_IF(IS_SIGNED(T) == FALSE)
+    {
+      IF (result.negative) { THROW big_integer_error::quotient_out_of_range; }
+    }
+
+    STATIC_IF(BITS(T) < STATIC_CHOOSE(IS_SIGNED(T), 31, 30))
+    {
+      IF (result.limbs.size() == 0) { RETURN 0; }
+      IF (result.limbs.size() > 1) { THROW big_integer_error::quotient_out_of_range; }
+      VAR magnitude U64 := result.limbs[0];
+      STATIC magnitude_bound U64 := (1 AS U64) #++ (BITS(T) - STATIC_CHOOSE(IS_SIGNED(T), 1, 0));
+      IF (result.negative)
+      {
+        IF (magnitude > magnitude_bound) { THROW big_integer_error::quotient_out_of_range; }
+        RETURN (0 - (magnitude AS ASSUME I64)) AS ASSUME T;
+      }
+      IF (magnitude >= magnitude_bound) { THROW big_integer_error::quotient_out_of_range; }
+      RETURN magnitude AS ASSUME T;
+    }
+    STATIC_ELSE
+    {
+      // Accumulating a negative result with subtraction permits T's minimum
+      // value even when its unsigned magnitude cannot be represented by T.
+      VAR value T := 0;
+      TRY
+      {
+        LOOP INIT { VAR index SZ := result.limbs.size(); } WHILE (index != 0) DO
+        {
+          index--;
+          value *=? (1000000000 AS T);
+          VAR digit T := result.limbs[index] AS ASSUME T;
+          IF (result.negative) { value -=? digit; }
+          ELSE { value +=? digit; }
+        }
+      }
+      CATCH error CONST& ARITHMETIC_OVERFLOW
+      {
+        THROW big_integer_error::quotient_out_of_range;
+      }
+      RETURN value;
+    }
   }
 }

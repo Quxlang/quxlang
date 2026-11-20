@@ -5,17 +5,153 @@ IMPORT std;
 {
   ::signed_quotients DUAL_TEST KNOWN_BROKEN_IF(ARCH_IS_JVM)
   {
-    { VAR numerator std::big_integer := 7 AS I64; VAR denominator std::big_integer := 3 AS I64; TEST_ASSERT(numerator.quotient_i32(denominator) == 2); }
-    { VAR numerator std::big_integer := -7 AS I64; VAR denominator std::big_integer := 3 AS I64; TEST_ASSERT(numerator.quotient_i32(denominator) == -3); }
-    { VAR numerator std::big_integer := 7 AS I64; VAR denominator std::big_integer := -3 AS I64; TEST_ASSERT(numerator.quotient_i32(denominator) == -3); }
-    { VAR numerator std::big_integer := -7 AS I64; VAR denominator std::big_integer := -3 AS I64; TEST_ASSERT(numerator.quotient_i32(denominator) == 2); }
-    { VAR numerator std::big_integer := 0 AS I64; VAR denominator std::big_integer := -1 AS I64; TEST_ASSERT(numerator.quotient_i32(denominator) == 0); }
-    { VAR numerator std::big_integer := -1 AS I64; VAR denominator std::big_integer := 7 AS I64; TEST_ASSERT(numerator.quotient_i32(denominator) == -1); }
-    { VAR numerator std::big_integer := 1 AS I64; VAR denominator std::big_integer := -7 AS I64; TEST_ASSERT(numerator.quotient_i32(denominator) == -1); }
-    { VAR numerator std::big_integer := 1000000000000000000 AS I64; VAR denominator std::big_integer := 999999999 AS I64; TEST_ASSERT(numerator.quotient_i32(denominator) == 1000000001); }
-    { VAR numerator std::big_integer := 2147483647 AS I64; VAR denominator std::big_integer := 1 AS I64; TEST_ASSERT(numerator.quotient_i32(denominator) == 2147483647); }
-    { VAR numerator std::big_integer := -2147483648 AS I64; VAR denominator std::big_integer := 1 AS I64; TEST_ASSERT(numerator.quotient_i32(denominator) == -2147483648); }
-    { VAR numerator std::big_integer := -9223372036854775808 AS I64; VAR denominator std::big_integer := 9223372036854775807 AS I64; TEST_ASSERT(numerator.quotient_i32(denominator) == -2); }
+    { VAR numerator std::big_integer := 7 AS I64; VAR denominator std::big_integer := 3 AS I64; TEST_ASSERT(numerator.quotient_as#I32(denominator) == 2); }
+    { VAR numerator std::big_integer := -7 AS I64; VAR denominator std::big_integer := 3 AS I64; TEST_ASSERT(numerator.quotient_as#I32(denominator) == -3); }
+    { VAR numerator std::big_integer := 7 AS I64; VAR denominator std::big_integer := -3 AS I64; TEST_ASSERT(numerator.quotient_as#I32(denominator) == -3); }
+    { VAR numerator std::big_integer := -7 AS I64; VAR denominator std::big_integer := -3 AS I64; TEST_ASSERT(numerator.quotient_as#I32(denominator) == 2); }
+    { VAR numerator std::big_integer := 0 AS I64; VAR denominator std::big_integer := -1 AS I64; TEST_ASSERT(numerator.quotient_as#I32(denominator) == 0); }
+    { VAR numerator std::big_integer := -1 AS I64; VAR denominator std::big_integer := 7 AS I64; TEST_ASSERT(numerator.quotient_as#I32(denominator) == -1); }
+    { VAR numerator std::big_integer := 1 AS I64; VAR denominator std::big_integer := -7 AS I64; TEST_ASSERT(numerator.quotient_as#I32(denominator) == -1); }
+    { VAR numerator std::big_integer := 1000000000000000000 AS I64; VAR denominator std::big_integer := 999999999 AS I64; TEST_ASSERT(numerator.quotient_as#I32(denominator) == 1000000001); }
+    { VAR numerator std::big_integer := 2147483647 AS I64; VAR denominator std::big_integer := 1 AS I64; TEST_ASSERT(numerator.quotient_as#I32(denominator) == 2147483647); }
+    { VAR numerator std::big_integer := -2147483648 AS I64; VAR denominator std::big_integer := 1 AS I64; TEST_ASSERT(numerator.quotient_as#I32(denominator) == -2147483648); }
+    { VAR numerator std::big_integer := -9223372036854775808 AS I64; VAR denominator std::big_integer := 9223372036854775807 AS I64; TEST_ASSERT(numerator.quotient_as#I32(denominator) == -2); }
+  }
+
+  DOC <$ Checks signed floor division and decimal output beyond machine widths. $>
+  ::arbitrary_precision_quotients DUAL_TEST
+  {
+    VAR one_value I64 := 1;
+    VAR one std::big_integer := one_value;
+    VAR three_value I64 := 3;
+    VAR three std::big_integer := three_value;
+    VAR numerator std::big_integer := one;
+    LOOP VALUE(index SZ) FROM(0) UNTIL(4) DO { numerator.multiply(1000000000); }
+    VAR divisor std::big_integer := one;
+    divisor.multiply(1000000000);
+    divisor.multiply(1000);
+
+    TEST_ASSERT(numerator.quotient(three).to_string() == "333333333333333333333333333333333333");
+    TEST_ASSERT(numerator.quotient(divisor).to_string() == "1000000000000000000000000");
+    numerator.add(one);
+    TEST_ASSERT(numerator.quotient(divisor).to_string() == "1000000000000000000000000");
+
+    VAR negative std::big_integer;
+    negative.subtract(numerator);
+    TEST_ASSERT(negative.quotient(divisor).to_string() == "-1000000000000000000000001");
+    VAR negative_divisor std::big_integer;
+    negative_divisor.subtract(divisor);
+    TEST_ASSERT(numerator.quotient(negative_divisor).to_string() == "-1000000000000000000000001");
+    TEST_ASSERT(negative.quotient(negative_divisor).to_string() == "1000000000000000000000000");
+    TEST_ASSERT(one.quotient(negative_divisor).to_string() == "-1");
+    VAR zero std::big_integer;
+    TEST_ASSERT(zero.quotient(negative_divisor).to_string() == "0");
+  }
+
+  DOC <$ Exercises a trial division digit whose first two divisor limbs agree but whose low limb requires correction. $>
+  ::quotient_digit_correction DUAL_TEST
+  {
+    VAR half_base I64 := 500000000;
+    VAR two_value I64 := 2;
+    VAR two std::big_integer := two_value;
+    VAR divisor std::big_integer := half_base;
+    divisor.multiply(1000000000);
+    divisor.multiply(1000000000);
+    divisor.add(two);
+
+    VAR one_value I64 := 1;
+    VAR one std::big_integer := one_value;
+    VAR numerator std::big_integer := divisor;
+    numerator.multiply(1000000000);
+    numerator.add(divisor);
+    numerator.subtract(one);
+    TEST_ASSERT(numerator.quotient(divisor).to_string() == "1000000000");
+    numerator.add(one);
+    TEST_ASSERT(numerator.quotient(divisor).to_string() == "1000000001");
+  }
+
+  DOC <$ Checks typed construction, arbitrary multiplication, and checked quotients with different integer widths. $>
+  ::generic_integer_types DUAL_TEST KNOWN_BROKEN_IF(ARCH_IS_JVM)
+  {
+    VAR one std::big_integer := 1;
+    VAR narrow I5 := -16;
+    VAR signed_value std::big_integer := narrow;
+    VAR narrow_result I5 := signed_value.quotient_as#I5(one);
+    TEST_ASSERT(narrow_result == -16);
+
+    VAR wide U128 := 340282366920938463463374607431768211455;
+    VAR big std::big_integer := wide;
+    VAR wide_result U128 := big.quotient_as#U128(one);
+    TEST_ASSERT(wide_result == wide);
+    VAR minimum I128 := -170141183460469231731687303715884105728;
+    VAR negative std::big_integer := minimum;
+    TEST_ASSERT(negative.quotient_as#I128(one) == minimum);
+
+    VAR factor std::big_integer := 1000000000000;
+    VAR product std::big_integer := factor;
+    product.multiply(product);
+    TEST_ASSERT(product.to_string() == "1000000000000000000000000");
+    VAR multiplier I16 := -3;
+    product.multiply(multiplier);
+    TEST_ASSERT(product.to_string() == "-3000000000000000000000000");
+
+    TRY
+    {
+      signed_value.quotient_as#U64(one);
+      TEST_ASSERT(FALSE, "A negative quotient cannot be represented as unsigned.");
+    }
+    CATCH error CONST& std::big_integer_error
+    {
+      TEST_ASSERT(error == std::big_integer_error::quotient_out_of_range);
+    }
+  }
+
+  DOC <$ Division failures distinguish a zero divisor from a floor quotient outside the requested range. $>
+  ::quotient_errors DUAL_TEST KNOWN_BROKEN_IF(ARCH_IS_JVM)
+  {
+    VAR zero std::big_integer;
+    VAR one std::big_integer := 1 AS I64;
+    TRY
+    {
+      one.quotient(zero);
+      TEST_ASSERT(FALSE, "A zero divisor must throw.");
+    }
+    CATCH error CONST& std::big_integer_error
+    {
+      TEST_ASSERT(error == std::big_integer_error::division_by_zero);
+    }
+    TRY
+    {
+      one.quotient_as#I32(zero);
+      TEST_ASSERT(FALSE, "A zero divisor must throw.");
+    }
+    CATCH error CONST& std::big_integer_error
+    {
+      TEST_ASSERT(error == std::big_integer_error::division_by_zero);
+    }
+
+    VAR above_maximum std::big_integer := 2147483648 AS I64;
+    TRY
+    {
+      above_maximum.quotient_as#I32(one);
+      TEST_ASSERT(FALSE, "A quotient above the I32 range must throw.");
+    }
+    CATCH error CONST& std::big_integer_error
+    {
+      TEST_ASSERT(error == std::big_integer_error::quotient_out_of_range);
+    }
+
+    VAR large_numerator std::big_integer := 8589934591 AS I64;
+    VAR negative_divisor std::big_integer := -2 AS I64;
+    TRY
+    {
+      large_numerator.quotient_as#I32(negative_divisor);
+      TEST_ASSERT(FALSE, "A floor quotient of -4294967296 must throw.");
+    }
+    CATCH error CONST& std::big_integer_error
+    {
+      TEST_ASSERT(error == std::big_integer_error::quotient_out_of_range);
+    }
   }
 
   ::carry_and_aliasing UNIT_TEST KNOWN_BROKEN_IF(ARCH_IS_JVM)
@@ -23,21 +159,21 @@ IMPORT std;
     VAR value std::big_integer := 999999999 AS I64;
     value.add(value);
     VAR one std::big_integer := 1 AS I64;
-    TEST_ASSERT(value.quotient_i32(one) == 1999999998);
+    TEST_ASSERT(value.quotient_as#I32(one) == 1999999998);
     value.subtract(value);
-    TEST_ASSERT(value.quotient_i32(one) == 0);
+    TEST_ASSERT(value.quotient_as#I32(one) == 0);
     VAR scale std::big_integer := 999999999 AS I64;
     LOOP VALUE(index) FROM(0 AS SZ) UNTIL(20) DO { scale.multiply(4294967295); }
     VAR product std::big_integer := scale;
     product.multiply(2147483647);
-    TEST_ASSERT(product.quotient_i32(scale) == 2147483647);
+    TEST_ASSERT(product.quotient_as#I32(scale) == 2147483647);
     product.subtract(one);
-    TEST_ASSERT(product.quotient_i32(scale) == 2147483646);
+    TEST_ASSERT(product.quotient_as#I32(scale) == 2147483646);
     VAR negative std::big_integer;
     negative.subtract(product);
-    TEST_ASSERT(negative.quotient_i32(scale) == -2147483647);
+    TEST_ASSERT(negative.quotient_as#I32(scale) == -2147483647);
     product.add(one);
     product.subtract(scale);
-    TEST_ASSERT(product.quotient_i32(scale) == 2147483646);
+    TEST_ASSERT(product.quotient_as#I32(scale) == 2147483646);
   }
 }

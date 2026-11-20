@@ -9,7 +9,7 @@ IMPORT std;
     VAR numerator std::big_integer := q;
     numerator.multiply(position);
     numerator.add(r);
-    RETURN numerator.quotient_i32(t);
+    RETURN numerator.quotient_as#I32(t);
   }
 }
 

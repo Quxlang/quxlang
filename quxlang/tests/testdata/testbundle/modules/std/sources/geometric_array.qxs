@@ -266,6 +266,10 @@ DOC <$
   .push_back FUNCTION(@ARG:value AUTO& T) MUT
   { .emplace_back(@OTHER FORWARD(value)); }
 
+  DOC <$ Appends a value implicitly converted to T. Existing element addresses remain valid. $>
+  .push_back FUNCTION(@ARG:value T) MUT PRIORITY(-1)
+  { .push_back(MOVE(value)); }
+
   DOC <$ The pop_back function destroys the last element and retains at most one empty trailing segment. The array must contain at least one element. $>
   .pop_back FUNCTION() MUT
   {

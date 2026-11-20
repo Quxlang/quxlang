@@ -252,7 +252,7 @@ DOC <$
   }
 
   DOC <$ Move-constructs value at the beginning of this list. $>
-  .push_front FUNCTION(@ARG:value TEMP& T) MUT
+  .push_front FUNCTION(@ARG:value TEMP& T) MUT WEAK_PRIORITY(1)
   {
     ASSERT(.length != ((0 AS SZ) #!!), "List size overflow.");
     VAR added MUT->list#(T)::node :=
@@ -289,7 +289,7 @@ DOC <$
   }
 
   DOC <$ Move-constructs value at the end of this list. $>
-  .push_back FUNCTION(@ARG:value TEMP& T) MUT
+  .push_back FUNCTION(@ARG:value TEMP& T) MUT WEAK_PRIORITY(1)
   {
     ASSERT(.length != ((0 AS SZ) #!!), "List size overflow.");
     VAR added MUT->list#(T)::node :=

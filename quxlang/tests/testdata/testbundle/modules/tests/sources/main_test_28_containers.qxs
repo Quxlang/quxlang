@@ -66,7 +66,7 @@ DOC <$
     {
       VAR key I32 := (index * stride) % 17;
       TEST_ASSERT(values.insert(@key key, @value key * 10));
-      TEST_ASSERT(keys.insert(@key key));
+      TEST_ASSERT(keys.insert(key));
       present[key AS ASSUME SZ] := TRUE;
       index++;
     }
@@ -105,7 +105,7 @@ DOC <$
       index++;
     }
     TEST_ASSERT(values.insert(@key (9 AS I32), @value (90 AS I32)));
-    TEST_ASSERT(keys.insert(@key (9 AS I32)));
+    TEST_ASSERT(keys.insert(9));
     TEST_ASSERT(values.at(@key 9) == 90);
     TEST_ASSERT(keys.size() == 1);
     stride++;
@@ -256,13 +256,13 @@ DOC <$ Inserts keys one through seven around a balanced root. $>
 DOC <$ Inserts keys one through seven around a balanced root. $>
 ::populate_balanced_integer_set FUNCTION(@values MUT& std::set#(I32))
 {
-  TEST_ASSERT(values.insert(@key (4 AS I32)));
-  TEST_ASSERT(values.insert(@key (2 AS I32)));
-  TEST_ASSERT(values.insert(@key (6 AS I32)));
-  TEST_ASSERT(values.insert(@key (1 AS I32)));
-  TEST_ASSERT(values.insert(@key (3 AS I32)));
-  TEST_ASSERT(values.insert(@key (5 AS I32)));
-  TEST_ASSERT(values.insert(@key (7 AS I32)));
+  TEST_ASSERT(values.insert(4));
+  TEST_ASSERT(values.insert(2));
+  TEST_ASSERT(values.insert(6));
+  TEST_ASSERT(values.insert(1));
+  TEST_ASSERT(values.insert(3));
+  TEST_ASSERT(values.insert(5));
+  TEST_ASSERT(values.insert(7));
 }
 
 
@@ -354,9 +354,9 @@ DOC <$ Inserts keys one through seven around a balanced root. $>
 {
   VAR values std::list#(I32);
   TEST_ASSERT(values.empty());
-  values.push_back((2 AS I32));
-  values.push_front((1 AS I32));
-  values.push_back((4 AS I32));
+  values.push_back(2);
+  values.push_front(1);
+  values.push_back(4);
 
   VAR position std::list#(I32)::const_iterator := values.BEGIN();
   position++;
@@ -538,11 +538,11 @@ DOC <$ Inserts keys one through seven around a balanced root. $>
   VAR set_values std::set#(container_move_only_value);
   VAR inserted_set_key container_move_only_value :=
     container_move_only_value(@value 7);
-  TEST_ASSERT(set_values.insert(@key MOVE(inserted_set_key)));
+  TEST_ASSERT(set_values.insert(MOVE(inserted_set_key)));
   TEST_ASSERT(inserted_set_key.value == 0 - 1);
   VAR duplicate_set_key container_move_only_value :=
     container_move_only_value(@value 7);
-  TEST_ASSERT(set_values.insert(@key MOVE(duplicate_set_key)) == FALSE);
+  TEST_ASSERT(set_values.insert(MOVE(duplicate_set_key)) == FALSE);
   TEST_ASSERT(duplicate_set_key.value == 7);
 
   VAR map_values std::map#[container_move_only_value:I32];
@@ -562,7 +562,7 @@ DOC <$ Inserts keys one through seven around a balanced root. $>
 {
   VAR values std::set#(I32);
   populate_balanced_integer_set(@values values);
-  TEST_ASSERT(values.insert(@key (4 AS I32)) == FALSE);
+  TEST_ASSERT(values.insert(4) == FALSE);
   TEST_ASSERT(values.size() == 7);
   TEST_ASSERT(values.contains(@key 5));
   TEST_ASSERT(sum_const_set(@values values) == 28);
@@ -585,7 +585,7 @@ DOC <$ Inserts keys one through seven around a balanced root. $>
   VAR inserted I32 := 0;
   LOOP WHILE (inserted < 64) DO
   {
-    TEST_ASSERT(ascending.insert(@key inserted));
+    TEST_ASSERT(ascending.insert(inserted));
     inserted++;
   }
   VAR removed I32 := 0;
@@ -710,7 +710,7 @@ DOC <$ Inserts keys one through seven around a balanced root. $>
   STATIC_VAR i U64 := 0;
   STATIC_WHILE (i < PACK_SIZE(values))
   {
-    result.insert(@key PACK_ARG(values, i) * 2);
+    result.insert(PACK_ARG(values, i) * 2);
     STATIC_EVAL i++;
   }
   RETURN result;

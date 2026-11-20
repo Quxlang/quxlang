@@ -153,7 +153,7 @@ IMPORT std;
   ::reported_errors DUAL_TEST KNOWN_BROKEN_IF(ARCH_IS_JVM)
   {
     VAR array std::geometric_array#U64;
-    array.push_back(37 AS U64);
+    array.push_back(37);
     VAR caught BOOL := FALSE;
     TRY { array.reserve((0 AS SZ) #!!); }
     CATCH error CONST& std::container_error
