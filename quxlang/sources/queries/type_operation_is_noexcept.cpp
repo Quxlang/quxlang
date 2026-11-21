@@ -31,26 +31,5 @@ rpnx::querygraph::coroutine< quxlang::type_operation_is_noexcept_spec > quxlang:
     {
         co_return false;
     }
-
-    instatype const& parameters = co_await rpnx::querygraph::request< instanciation_concrete_params_query >(*selected);
-    if (parameters.named.size() != arguments.named.size() || !parameters.positional.empty())
-    {
-        // Omitted arguments require evaluation and possibly construction at the call site.
-        co_return false;
-    }
-    for (std::pair< std::string const, type_symbol > const& argument : arguments.named)
-    {
-        std::map< std::string, parameter_instantiation >::const_iterator parameter = parameters.named.find(argument.first);
-        if (parameter == parameters.named.end())
-        {
-            co_return false;
-        }
-        type_symbol const& target = parameter_instantiation_type(parameter->second);
-        if (target != argument.second && !(is_ref(target) && is_ref(argument.second) && target == make_cref(argument.second)))
-        {
-            // A conversion or by-value adaptation can execute additional user code.
-            co_return false;
-        }
-    }
     co_return co_await rpnx::querygraph::request< functanoid_is_noexcept_query >(*selected);
 }

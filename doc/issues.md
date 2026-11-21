@@ -6,7 +6,7 @@ The last confirmed consecutive review checkpoint is [636244af](https://github.co
 
 # Working tree revalidation
 
-The audit used commit `cde605fd` as its baseline. The working tree corrections below are pending a correcting commit.
+The audit used commit `cde605fd` as its baseline. Commit `66800906` recorded the initial corrections.
 
 | Finding | Revalidation and disposition |
 | --- | --- |
@@ -23,7 +23,7 @@ The audit used commit `cde605fd` as its baseline. The working tree corrections b
 | QXR-018 | The default loop step uses the same value construction path as `BY(1)`. |
 | QXR-019 | Copy-specific constructor selection checks whether the caller actually supplied `OTHER`. |
 | QXR-020 | LLVM lowering records that destruction has started before emitting a destructor call's exceptional path. Completed cleanup retires the slot metadata. |
-| QXR-021 | Lifecycle traits require a nonthrowing callee and proven nonthrowing argument preparation. Omitted defaults and conversions outside direct reference binding produce a conservative false result. |
+| QXR-021 | Withdrawn after clarification of the contract. Lifecycle traits report the selected operation's exception guarantee. Argument preparation takes place in the caller's exception context. |
 | QXR-022 | Constructor condition normalization strips nested source locations from lifecycle traits. |
 | QXR-023 | Unsupported native exception storage alignment selects the allocation-failure sentinel. |
 | QXR-024 | The integration harness uses the current CLI, locates the prefix documentation for the benchmark clock, and recognizes the coroutine benchmark cases. |
@@ -41,7 +41,7 @@ The audit used commit `cde605fd` as its baseline. The working tree corrections b
 | QXR-037 | Background collection enforces the purged byte limit. |
 | QXR-038 | The lifetime test examines pool-owned extents under the pool mutex. |
 
-The Release compiler built successfully. The macOS testbundle passed 1,865 static tests and 1,436 native tests. Compilation checks passed for all nine cross targets, and full builds linked the RV32, RV64 and Windows x64 outputs. The targeted C++ and IntelliJ suites passed 62 and 24 tests respectively. The benchmark integration checks passed in stages, including a separate run of the parser-exception fixture after the harness timed out during concurrent builds. The direct coroutine benchmark matched its C++ reference for all nine verification cases.
+For the initial audit, the Release compiler built successfully. The macOS testbundle passed 1,865 static tests and 1,436 native tests. Compilation checks passed for all nine cross targets, and full builds linked the RV32, RV64 and Windows x64 outputs. The targeted C++ and IntelliJ suites passed 62 and 24 tests respectively. The benchmark integration checks passed in stages, including a separate run of the parser-exception fixture after the harness timed out during concurrent builds. The direct coroutine benchmark matched its C++ reference for all nine verification cases.
 
 # Current findings
 
@@ -238,20 +238,6 @@ Consider Outer containing an Inner field whose destructor is declared NOEXCEPT_I
 Fix date and commit: not verified.
 
 Tracking key: `llvm-throwing-destructor-dead-slot-metadata`.
-
-## [current] QXR-021 Noexcept operation trait omits throwing argument preparation
-
-**P2 · First found 2026-10-16 · Current; last substantive verification 2026-10-16. Later resolution unverified.**
-
-A type S can have a NOEXCEPT swap operator with an extra @check I32 DEFAULT(raise()) argument, where raise() can throw. IS_NOEXCEPT_SWAPPABLE(S) nevertheless returns true because it considers only the selected callee, not evaluation of the default argument. A generic exchange wrapper that uses this trait to declare itself conditionally noexcept can then terminate instead of propagating the exception from raise(). Throwing argument conversions and by-value adaptation create the same class of risk. The trait must account for the complete operation, including argument preparation.
-
-The callee’s NOEXCEPT contract does not cover evaluation of its arguments. The failure concerns a whole-operation trait and a wrapper that uses that trait to promise nonthrowing execution.
-
-[Original source and affected lines](https://github.com/rnichollx/quxlang/blob/efb75286e41757c466eb2e0a027cb8a02ef68fc0/quxlang/sources/queries/type_operation_is_noexcept.cpp#L24-L33)
-
-Fix date and commit: not verified.
-
-Tracking key: `noexcept-trait-argument-preparation`.
 
 ## [current] QXR-022 Noexcept trait source locations break constructor pairing
 
@@ -483,7 +469,17 @@ Removes the AS-triggered phantom declaration while retaining real type lookup.
 
 Tracking key: `intellij-as-cast-phantom-shadow`.
 
-# Withdrawn report
+# Withdrawn reports
+
+## [withdrawn] QXR-021 Lifecycle noexcept trait excludes argument preparation
+
+**Originally P2 · First found 2026-10-16 · Withdrawn 2026-11-21**
+
+The report identified a `NOEXCEPT` swap overload with a throwing default argument. The trait correctly reports the selected overload as nonthrowing. Default arguments, conversions, and by-value adaptations execute in the caller before the overload begins. A `NOEXCEPT` wrapper that performs those operations is responsible for its own exception contract. The argument-preparation check introduced in `66800906` was reverted.
+
+[Original source and affected lines](https://github.com/rnichollx/quxlang/blob/efb75286e41757c466eb2e0a027cb8a02ef68fc0/quxlang/sources/queries/type_operation_is_noexcept.cpp#L24-L33)
+
+Tracking key: `noexcept-trait-argument-preparation`.
 
 ## [withdrawn] QXR-014 Ordinary atomic integer swap rejection
 
