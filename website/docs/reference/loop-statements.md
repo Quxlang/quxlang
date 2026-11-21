@@ -1,8 +1,11 @@
 # `LOOP` Statements
 
-Quxlang uses one clause-based `LOOP` statement for conventional loops, numeric
-sequences, and iterator traversal. A header begins with `LOOP`, may carry a loop
-label and clauses, and ends with `DO` followed by the body.
+Quxlang has exactly one loop statement. The clause-based `LOOP` statement
+expresses conventional loops, numeric sequences, and iterator traversal. A
+header begins with `LOOP`, may carry a loop label and clauses, and ends with
+`DO` followed by the body. A loop written as `LOOP WHILE(condition) DO` is a
+`LOOP` statement whose only clause is `WHILE`; it is not a separate statement
+kind, and every rule on this page applies to it.
 
 ```text
 LOOP [':' label] { clause } DO block [';']
@@ -58,7 +61,26 @@ A conventional loop can use these clauses:
 | `POSTTEST(condition)` | Continue only when the condition is true after the body. |
 | `STEP { statements }` | Execute after each completed or skipped iteration. |
 
-This is the direct equivalent of a conventional initialize-test-step loop:
+The operand of `WHILE`, `FILTER`, or `POSTTEST` must have type `BOOL` or be
+implicitly convertible to `BOOL`. Each condition is evaluated once per
+attempted iteration, so the side effects of a condition occur once per
+attempted iteration.
+
+A conventional loop whose only clause is `WHILE` is a pre-tested loop. The
+condition is tested before every iteration, including the first. The body does
+not execute when the condition is initially false.
+
+```quxlang
+VAR index SZ := 0;
+LOOP WHILE (index < count) DO
+{
+  process(index);
+  index++;
+}
+```
+
+The clauses `INIT`, `WHILE`, and `STEP` together form the direct equivalent of
+a conventional initialize-test-step loop:
 
 ```quxlang
 VAR total I32 := 0;
@@ -316,31 +338,82 @@ Each iteration then follows this order:
 The boundary recheck before `POSTTEST` matters when the body or a `CONTINUE`
 path changes an exposed iterator.
 
-## `BREAK`, `CONTINUE`, labels, and scope
+## `BREAK` and `CONTINUE`
 
-`BREAK` exits the nearest loop. `CONTINUE` follows that loop form's normal
-continuation path: post-test and step for a conventional or iterator loop, and
-the increment for a sequence loop.
+`BREAK` exits the nearest enclosing loop. `CONTINUE` leaves the current body
+execution and follows the normal continuation path of the nearest enclosing
+loop: `POSTTEST` and then the step for a conventional or iterator loop, and the
+increment for a sequence loop.
 
-A label follows `LOOP` and can be named by `BREAK` or `CONTINUE`:
+A conventional loop that has neither `POSTTEST` nor `STEP` has no implicit
+step. `CONTINUE` in such a loop transfers directly to the `WHILE` condition.
+When `WHILE` is absent, the transfer goes to the `FILTER` condition, and when
+both are absent, to the start of the body. Any update that the loop requires
+for progress must therefore occur before `CONTINUE` or inside the condition.
 
 ```quxlang
-LOOP :outer VALUE(row I32) FROM(0) UNTIL(4) DO
+VAR index SZ := 0;
+LOOP WHILE (index < count) DO
 {
-  LOOP VALUE(column I32) FROM(0) UNTIL(4) DO
+  index++;
+  IF (should_skip(index))
   {
-    IF (should_skip_remaining_columns(row, column))
-    {
-      CONTINUE :outer;
-    }
-  };
-};
+    CONTINUE;
+  }
+  IF (finished(index))
+  {
+    BREAK;
+  }
+  process(index);
+}
 ```
 
-Names introduced by loop clauses are loop-local. They are removed when the
-loop exits, and ordinary object lifetime rules apply to clause and body
-objects. See [Labels and `GOTO`](labels-and-goto.md) for label-block and
-unstructured-control rules.
+## Loop labels
+
+A label follows `LOOP` and precedes the clauses. A labeled `BREAK` or
+`CONTINUE` can target that loop from a nested construct:
+
+```quxlang
+LOOP :records WHILE (has_record()) DO
+{
+  LOOP VALUE(field SZ) FROM(0) UNTIL(field_count()) DO
+  {
+    IF (record_is_invalid())
+    {
+      CONTINUE :records;
+    }
+    IF (all_records_are_complete())
+    {
+      BREAK :records;
+    }
+  };
+}
+```
+
+`CONTINUE :records` transfers to the continuation path of the labeled loop,
+which is the `WHILE` condition in this example. `BREAK :records` transfers to
+the statement after the labeled loop. The label of a `CONTINUE` statement must
+resolve to an enclosing loop. A labeled block can also be the target of
+`BREAK`, as described under [Labels and `GOTO`](labels-and-goto.md), which also
+specifies the unstructured-control rules.
+
+## Scope and lifetime
+
+Names introduced by loop clauses are loop-local and are removed when the loop
+exits. Ordinary object lifetime rules apply to objects declared in clause
+blocks.
+
+The body is a function block. Objects declared in the body are created on each
+path that reaches their declaration. Those objects leave scope at the end of
+each body execution, which precedes the next condition test, and also on
+`CONTINUE` and on `BREAK`. References to those objects become invalid when the
+lifetimes of the objects end. Existing references may be retained outside the
+body without being used. Any use of an invalidated reference is undefined
+behavior, including accessing an object through it, creating a new reference
+from it, copying it, or taking its address.
+
+`STATIC_WHILE` provides compile-time repetition and is described under
+[Compile-Time Evaluation](compile-time-evaluation.md).
 
 ## Clause constraints
 

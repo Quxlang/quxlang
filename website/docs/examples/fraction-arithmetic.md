@@ -17,8 +17,8 @@ The program prints the following output.
 
 ## Explanation
 
-The function `greatest_common_divisor` implements the Euclidean algorithm with a [`LOOP WHILE`
-statement](../reference/while-loops.md). The function assigns to its value parameters, which are
+The function `greatest_common_divisor` implements the Euclidean algorithm with a
+[`LOOP` statement](../reference/loop-statements.md#conventional-loops) that has a `WHILE` clause. The function assigns to its value parameters, which are
 local objects of the function. The constructor of `fraction` divides the numerator and the
 denominator by their greatest common divisor and gives the divisor the sign of the denominator, so
 every stored denominator is positive. The declaration of `third` supplies 2 and 6 and stores 1 and

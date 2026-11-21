@@ -75,7 +75,6 @@ this page name those features in the notes column.
 | [Bitwise Operators](../reference/bitwise-operators.md) | Implemented | Linux x86: the test of 64-bit rotation cycles is annotated as known broken. |
 | [User-Defined Operators](../reference/user-defined-operators.md) | Implemented | None |
 | [Conditional Statements](../reference/conditional-statements.md) | Implemented | None |
-| [`LOOP WHILE` Loops](../reference/while-loops.md) | Implemented | None |
 | [`LOOP` Statements](../reference/loop-statements.md) | Implemented | None |
 | [Labels and `GOTO`](../reference/labels-and-goto.md) | Implemented | None |
 | [Exception Handling](../reference/exceptions.md) | Implemented | Translation of foreign C++ or SEH exceptions and unwinding through external shared libraries are not implemented. Execution on Windows is unverified. Cortado: not implemented. |

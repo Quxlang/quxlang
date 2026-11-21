@@ -1,23 +1,29 @@
 # Overview of `LOOP` Statements
 
-Quxlang's clause-based `LOOP` statement handles ordinary test-and-step loops,
-numeric sequences, and container iteration. Every form ends its header with
-`DO` and then supplies the body.
+Quxlang has one loop statement. A `LOOP` statement consists of the keyword
+`LOOP`, an optional label, a set of clauses, the keyword `DO`, and a body. The
+clauses determine how the loop starts, when it continues, and how it advances.
+The same statement therefore expresses condition-controlled loops, counted
+loops, numeric sequences, and container iteration.
 
-## Test-and-step loops
+## Condition-controlled loops
 
-A `WHILE` clause checks a condition before each iteration:
+A `WHILE` clause supplies a condition that is tested before the first iteration
+and before every later iteration. The body does not execute when the condition
+is initially false.
 
 ```quxlang
-VAR count I32 := 0;
-LOOP WHILE(count < 3) DO {
-  count++;
+VAR index SZ := 0;
+LOOP WHILE (index < count) DO
+{
+  process(index);
+  index++;
 }
-ASSERT(count == 3);
 ```
 
-The combination of `INIT`, `WHILE`, and `STEP` expresses a conventional counted
-loop:
+`LOOP WHILE` is a `LOOP` statement whose only clause is `WHILE`. Further clauses
+can be added to the same header. The combination of `INIT`, `WHILE`, and `STEP`
+expresses a conventional counted loop:
 
 ```quxlang
 VAR total I32 := 0;
@@ -34,7 +40,8 @@ ASSERT(total == 10);
 ```
 
 `INIT` runs once, `WHILE` runs before each iteration, and `STEP` runs after the
-body. `LOOP DO` is an unconditional loop; use `BREAK` to leave it.
+body. A header with no clauses, `LOOP DO`, is an unconditional loop that
+repeats until a `BREAK`, `RETURN`, or thrown exception leaves it.
 
 `POSTTEST` checks after the body, so the body runs at least once when no
 `WHILE` clause is present:
@@ -140,8 +147,32 @@ The default iterator step is `iterator++`. `BY(amount)` uses
 
 ## Loop control
 
-`CONTINUE` advances through the loop's normal post-test and step path. `BREAK`
-exits. Labels let a nested loop target an outer loop:
+`BREAK` exits the loop. `CONTINUE` abandons the rest of the body and proceeds
+through the normal continuation path of the loop: the `POSTTEST` clause, then
+the `STEP` clause or the automatic sequence or iterator step.
+
+```quxlang
+VAR index SZ := 0;
+LOOP WHILE (index < count) DO
+{
+  index++;
+  IF (should_skip(index))
+  {
+    CONTINUE;
+  }
+  IF (finished(index))
+  {
+    BREAK;
+  }
+  process(index);
+}
+```
+
+A loop that has neither a `STEP` clause nor an automatic step returns directly
+to its `WHILE` condition after `CONTINUE`. The body of such a loop must update
+the state that the condition depends on before `CONTINUE` executes.
+
+A label after `LOOP` allows a nested loop to target an outer loop:
 
 ```quxlang
 LOOP :rows VALUE(row I32) FROM(0) UNTIL(height) DO
@@ -159,5 +190,6 @@ LOOP :rows VALUE(row I32) FROM(0) UNTIL(height) DO
 ## Reference
 
 See the [`LOOP` Statements Reference](../reference/loop-statements.md) for clause-form
-selection, exact phase ordering, iterator protocols, binding scope, boundary
-comparisons, and every invalid clause combination.
+selection, condition conversion, exact phase ordering, iterator protocols,
+binding scope, object lifetime, boundary comparisons, and every invalid clause
+combination.

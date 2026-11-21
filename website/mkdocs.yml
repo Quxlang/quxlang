@@ -103,7 +103,6 @@ nav:
           - User-Defined Operators: overview/user-defined-operators.md
       - Control Flow:
           - Conditional Statements: overview/conditional-statements.md
-          - LOOP WHILE Loops: overview/while-loops.md
           - LOOP Statements: overview/loop-statements.md
           - Labels and GOTO: overview/labels-and-goto.md
           - Exception Handling: overview/exceptions.md
@@ -191,7 +190,6 @@ nav:
           - User-Defined Operators: reference/user-defined-operators.md
       - Control Flow:
           - Conditional Statements: reference/conditional-statements.md
-          - LOOP WHILE Loops: reference/while-loops.md
           - LOOP Statements: reference/loop-statements.md
           - Labels and GOTO: reference/labels-and-goto.md
           - Exception Handling: reference/exceptions.md

@@ -58,7 +58,7 @@ Only the chosen expression is generated.
 ```
 
 The generated function contains three increments. This is not a runtime loop:
-`STATIC_WHILE` repeats generation, while an ordinary `LOOP WHILE` emits one loop
+`STATIC_WHILE` repeats generation, while a `LOOP` statement emits one loop
 whose iterations happen when the program runs.
 
 A function-local `STATIC` declaration defines an immutable generation-time

@@ -70,8 +70,7 @@ reserved, unimplemented, or restricted to particular targets.
 | Topic | Contents |
 | --- | --- |
 | [Conditional Statements](conditional-statements.md) | `IF`, `ELSE`, branch conditions, and scope |
-| [`LOOP WHILE` Loops](while-loops.md) | Pre-test and post-test conditional iteration |
-| [`LOOP` Statements](loop-statements.md) | Range, iterator, collection, and unconditional loop forms |
+| [`LOOP` Statements](loop-statements.md) | The single loop statement: pre-test and post-test conditions, step phases, numeric sequences, iterator and range traversal, and unconditional loops |
 | [Labels and `GOTO`](labels-and-goto.md) | Labels, jumps, scope exits, and restrictions |
 | [Exception Handling](exceptions.md) | Throwing, matching, cleanup, rethrow, handles, and `NOEXCEPT` |
 | [Failure Statements](diagnostics-and-failure.md) | Assertions, panic, compilation errors, and unimplemented paths |
