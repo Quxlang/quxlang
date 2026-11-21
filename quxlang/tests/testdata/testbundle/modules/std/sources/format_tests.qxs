@@ -27,6 +27,7 @@ LANGUAGE QUXLANG EN 0.0;
   ::names DUAL_TEST
   {
     TEST_ASSERT(fmt#("{name}: {} {count} {name}")(% [FALSE], @count 7, @name "item") == "item: false 7 item");
+    TEST_ASSERT(fmt#("{} {output}")(% [7], @output 42) == "7 42");
   }
 
   DOC <$ Records argument evaluation order and returns the supplied value. $>

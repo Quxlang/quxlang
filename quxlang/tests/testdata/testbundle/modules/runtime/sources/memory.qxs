@@ -1159,11 +1159,13 @@ DOC <$
   The block size of every slab size class is a multiple of the alignment of the
   class, so the smallest class holding the byte count rounded up to a multiple
   of the requested alignment is the smallest class satisfying both the byte
-  count and the alignment. The byte count is at most
+  count and the alignment. A zero-byte layout uses one alignment unit.
+  The byte count is at most
   allocator_slab_maximum_block_size.
   $>
 PRIVATE(MODULE) ::allocator_slab_class_bytes FUNCTION(@bytes SZ, @align SZ): SZ
 {
+  IF (bytes == 0) { RETURN align; }
   RETURN (bytes + (align - 1)) #&& ((align - 1) #!!);
 }
 
@@ -1240,8 +1242,8 @@ PRIVATE(MODULE) ::allocator_slab_deallocate_procedures STATIC [allocator_slab_cl
 DOC <$
   Routes a runtime layout through the generated slab size classes. The size
   class index is selected by table lookup and addresses the thread cursor of the
-  class directly, so the fast path contains no branch that depends on the byte
-  count. The slow path of the class is entered through a procedure pointer.
+  class directly. The slow path of the class is entered through a procedure
+  pointer.
   $>
 PRIVATE(MODULE) ::allocator_allocate_dynamic FUNCTION(@bytes SZ, @align SZ): ADDRESS
 {

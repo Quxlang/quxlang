@@ -259,7 +259,7 @@ PRIVATE(MODULE)
     accept a fractional precision from zero through eighteen.
     $>
   ::format_arguments TEMPLATE(@T:text VALUE STRING_CONSTANT)
-    FUNCTION(@output MUT& AUTO, %...positional CONST& AUTO, @KWARGS ...)
+    FUNCTION(%output MUT& AUTO, %...positional CONST& AUTO, @KWARGS ...)
   {
     STATIC_VAR cursor SZ := 0;
     STATIC_VAR automatic SZ := 0;
@@ -430,7 +430,7 @@ DOC <$
   FUNCTION(%...args CONST& AUTO, @KWARGS ...): string
 {
   VAR output format_string_writer;
-  format_arguments#text(@output output, ...FORWARD PACK(args), ...FORWARD PACK(KWARGS));
+  format_arguments#text(% [output], ...FORWARD PACK(args), ...FORWARD PACK(KWARGS));
   RETURN output.text AS TEMP& string;
 }
 
@@ -443,7 +443,7 @@ DOC <$
   FUNCTION(%...args CONST& AUTO, @KWARGS ...)
 {
   AUTO output := open_standard_output_writer();
-  format_arguments#text(@output output, ...FORWARD PACK(args), ...FORWARD PACK(KWARGS));
+  format_arguments#text(% [output], ...FORWARD PACK(args), ...FORWARD PACK(KWARGS));
   output.flush();
 }
 

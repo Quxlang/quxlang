@@ -57,12 +57,12 @@ PRIVATE(MODULE) ::layer4_pool_collectable FUNCTION(@pool MUT& layer4_region_pool
 
 DOC <$
   The collection pass advances the pool epoch, purges every retained extent that
-  has been idle for the purge period count, and unmaps every purged extent that
-  has been idle for the unmap period count. Each list is ordered by insertion, so
-  the pass inspects only the oldest member. Purging and unmapping occur outside
-  the pool lock on unlisted extents.
+  has been idle for the purge period count, and unmaps purged extents in order
+  of insertion until the byte limit and the unmap period are both satisfied.
+  Purging and unmapping occur outside the pool lock on unlisted extents.
   $>
-PRIVATE(MODULE) ::layer4_pool_collect FUNCTION(@pool MUT& layer4_region_pool, @purge_periods SZ, @unmap_periods SZ)
+PRIVATE(MODULE) ::layer4_pool_collect
+  FUNCTION(@pool MUT& layer4_region_pool, @purge_periods SZ, @unmap_periods SZ, @purged_limit SZ)
 {
   pool.mtx.lock();
   pool.epoch++;
@@ -76,7 +76,8 @@ PRIVATE(MODULE) ::layer4_pool_collect FUNCTION(@pool MUT& layer4_region_pool, @p
     victim->.idle_epoch := pool.epoch;
     pool.purged.insert(@extent victim, @kind layer4_extent_membership::purged);
   }
-  LOOP WHILE ((pool.purged.oldest??) && pool.epoch - pool.purged.oldest->.idle_epoch >= unmap_periods) DO
+  LOOP WHILE ((pool.purged.oldest??) && (pool.purged.bytes > purged_limit ||
+    pool.epoch - pool.purged.oldest->.idle_epoch >= unmap_periods)) DO
   {
     VAR victim MUT->layer4_backing_extent := pool.purged.oldest;
     pool.purged.remove(@extent victim);
@@ -137,7 +138,7 @@ PRIVATE(MODULE) ::layer4_collector_run FUNCTION()
   {
     layer4_collector_sleep();
     layer4_pool_collect(@pool layer4_region_backing, @purge_periods allocator_collector_purge_periods,
-      @unmap_periods allocator_collector_unmap_periods);
+      @unmap_periods allocator_collector_unmap_periods, @purged_limit allocator_purged_region_bytes_limit);
     layer4_region_backing.mtx.lock();
     IF (layer4_pool_collectable(@pool layer4_region_backing) == FALSE)
     { layer4_collector_activity.STORE#ATOMIC_RELEASE(layer4_collector_parked); }
@@ -215,8 +216,12 @@ PRIVATE(MODULE) ::layer4_collector_start FUNCTION(): BOOL
   }
   STATIC_ELSE STATIC_IF(OS_LINUX && ENVIRONMENT_IS_STATIC)
   {
-    static_linux_stack_allocate(@result layer4_collector_stack);
-    static_linux_tls_allocate(@result layer4_collector_tls);
+    IF (static_linux_try_allocate_stack(@result layer4_collector_stack) == FALSE) { RETURN FALSE; }
+    IF (static_linux_try_allocate_tls(@result layer4_collector_tls) == FALSE)
+    {
+      static_linux_mapping_release(@mapping layer4_collector_stack);
+      RETURN FALSE;
+    }
     layer4_collector_launch.entry := layer4_collector_entry<-;
     layer4_collector_launch.argument := NULL;
     VAR child_stack MUT=>>TYPED_STORAGE(BYTE) := layer4_collector_stack.storage + layer4_collector_stack.size;
@@ -287,13 +292,14 @@ PRIVATE(MODULE) ::layer4_collector_fulfill FUNCTION(@request layer4_collector_re
 }
 
 DOC <$
-  The test verifies that a collection pass purges retained extents and unmaps
-  purged extents only after the configured number of idle passes.
+  The test verifies that collection honors both the idle periods and the
+  maximum purged bytes.
   $>
 PRIVATE(MODULE) ::layer4_pool_collection_test INCLUDE_IF(ARCH_IS_LAYOUTLESS == FALSE) UNIT_TEST
 {
   VAR pool layer4_region_pool;
   VAR extent_bytes SZ := allocator_slab_region_size;
+  VAR purged_limit SZ := 3 * extent_bytes;
   LOOP VALUE(index) FROM(0 AS SZ) UNTIL(3 AS SZ) DO
   {
     VAR extent MUT->layer4_backing_extent := layer4_extent_create(@span allocator_slab_region_size);
@@ -301,29 +307,38 @@ PRIVATE(MODULE) ::layer4_pool_collection_test INCLUDE_IF(ARCH_IS_LAYOUTLESS == F
     extent->.idle_epoch := pool.epoch;
     pool.retained.insert(@extent extent, @kind layer4_extent_membership::retained);
   }
-  layer4_pool_collect(@pool pool, @purge_periods 2, @unmap_periods 3);
+  layer4_pool_collect(@pool pool, @purge_periods 2, @unmap_periods 3, @purged_limit purged_limit);
   TEST_ASSERT(pool.retained.bytes == 3 * extent_bytes);
   TEST_ASSERT(pool.purged.bytes == 0);
   VAR reused MUT->layer4_backing_extent := pool.retained.newest;
   pool.retained.remove(@extent reused);
-  layer4_pool_collect(@pool pool, @purge_periods 2, @unmap_periods 3);
+  layer4_pool_collect(@pool pool, @purge_periods 2, @unmap_periods 3, @purged_limit purged_limit);
   TEST_ASSERT(pool.retained.bytes == 0);
   TEST_ASSERT(pool.purged.bytes == 2 * extent_bytes);
   TEST_ASSERT(pool.purged.oldest->.list == layer4_extent_membership::purged);
   reused->.idle_epoch := pool.epoch;
   pool.retained.insert(@extent reused, @kind layer4_extent_membership::retained);
-  layer4_pool_collect(@pool pool, @purge_periods 2, @unmap_periods 3);
+  layer4_pool_collect(@pool pool, @purge_periods 2, @unmap_periods 3, @purged_limit purged_limit);
   TEST_ASSERT(pool.retained.bytes == extent_bytes);
   TEST_ASSERT(pool.purged.bytes == 2 * extent_bytes);
-  layer4_pool_collect(@pool pool, @purge_periods 2, @unmap_periods 3);
+  layer4_pool_collect(@pool pool, @purge_periods 2, @unmap_periods 3, @purged_limit purged_limit);
   TEST_ASSERT(pool.retained.bytes == 0);
   TEST_ASSERT(pool.purged.bytes == 3 * extent_bytes);
-  layer4_pool_collect(@pool pool, @purge_periods 2, @unmap_periods 3);
+  layer4_pool_collect(@pool pool, @purge_periods 2, @unmap_periods 3, @purged_limit purged_limit);
   TEST_ASSERT(pool.purged.bytes == extent_bytes);
   TEST_ASSERT(pool.purged.oldest == reused);
   LOOP VALUE(pass) FROM(0 AS SZ) UNTIL(2 AS SZ) DO
-  { layer4_pool_collect(@pool pool, @purge_periods 2, @unmap_periods 3); }
+  { layer4_pool_collect(@pool pool, @purge_periods 2, @unmap_periods 3, @purged_limit purged_limit); }
   TEST_ASSERT(pool.purged.bytes == 0);
   TEST_ASSERT((pool.purged.oldest??) == FALSE);
   TEST_ASSERT(pool.epoch == 7);
+
+  VAR extent MUT->layer4_backing_extent := layer4_extent_create(@span allocator_slab_region_size);
+  TEST_ASSERT(extent??);
+  extent->.idle_epoch := pool.epoch;
+  pool.retained.insert(@extent extent, @kind layer4_extent_membership::retained);
+  layer4_pool_collect(@pool pool, @purge_periods 1, @unmap_periods 3, @purged_limit 0);
+  TEST_ASSERT(pool.retained.bytes == 0);
+  TEST_ASSERT(pool.purged.bytes == 0);
+  TEST_ASSERT(pool.purged.oldest!?);
 }

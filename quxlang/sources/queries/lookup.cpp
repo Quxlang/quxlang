@@ -495,7 +495,13 @@ namespace quxlang::detail
             std::optional< ast2_function_declaration > declaration = co_await rpnx::querygraph::request< function_declaration_query >(descriptor.temploid);
             if (declaration.has_value() && declaration->header.execution_kind == function_execution_kind::coroutine)
             {
-                instatype parameters = co_await rpnx::querygraph::request< instanciation_concrete_params_query >(descriptor);
+                instatype const& concrete = co_await rpnx::querygraph::request< instanciation_concrete_params_query >(descriptor);
+                instatype parameters;
+                parameters.positional = concrete.positional;
+                for (std::pair< std::string const, parameter_instantiation > const& parameter : descriptor.params.named)
+                {
+                    parameters.named.emplace(parameter.first, concrete.named.at(parameter.first));
+                }
                 for (std::pair< std::string const, parameter_instantiation > const& parameter : output.parameters.named)
                 {
                     parameters.named[parameter.first] = parameter.second;

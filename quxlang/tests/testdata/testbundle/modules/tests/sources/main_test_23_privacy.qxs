@@ -166,7 +166,7 @@ PRIVATE(MODULE) ::privacy_reopened NAMESPACE
 
 ::runtime_module_private_declaration_is_inaccessible_test STATIC_TEST EXPECT_COMPILATION_FAILURE
 {
-  TEST_ASSERT(RUNTIME_MODULE::memory_region_size(@size 1) == 4096);
+  TEST_ASSERT(RUNTIME_MODULE::layer5_mapping_size(@size 1) == 4096);
 }
 
 

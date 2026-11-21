@@ -33,6 +33,11 @@ Control flow cannot jump into a protected `TRY` or catch region from outside
 it. Exits must perform the required lifetime cleanup. `RETURN` cannot escape
 a deferred action, including from a catch nested inside that action.
 
+An exceptional exit rolls initialization of an `NVALUE` destination back to
+its state on entry to the protected block. A handler that continues normally
+must complete any required initialization that the exceptional exit rolled
+back.
+
 ## Thrown objects
 
 `THROW expression;` evaluates the expression and constructs a complete owned

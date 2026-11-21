@@ -379,9 +379,12 @@ final class QuxlangSymbols {
             int end = Math.min(close[i], body);
             String clause = text(i - 1);
             if (Set.of("VALUE", "ITEM", "INDEX", "ITER").contains(clause)
-                && text(i).equals("(") && end == i + 2 && isWord(i + 1)) {
+                && text(i).equals("(") && i + 1 < end && isWord(i + 1)) {
                 declare(i + 1, Kind.LOCAL, loop, false, 0, false);
                 suppressed[i] = true;
+                if (i + 2 < end) {
+                    pending.push(new Region(i + 2, end, region.scope(), Mode.EXPRESSION));
+                }
             } else {
                 Scope scope = Set.of("FILTER", "WHILE", "POSTTEST", "STEP", "EVAL").contains(clause)
                     ? loop : region.scope();

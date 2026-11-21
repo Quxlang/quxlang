@@ -256,7 +256,7 @@ rpnx::querygraph::coroutine< quxlang::functum_select_function_spec > quxlang::fu
         if (candidate && typeis< submember >(input.initializee))
         {
             auto const& member = as< submember >(input.initializee);
-            if (keywords::is_constructor_name(member.name) && candidate->named.contains("OTHER"))
+            if (keywords::is_constructor_name(member.name) && candidate->named.contains("OTHER") && input.parameters.named.contains("OTHER"))
             {
                 auto const& other_type = parameter_instantiation_type(candidate->named.at("OTHER"));
                 type_symbol const& actual_other_type = parameter_instantiation_type(input.parameters.named.at("OTHER"));

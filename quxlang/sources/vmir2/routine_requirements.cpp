@@ -699,7 +699,8 @@ auto quxlang::vmir2::directly_instantiated_functanoids(functanoid_routine3 const
                 add_functanoid(result, arithmetic_failure_function(arithmetic_mode));
             }
 
-            if (instruction.type_is< iconv >() && instruction.as< iconv >().convtype == conversion_class::checked)
+            bool checked_conversion = instruction.type_is< iconv >() && instruction.as< iconv >().convtype == conversion_class::checked;
+            if (checked_conversion)
             {
                 add_functanoid(result, arithmetic_failure_function(overflow_mode::checked));
             }
@@ -752,7 +753,7 @@ auto quxlang::vmir2::directly_instantiated_functanoids(functanoid_routine3 const
                 add_slot_destructor(slot, exit_state.at(slot));
             }
 
-            if (arithmetic_mode == overflow_mode::checked || instruction.type_is< invoke >() || instruction.type_is< invoke_indirect >() ||
+            if (arithmetic_mode == overflow_mode::checked || checked_conversion || instruction.type_is< invoke >() || instruction.type_is< invoke_indirect >() ||
                 instruction.type_is< invoke_virtual >() || instruction.type_is< interface_invoke >())
             {
                 if (!block.catcher.has_value() || !block.catcher->terminate_before_capture)

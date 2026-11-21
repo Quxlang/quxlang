@@ -88,6 +88,8 @@ BODY
     MEASURE COUNT(operation_count(@calls calls))
     {
       VAR local lifetime_probe:(@counter live);
+      DEFER { BREAK; TEST_ASSERT(FALSE); }
+      DEFER :done { BREAK :done; TEST_ASSERT(FALSE); }
       TEST_ASSERT(live == 2);
       TEST_ASSERT(calls == completed + 1);
       VAR nested U32 := 0;

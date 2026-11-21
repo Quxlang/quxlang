@@ -177,8 +177,13 @@ DOC <$ Owns one native thread and joins it before releasing its control block. $
     }
     STATIC_ELSE STATIC_IF(OS_LINUX && ENVIRONMENT_IS_STATIC)
     {
-      RUNTIME_MODULE::static_linux_stack_allocate(@result control_ref.stack_mapping);
-      RUNTIME_MODULE::static_linux_tls_allocate(@result control_ref.tls_block);
+      IF (RUNTIME_MODULE::static_linux_try_allocate_stack(@result control_ref.stack_mapping) == FALSE)
+      { PANIC "Static Linux failed to allocate a guarded thread stack."; }
+      IF (RUNTIME_MODULE::static_linux_try_allocate_tls(@result control_ref.tls_block) == FALSE)
+      {
+        RUNTIME_MODULE::static_linux_mapping_release(@mapping control_ref.stack_mapping);
+        PANIC "Static Linux failed to allocate a TLS mapping.";
+      }
       control_ref.child_tid.STORE#ATOMIC_RELEASE(0);
       control_ref.launch.entry := static_linux_thread_entry<-;
       control_ref.launch.argument := IBC_GETADDR(@PTR .control);

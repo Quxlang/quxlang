@@ -45,7 +45,7 @@ def main():
         config += (f'  {name}-fast-mt:\n    target: native\n    type: benchmark_executable\n'
                    f'    build_type: Release\n    benchmark: "::{name.replace("-", "_")}_fast_mt"\n')
     (bundle / 'qxcbuild.yml').write_text(config)
-    command = [str(options.qxc.resolve()), str(bundle), str(work / 'quxlang'), 'native']
+    command = [str(options.qxc.resolve()), 'build', str(bundle), str(work / 'quxlang'), 'native']
     with (work / 'qxc-build.log').open('w') as log:
         subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True)
     environment = {key: value for key, value in os.environ.items() if not key.startswith(('Malloc', '_Malloc', 'MIMALLOC_'))}

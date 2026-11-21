@@ -996,18 +996,12 @@ LANGUAGE QUXLANG EN 0.0;
     RET
   }
 
-  DOC <$ Implements the Linux RISC-V mmap operation. $>
+  DOC <$ Invokes Linux mmap2 with the file offset in units of 4096 bytes. $>
   ::mmap ASM_PROCEDURE RISCV32
     CALLABLE CALLCONV CCALL(@addr ADDRESS, @len SZ, @prot prot_flags, @flags mmap_flags, @fd I32, @off SZ; RETURN ADDRESS)
   {
-    SLLI t0, a5, 20
-    BNEZ t0, invalid_offset
-    SRLI a5, a5, 12
     LI a7, 222
     ECALL
-    RET
-    LABEL invalid_offset;
-    LI a0, -22
     RET
   }
 

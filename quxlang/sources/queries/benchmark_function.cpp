@@ -37,6 +37,14 @@ namespace quxlang
         /** Normalizes benchmark statements into ordinary lexical blocks and runtime calls. */
         class benchmark_block_lowering
         {
+            /** Describes the transfers accepted by a local control-flow target. */
+            struct control_target
+            {
+                std::optional< std::string > label;
+                bool is_loop;
+                bool accepts_unlabeled_break;
+            };
+
           public:
             /** Retains the declaration contract and the output-specific measurement mode. */
             benchmark_block_lowering(ast2_benchmark const& declaration, bool standalone) : declaration_(declaration), standalone_(standalone)
@@ -44,7 +52,7 @@ namespace quxlang
             }
 
             /** Lowers one block while preserving scope and checking region-crossing transfers. */
-            auto lower(function_block block, bool outer = false, bool in_loop = false, bool in_measurement = false, std::vector< std::optional< std::string > > loops = {}, bool loop_completed = false) -> function_block
+            auto lower(function_block block, bool outer = false, bool in_loop = false, bool in_measurement = false, std::vector< control_target > targets = {}, bool loop_completed = false) -> function_block
             {
                 for (function_statement& statement : block.statements)
                 {
@@ -137,79 +145,88 @@ namespace quxlang
                         }
                         else if constexpr (std::is_same_v< statement_type, function_break_statement > || std::is_same_v< statement_type, function_continue_statement >)
                         {
-                            if (loops.empty() || (value.label_name.has_value() && std::find(loops.begin(), loops.end(), value.label_name) == loops.end()))
+                            constexpr bool is_break = std::is_same_v< statement_type, function_break_statement >;
+                            bool local_target = std::ranges::any_of(targets, [&](control_target const& target)
+                            {
+                                if (!value.label_name)
+                                {
+                                    return target.is_loop || (is_break && target.accepts_unlabeled_break);
+                                }
+                                return target.label == value.label_name && (target.is_loop || is_break);
+                            });
+                            if (!local_target)
                             {
                                 throw semantic_compilation_error("Benchmark control flow cannot leave a measurement or terminate BENCHMARK_LOOP");
                             }
                         }
                         else if constexpr (std::is_same_v< statement_type, function_block >)
                         {
-                            return lower(std::move(value), false, in_loop, in_measurement, loops, loop_completed);
+                            return lower(std::move(value), false, in_loop, in_measurement, targets, loop_completed);
                         }
                         else if constexpr (std::is_same_v< statement_type, function_loop_statement >)
                         {
                             if (value.init_block)
                             {
-                                value.init_block = lower(std::move(*value.init_block), false, in_loop, in_measurement, loops, loop_completed);
+                                value.init_block = lower(std::move(*value.init_block), false, in_loop, in_measurement, targets, loop_completed);
                             }
-                            loops.push_back(value.label_name);
+                            targets.push_back({.label = value.label_name, .is_loop = true, .accepts_unlabeled_break = true});
                             if (value.eval_block)
                             {
-                                value.eval_block = lower(std::move(*value.eval_block), false, in_loop, in_measurement, loops, loop_completed);
+                                value.eval_block = lower(std::move(*value.eval_block), false, in_loop, in_measurement, targets, loop_completed);
                             }
                             if (value.step_block)
                             {
-                                value.step_block = lower(std::move(*value.step_block), false, in_loop, in_measurement, loops, loop_completed);
+                                value.step_block = lower(std::move(*value.step_block), false, in_loop, in_measurement, targets, loop_completed);
                             }
-                            value.loop_block = lower(std::move(value.loop_block), false, in_loop, in_measurement, loops, loop_completed);
-                            loops.pop_back();
+                            value.loop_block = lower(std::move(value.loop_block), false, in_loop, in_measurement, targets, loop_completed);
+                            targets.pop_back();
                         }
                         else if constexpr (std::is_same_v< statement_type, function_static_while_statement >)
                         {
-                            loops.push_back(std::nullopt);
-                            value.loop_block = lower(std::move(value.loop_block), false, in_loop, in_measurement, loops, loop_completed);
-                            loops.pop_back();
+                            value.loop_block = lower(std::move(value.loop_block), false, in_loop, in_measurement, targets, loop_completed);
                         }
                         else if constexpr (requires {
                                                value.then_block;
                                                value.else_block;
                                            })
                         {
-                            value.then_block = lower(std::move(value.then_block), false, in_loop, in_measurement, loops, loop_completed);
+                            value.then_block = lower(std::move(value.then_block), false, in_loop, in_measurement, targets, loop_completed);
                             if (value.else_block)
                             {
-                                value.else_block = lower(std::move(*value.else_block), false, in_loop, in_measurement, loops, loop_completed);
+                                value.else_block = lower(std::move(*value.else_block), false, in_loop, in_measurement, targets, loop_completed);
                             }
                         }
                         else if constexpr (std::is_same_v< statement_type, function_try_statement >)
                         {
-                            value.body = lower(std::move(value.body), false, in_loop, in_measurement, loops, loop_completed);
+                            value.body = lower(std::move(value.body), false, in_loop, in_measurement, targets, loop_completed);
                             for (auto& handler : value.handlers)
                             {
                                 rpnx::apply_visitor< void >(handler,
                                                             [&](auto& clause)
                                                             {
-                                                                clause.body = lower(std::move(clause.body), false, in_loop, in_measurement, loops, loop_completed);
+                                                                clause.body = lower(std::move(clause.body), false, in_loop, in_measurement, targets, loop_completed);
                                                             });
                             }
                         }
                         else if constexpr (std::is_same_v< statement_type, function_visit_statement >)
                         {
-                            value.body = lower(std::move(value.body), false, in_loop, in_measurement, loops, loop_completed);
+                            value.body = lower(std::move(value.body), false, in_loop, in_measurement, targets, loop_completed);
                         }
                         else if constexpr (std::is_same_v< statement_type, function_label_block_statement >)
                         {
-                            value.block = lower(std::move(value.block), false, in_loop, in_measurement, loops, loop_completed);
+                            targets.push_back({.label = value.name, .is_loop = false, .accepts_unlabeled_break = false});
+                            value.block = lower(std::move(value.block), false, in_loop, in_measurement, targets, loop_completed);
+                            targets.pop_back();
                         }
                         else if constexpr (std::is_same_v< statement_type, function_match_statement >)
                         {
                             for (function_match_arm& arm : value.arms)
                             {
-                                arm.block = lower(std::move(arm.block), false, in_loop, in_measurement, loops, loop_completed);
+                                arm.block = lower(std::move(arm.block), false, in_loop, in_measurement, targets, loop_completed);
                             }
                             if (value.default_clause && value.default_clause->block)
                             {
-                                value.default_clause->block = lower(std::move(*value.default_clause->block), false, in_loop, in_measurement, loops, loop_completed);
+                                value.default_clause->block = lower(std::move(*value.default_clause->block), false, in_loop, in_measurement, targets, loop_completed);
                             }
                         }
                         else if constexpr (std::is_same_v< statement_type, function_defer_statement >)
@@ -217,7 +234,8 @@ namespace quxlang
                             if (value.action.template type_is< defer_block_action >())
                             {
                                 defer_block_action& action = value.action.template as< defer_block_action >();
-                                action.body = lower(std::move(action.body), false, in_loop, in_measurement);
+                                action.body = lower(std::move(action.body), false, in_loop, in_measurement,
+                                                    {{.label = action.label_name, .is_loop = false, .accepts_unlabeled_break = true}});
                             }
                         }
                         return value;

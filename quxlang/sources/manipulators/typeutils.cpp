@@ -2558,7 +2558,10 @@ quxlang::expression quxlang::strip_source_locations(expression expr)
             {
                 value.symbol = strip_source_locations(std::move(value.symbol));
             }
-                                    else if constexpr (std::is_same_v< value_type, expression_bits > || std::is_same_v< value_type, expression_sizeof > || std::is_same_v< value_type, expression_alignof > || std::is_same_v< value_type, expression_is_integral > || std::is_same_v< value_type, expression_type_is_layoutless > || std::is_same_v< value_type, expression_type_is_polymorphic > || std::is_same_v< value_type, expression_type_is_async_only > || std::is_same_v< value_type, expression_is_signed >)
+            else if constexpr (std::is_same_v< value_type, expression_bits > || std::is_same_v< value_type, expression_sizeof > || std::is_same_v< value_type, expression_alignof > ||
+                               std::is_same_v< value_type, expression_is_integral > || std::is_same_v< value_type, expression_type_is_layoutless > ||
+                               std::is_same_v< value_type, expression_type_is_polymorphic > || std::is_same_v< value_type, expression_type_is_async_only > ||
+                               std::is_same_v< value_type, expression_is_signed > || std::is_same_v< value_type, expression_is_noexcept_operation >)
             {
                 value.of_type = strip_source_locations(std::move(value.of_type));
             }

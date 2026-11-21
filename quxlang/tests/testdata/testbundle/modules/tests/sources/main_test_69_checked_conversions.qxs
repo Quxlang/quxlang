@@ -158,4 +158,27 @@ LANGUAGE QUXLANG EN 0.0;
     TEST_ASSERT(caught);
     TEST_ASSERT(cleaned == 1);
   }
+
+  ::conversion_owner STRUCT
+  {
+    .cleaned VAR MUT->BOOL;
+    .DESTRUCTOR FUNCTION() { .cleaned-> := TRUE; }
+  }
+
+  ::convert_without_normal_exit FUNCTION(@source I16, @cleaned MUT->BOOL)
+  {
+    VAR owner conversion_owner;
+    owner.cleaned := cleaned;
+    VAR result I8 := source AS CHECKED I8;
+    LOOP DO {}
+  }
+
+  DOC <$ A checked conversion unwinds live objects in a function without a normal exit. $>
+  ::conversion_destructor_dependency INCLUDE_IF(ARCH_IS_LAYOUTLESS == FALSE) UNIT_TEST
+  {
+    VAR cleaned BOOL;
+    TRY { convert_without_normal_exit(@source 128, @cleaned cleaned<-); }
+    CATCH error CONST& ARITHMETIC_OVERFLOW { TEST_ASSERT(cleaned); RETURN; }
+    TEST_ASSERT(FALSE);
+  }
 }

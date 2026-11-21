@@ -167,12 +167,15 @@ PRIVATE(MODULE)
 
   DOC <$ Publishes one stop token per completion worker after the context has drained. $>
   ::request_async_stop INCLUDE_IF(OS_LINUX && linux_use_io_uring == FALSE)
-    FUNCTION(@control MUT->async_context_control, @worker_count SZ)
+    FUNCTION(@control MUT->async_context_control, @worker_count SZ, @posted MUT& SZ)
   {
+    VAR remaining SZ := worker_count - posted;
+    IF (remaining == 0) { RETURN; }
     control->.linux.mutex.lock();
-    control->.linux.stops += worker_count;
-    control->.linux.signal(@count worker_count AS U64);
+    control->.linux.stops += remaining;
+    control->.linux.signal(@count remaining AS U64);
     control->.linux.mutex.unlock();
+    posted := worker_count;
   }
 
   DOC <$ Drains file workers and closes the epoll and eventfd descriptors. $>

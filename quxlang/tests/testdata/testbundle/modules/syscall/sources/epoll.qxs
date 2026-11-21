@@ -2,12 +2,30 @@ LANGUAGE QUXLANG EN 0.0;
 
 ::linux INCLUDE_IF(OS_LINUX) NAMESPACE
 {
+  PRIVATE(MODULE) ::epoll_event_alignment INCLUDE_IF(ARCH_IS_X86 || ARCH_IS_X64) STATIC SZ := 4;
+  PRIVATE(MODULE) ::epoll_event_alignment INCLUDE_IF(ARCH_IS_X86 == FALSE && ARCH_IS_X64 == FALSE) STATIC SZ := 8;
+
   DOC <$ Matches the Linux epoll_event ABI, including the packed x86 layout. $>
-  ::epoll_event IBC_STRUCT
+  ::epoll_event IBC_STRUCT ALIGN(epoll_event_alignment)
   {
     .events VAR U32;
-    .padding INCLUDE_IF(ARCH_IS_ARM32 || ARCH_IS_ARM64 || ARCH_IS_Z_ARCH) VAR U32;
+    .padding INCLUDE_IF(epoll_event_alignment == 8) VAR U32;
     .data VAR [2]U32;
+  }
+
+  ::epoll_event_layout STATIC_TEST
+  {
+    STATIC_IF(ARCH_IS_X86 || ARCH_IS_X64)
+    {
+      TEST_ASSERT(SIZEOF(epoll_event) == 12);
+      TEST_ASSERT(SIZEOF([2]epoll_event) == 24);
+    }
+    STATIC_ELSE
+    {
+      TEST_ASSERT(SIZEOF(epoll_event) == 16);
+      TEST_ASSERT(ALIGNOF(epoll_event) == 8);
+      TEST_ASSERT(SIZEOF([2]epoll_event) == 32);
+    }
   }
 
   DOC <$ Creates an epoll instance. $>

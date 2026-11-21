@@ -45,6 +45,8 @@ match an overload. The hook supplies any implicit controller argument required
 by its selected target.
 Coroutine invocations that otherwise use `CO_COROUTINE_CALL`, including
 overloaded operator invocations, also use this hook.
+Forwarding a bound callable to `CO_COROUTINE_CALL` transfers the receiver
+to the `RECEIVER` field of its argument pack.
 
 `CO_FUNCTUM_CALL` executes as a synchronous `FUNCTION` and returns an awaitable.
 The coroutine implicitly awaits that result through `CO_AWAIT`. The awaiter's

@@ -69,7 +69,8 @@ rpnx::querygraph::coroutine< quxlang::generic_interface_spec > quxlang::generic_
             continue;
         }
 
-        type_symbol implemented_context = type_parent(*resolved_type).value_or(type_symbol(void_type{}));
+        type_symbol implemented_context = resolved_type->type_is< instanciation_reference >() ?
+            *resolved_type : type_parent(*resolved_type).value_or(type_symbol(void_type{}));
         for (ast2_interface_function_declaration const& function : implemented_generic.functions)
         {
             ast2_interface_function_declaration erased_function = function;

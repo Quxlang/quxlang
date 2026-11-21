@@ -8,6 +8,8 @@
 #include <quxlang/manipulators/typeutils.hpp>
 #include <quxlang/queries/specs/class_placement_info_spec.hpp>
 
+#include <bit>
+
 rpnx::querygraph::coroutine< quxlang::class_placement_info_spec > quxlang::class_placement_info_impl(type_symbol input)
 {
     type_symbol const& type = input;
@@ -143,14 +145,10 @@ rpnx::querygraph::coroutine< quxlang::class_placement_info_spec > quxlang::class
     {
         float_type float_kw = as< float_type >(type);
 
-        int sz = 1;
-        while (sz * 8 < float_kw.bits)
-        {
-            sz *= 2;
-        }
+        std::uint64_t bytes = float_kw.bits / 8 + (float_kw.bits % 8 != 0);
 
         class_placement_info result;
-        result.size = sz;
+        result.size = std::bit_ceil(bytes);
         result.alignment = machine_info.float_alignment_for_bits(float_kw.bits);
 
         co_return validate_placement(result);

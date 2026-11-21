@@ -301,16 +301,18 @@ PRIVATE(MODULE) ::zero_count_allocations_are_unique_unit_test INCLUDE_IF(ARCH_IS
   UNIT_TEST
 {
   allocator_release_all_thread_caches();
-  VAR first ADDRESS := allocator_allocate_multiple(@size 1, @align 1, @count 0);
-  VAR second ADDRESS := allocator_allocate_multiple(@size 1, @align 1, @count 0);
+  VAR first ADDRESS := allocator_allocate_multiple(@size 16, @align 16, @count 0);
+  VAR second ADDRESS := allocator_allocate_multiple(@size 16, @align 16, @count 0);
   TEST_ASSERT(first??);
   TEST_ASSERT(second??);
   TEST_ASSERT(first != second);
-  allocator_deallocate_multiple(@size 1, @align 1, @ptr first, @count 0);
-  allocator_deallocate_multiple(@size 1, @align 1, @ptr second, @count 0);
-  VAR reused ADDRESS := allocator_allocate_multiple(@size 1, @align 1, @count 0);
+  TEST_ASSERT(first % 16 == 0);
+  TEST_ASSERT(second % 16 == 0);
+  allocator_deallocate_multiple(@size 16, @align 16, @ptr first, @count 0);
+  allocator_deallocate_multiple(@size 16, @align 16, @ptr second, @count 0);
+  VAR reused ADDRESS := allocator_allocate_multiple(@size 16, @align 16, @count 0);
   TEST_ASSERT(reused == second);
-  allocator_deallocate_multiple(@size 1, @align 1, @ptr reused, @count 0);
+  allocator_deallocate_multiple(@size 16, @align 16, @ptr reused, @count 0);
   allocator_release_all_thread_caches();
 }
 

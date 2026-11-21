@@ -223,11 +223,12 @@ PRIVATE(MODULE)
   ::request_async_stop INCLUDE_IF(OS_WINDOWS)
     FUNCTION(
       @control MUT->async_context_control,
-      @worker_count SZ
+      @worker_count SZ,
+      @posted MUT& SZ
     )
   {
     VAR null_overlapped MUT->syscall::windows::overlapped;
-    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(worker_count) DO
+    LOOP WHILE(posted < worker_count) DO
     {
       IF (syscall::windows::post_queued_completion_status(
         @completion_port control->.windows.completion_port,
@@ -238,6 +239,7 @@ PRIVATE(MODULE)
       {
         THROW async_error::worker_stop_failed;
       }
+      posted++;
     };
   }
 

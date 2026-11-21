@@ -77,4 +77,18 @@ LANGUAGE QUXLANG EN 0.0;
             TEST_ASSERT(SAME_TYPES(TYPEOF(handle.read()), I32));
         }
     }
+
+    ::typed_contract TEMPLATE(@T TYPE AUTO) GENERIC_REF
+    {
+        .read FUNCTION() CONST: T;
+    }
+    ::integer_contract GENERIC_REF { IMPLEMENTS typed_contract#I32; }
+
+    ::instantiated_signature DUAL_TEST
+    {
+        VAR source origin::service;
+        VAR handle integer_contract := source;
+        TEST_ASSERT(handle.read() == 7);
+        TEST_ASSERT(SAME_TYPES(TYPEOF(handle.read()), I32));
+    }
 }

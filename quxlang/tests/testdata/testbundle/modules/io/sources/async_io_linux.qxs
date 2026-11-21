@@ -536,11 +536,12 @@ PRIVATE(MODULE)
   ::request_async_stop INCLUDE_IF(OS_LINUX && linux_use_io_uring)
     FUNCTION(
       @control MUT->async_context_control,
-      @worker_count SZ
+      @worker_count SZ,
+      @posted MUT& SZ
     )
   {
     VAR state MUT& linux_async_context_state := control->.linux;
-    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(worker_count) DO
+    LOOP WHILE(posted < worker_count) DO
     {
       VAR entry syscall::linux::io_uring_submission_entry;
       entry.opcode := 0;
@@ -548,6 +549,7 @@ PRIVATE(MODULE)
       {
         THROW async_error::worker_stop_failed;
       }
+      posted++;
     };
   }
 

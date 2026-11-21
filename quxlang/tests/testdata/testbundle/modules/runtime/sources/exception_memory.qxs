@@ -15,9 +15,17 @@ DOC <$ Allocates exception storage without recursively throwing on allocation fa
     }
     STATIC_ELSE
     {
-      VAR address ADDRESS := allocator_allocate_static#(@size SIZEOF(T), @align ALIGNOF(T))();
-      IF (address!?) { VAR empty MUT->TYPED_STORAGE(T); RETURN empty; }
-      RETURN BEGIN_ALLOC_REGION address TO MUT->TYPED_STORAGE(T);
+      STATIC_IF(ALIGNOF(T) > allocator_page_size)
+      {
+        VAR empty MUT->TYPED_STORAGE(T);
+        RETURN empty;
+      }
+      STATIC_ELSE
+      {
+        VAR address ADDRESS := allocator_allocate_static#(@size SIZEOF(T), @align ALIGNOF(T))();
+        IF (address!?) { VAR empty MUT->TYPED_STORAGE(T); RETURN empty; }
+        RETURN BEGIN_ALLOC_REGION address TO MUT->TYPED_STORAGE(T);
+      }
     }
   }
 }

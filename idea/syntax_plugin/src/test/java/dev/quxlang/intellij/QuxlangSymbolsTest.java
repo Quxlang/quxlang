@@ -181,6 +181,8 @@ final class QuxlangSymbolsTest {
         assertUnresolved("::run FUNCTION() { LOOP VALUE(value) FROM(0) UNTIL(2) DO {} RETURN <r>value; }");
         assertResolution("::run FUNCTION() { LOOP ITER(cursor) INDEX(index) ITEM(<d>item) IN(items) DO { RETURN <r>item; } }", LOCAL);
         assertResolution("::run FUNCTION() { LOOP ITER(<d>cursor) INIT { prepare(); } START(0) STEP { advance(<r>cursor); } DO {} }", LOCAL);
+        assertResolution("::value VAR I32; ::run FUNCTION() { LOOP VALUE(<d>value I32) FROM(0) UNTIL(2) DO { RETURN <r>value; } }", LOCAL);
+        assertResolution("::<d>item STRUCT {} ::run FUNCTION() { LOOP ITEM(item CONST& <r>item) IN(items) DO {} }", TYPE);
     }
 
     @Test void unfinishedSyntaxIsTolerated() {

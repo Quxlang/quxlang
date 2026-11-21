@@ -100,6 +100,8 @@ LANGUAGE QUXLANG EN 0.0;
     .value VAR I32;
     .OPERATOR+ FUNCTION(@OTHER I32) CONST: I32 { RETURN .value + OTHER; }
     .OPERATOR+ COROUTINE(@OTHER I32) CONST: I32 { RETURN .value + OTHER + 1; }
+    .read FUNCTION(@value I32) CONST: I32 { RETURN .value + value; }
+    .read COROUTINE(@value I32) CONST: I32 { RETURN .value + value + 1; }
   }
   ::operator_call COROUTINE(@source CONST& arithmetic, @result MUT& I32)
   {
@@ -118,6 +120,28 @@ LANGUAGE QUXLANG EN 0.0;
     frame.INITIALIZE(@source source, @result result);
     TEST_ASSERT(frame.RESUME(@CONTROLLER driver));
     TEST_ASSERT(result == 8);
+    TEST_ASSERT(observed.calls == 1);
+    TEST_ASSERT(driver.functum_calls == 1);
+  }
+
+  ::member_call COROUTINE(@source CONST& arithmetic, @result MUT& I32)
+  {
+    result := source.read(@value 7);
+  }
+
+  DOC <$ A forwarded member coroutine receives the original bound object. $>
+  ::forwarded_member_receiver DUAL_TEST
+  {
+    VAR observed coroutine_call_tests::observations;
+    VAR driver coroutine_controller;
+    driver.observed := observed<-;
+    VAR source arithmetic;
+    source.value := 34;
+    VAR result I32;
+    VAR frame member_call#(@source CONST& arithmetic, @result MUT& I32, @CONTROLLER coroutine_controller)::FRAME_TYPE;
+    frame.INITIALIZE(@source source, @result result);
+    TEST_ASSERT(frame.RESUME(@CONTROLLER driver));
+    TEST_ASSERT(result == 42);
     TEST_ASSERT(observed.calls == 1);
     TEST_ASSERT(driver.functum_calls == 1);
   }

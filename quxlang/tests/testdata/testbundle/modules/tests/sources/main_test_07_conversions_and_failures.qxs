@@ -151,6 +151,16 @@ DOC <$ Uses a defaulted ARG parameter during explicit conversion fallback. $>
     }
 }
 
+::constructor_other_default STRUCT
+{
+    .value VAR I32;
+
+    .CONSTRUCTOR FUNCTION(@ARG:source I32, @OTHER:offset I32 DEFAULT(2))
+    {
+        .value := source + offset;
+    }
+}
+
 DOC <$ Constructor calls prefer ARG, then EXPLICIT, then OTHER; casts select conversion categories. $>
 ::constructor_argument_conversion DUAL_TEST
 {
@@ -171,6 +181,8 @@ DOC <$ Constructor calls prefer ARG, then EXPLICIT, then OTHER; casts select con
     TEST_ASSERT(defaulted.value == 7);
     AUTO defaulted_argument := constructor_argument_defaults(source);
     TEST_ASSERT(defaulted_argument.value == 7);
+    AUTO defaulted_other := constructor_other_default(source);
+    TEST_ASSERT(defaulted_other.value == 9);
     AUTO direct := constructor_argument_only(source);
     AUTO arg_preferred := constructor_argument_choice(source);
     AUTO arg_named := constructor_argument_choice(@ARG source);

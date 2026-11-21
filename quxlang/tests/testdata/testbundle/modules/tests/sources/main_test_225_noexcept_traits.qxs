@@ -28,6 +28,12 @@ LANGUAGE QUXLANG EN 0.0;
   ::immovable STRUCT ROOTED {}
   ::contains_immovable STRUCT { .value VAR immovable; }
 
+  ::raise FUNCTION(): I32 { THROW I32(@OTHER 42); }
+  ::throwing_default STRUCT
+  {
+    .OPERATOR<-> FUNCTION(@OTHER MUT& THISTYPE, @check I32 DEFAULT(raise())) NOEXCEPT {}
+  }
+
   ::lifecycle_contracts STATIC_TEST
   {
     TEST_ASSERT(IS_NOEXCEPT_MOVABLE(code));
@@ -48,6 +54,7 @@ LANGUAGE QUXLANG EN 0.0;
     TEST_ASSERT(IS_NOEXCEPT_MOVABLE(nonthrowing));
     TEST_ASSERT(IS_NOEXCEPT_COPYABLE(nonthrowing));
     TEST_ASSERT(IS_NOEXCEPT_SWAPPABLE(nonthrowing));
+    TEST_ASSERT(IS_NOEXCEPT_SWAPPABLE(throwing_default) == FALSE);
     TEST_ASSERT(IS_NOEXCEPT_MOVABLE(throwing) == FALSE);
     TEST_ASSERT(IS_NOEXCEPT_COPYABLE(throwing) == FALSE);
     TEST_ASSERT(IS_NOEXCEPT_SWAPPABLE(throwing) == FALSE);
@@ -78,6 +85,16 @@ LANGUAGE QUXLANG EN 0.0;
 
   ::exchange FUNCTION(@left MUT& AUTO(t), @right MUT& AUTO(t)) NOEXCEPT_IF(IS_NOEXCEPT_SWAPPABLE(t))
   { left <-> right; }
+
+  DOC <$ A throwing swap default propagates through a wrapper that uses the lifecycle trait. $>
+  ::default_argument_exception INCLUDE_IF(ARCH_IS_LAYOUTLESS == FALSE) DUAL_TEST
+  {
+    VAR left throwing_default;
+    VAR right throwing_default;
+    TRY { exchange(@left left, @right right); }
+    CATCH error CONST& I32 { TEST_ASSERT(error == 42); RETURN; }
+    TEST_ASSERT(FALSE);
+  }
 
   ::constant FUNCTION() NOEXCEPT_IF(TRUE): I32 { RETURN 7; }
   ::propagate FUNCTION() NOEXCEPT_IF(FALSE) { THROW I32(@OTHER 42); }

@@ -343,9 +343,9 @@ LABEL static_linux_x86_set_thread_area_done;
   }
 }
 
-DOC <$ Allocates and initializes one independent PT_TLS image. $>
-::static_linux_tls_allocate INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC)
-  FUNCTION(@result MUT& static_linux_tls_block)
+DOC <$ Allocates and initializes one independent PT_TLS image. Returns false if the mapping fails. $>
+::static_linux_try_allocate_tls INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC)
+  FUNCTION(@result MUT& static_linux_tls_block): BOOL
 {
   ASSERT(static_linux_tls_file_size <= static_linux_tls_memory_size,
     "PT_TLS file size exceeds its memory size.");
@@ -382,7 +382,7 @@ DOC <$ Allocates and initializes one independent PT_TLS image. $>
   );
   IF ((mapping_address??) == FALSE)
   {
-    PANIC "Static Linux failed to allocate a TLS mapping.";
+    RETURN FALSE;
   }
   VAR null_address ADDRESS;
   VAR mapping_numeric_address SZ := mapping_address - null_address;
@@ -426,6 +426,7 @@ DOC <$ Allocates and initializes one independent PT_TLS image. $>
   {
     PLACE AT(result.layout_storage[template_offset + index]) BYTE;
   };
+  RETURN TRUE;
 }
 
 DOC <$ Releases one PT_TLS backing mapping after its thread has exited. $>
@@ -444,9 +445,9 @@ DOC <$ Releases one PT_TLS backing mapping after its thread has exited. $>
   block.thread_pointer := empty_storage;
 }
 
-DOC <$ Allocates a 2 MiB downward-growing stack behind one inaccessible guard page. $>
-::static_linux_stack_allocate INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC)
-  FUNCTION(@result MUT& static_linux_mapping)
+DOC <$ Allocates a 2 MiB downward-growing stack behind one guard page. Returns false if mapping or protection fails. $>
+::static_linux_try_allocate_stack INCLUDE_IF(OS_LINUX && ENVIRONMENT_IS_STATIC)
+  FUNCTION(@result MUT& static_linux_mapping): BOOL
 {
   VAR page_size SZ := linux_auxiliary_page_size;
   ASSERT(page_size > 0, "AT_PAGESZ is unavailable for static Linux thread creation.");
@@ -457,7 +458,7 @@ DOC <$ Allocates a 2 MiB downward-growing stack behind one inaccessible guard pa
   VAR address ADDRESS := syscall::linux::mmap_anonymous_private(@size mapping_size);
   IF ((address??) == FALSE)
   {
-    PANIC "Static Linux failed to allocate a thread stack.";
+    RETURN FALSE;
   }
   IF (syscall::linux::mprotect(
     @addr address,
@@ -466,11 +467,12 @@ DOC <$ Allocates a 2 MiB downward-growing stack behind one inaccessible guard pa
   ) != 0)
   {
     syscall::linux::munmap(@addr address, @len mapping_size);
-    PANIC "Static Linux failed to protect a thread stack guard page.";
+    RETURN FALSE;
   }
 
   result.storage := IBC_PUN#(MUT=>>TYPED_STORAGE(BYTE))(@ADDR address);
   result.size := mapping_size;
+  RETURN TRUE;
 }
 
 DOC <$ Unmaps one static-Linux backing mapping. $>
@@ -531,7 +533,8 @@ DOC <$ Installs the initial thread's PT_TLS image when no hosted loader provides
   {
     static_linux_tls_locate();
     VAR block static_linux_tls_block;
-    static_linux_tls_allocate(@result block);
+    IF (static_linux_try_allocate_tls(@result block) == FALSE)
+    { PANIC "Static Linux failed to allocate a TLS mapping."; }
     VAR status I32 := 0;
     STATIC_IF(ARCH_IS_X64)
     {

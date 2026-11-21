@@ -21,7 +21,7 @@ if(PLATFORM STREQUAL "macos" OR PLATFORM STREQUAL "linux")
     string(APPEND outputs "  copy: {target: native, type: benchmark_executable, build_type: Release, main_module: benchmark_files, benchmark: '::copy'}\n")
 endif()
 file(WRITE "${WORK_DIR}/bundle/qxcbuild.yml" "${target}${outputs}")
-execute_process(COMMAND "${QXC}" "${WORK_DIR}/bundle" "${WORK_DIR}/compiled" native
+execute_process(COMMAND "${QXC}" build "${WORK_DIR}/bundle" "${WORK_DIR}/compiled" native
     RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 600)
 file(WRITE "${WORK_DIR}/compile.log" "${output}${errors}")
 if(NOT status EQUAL 0)
@@ -40,8 +40,8 @@ if(NOT status EQUAL 0)
     message(FATAL_ERROR "Benchmark suite failed: ${errors}\n${results}")
 endif()
 string(JSON channels LENGTH "${results}")
-if(NOT channels EQUAL 10)
-    message(FATAL_ERROR "Expected ten expanded measurement channels: ${results}")
+if(NOT channels EQUAL 13)
+    message(FATAL_ERROR "Expected thirteen expanded measurement channels: ${results}")
 endif()
 math(EXPR last "${channels} - 1")
 foreach(index RANGE 0 ${last})
@@ -62,6 +62,8 @@ foreach(index RANGE 0 ${last})
         set(expected 7)
     elseif(name MATCHES "lifetimes$")
         set(expected 6)
+    elseif(name MATCHES "::coroutine_benchmarks::")
+        set(expected 512)
     endif()
     if(measurement STREQUAL "unused")
         set(expected 0)
@@ -128,8 +130,11 @@ message(STATUS "Benchmark execution, measurement counts, CLI loading, and file o
 # A deterministic runtime clock isolates measurement accounting from host timing.
 set(clock_file "${WORK_DIR}/bundle/modules/runtime/sources/benchmark_clock.qxs")
 file(READ "${clock_file}" clock_source)
-string(FIND "${clock_source}" "::BENCHMARK_CLOCK DOC" clock_begin)
-string(FIND "${clock_source}" "::BENCHMARK_OPERATION_COUNT DOC" clock_end)
+string(FIND "${clock_source}" "DOC <$ The clock returns a target monotonic timestamp in nanoseconds. $>\n::BENCHMARK_CLOCK " clock_begin)
+string(FIND "${clock_source}" "DOC <$ Converts and validates one measurement operation count before timing starts. $>\n::BENCHMARK_OPERATION_COUNT " clock_end)
+if(clock_begin LESS 0 OR clock_end LESS_EQUAL clock_begin)
+    message(FATAL_ERROR "Could not locate the benchmark clock declarations")
+endif()
 string(SUBSTRING "${clock_source}" 0 ${clock_begin} clock_prefix)
 string(SUBSTRING "${clock_source}" ${clock_end} -1 clock_suffix)
 file(WRITE "${clock_file}" "${clock_prefix}::benchmark_test_ticks VAR U64;\n::BENCHMARK_CLOCK FUNCTION(): U64 { benchmark_test_ticks += 10; RETURN benchmark_test_ticks; }\n${clock_suffix}")
@@ -138,7 +143,7 @@ string(REPLACE "    counter++;" "    counter++; RUNTIME_MODULE::BENCHMARK_CLOCK(
 string(REPLACE ".counter-> := .counter-> - 1;" ".counter-> := .counter-> - 1; RUNTIME_MODULE::BENCHMARK_CLOCK();" lifetime_source "${lifetime_source}")
 file(WRITE "${WORK_DIR}/bundle/modules/benchmarks/sources/benchmarks.qxs" "${lifetime_source}")
 file(WRITE "${WORK_DIR}/bundle/qxcbuild.yml" "${target}outputs:\n  suite: {target: native, type: benchmark_suite, build_type: Release}\n")
-execute_process(COMMAND "${QXC}" "${WORK_DIR}/bundle" "${WORK_DIR}/controlled" native
+execute_process(COMMAND "${QXC}" build "${WORK_DIR}/bundle" "${WORK_DIR}/controlled" native
     RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 600)
 file(WRITE "${WORK_DIR}/controlled-compile.log" "${output}${errors}")
 if(NOT status EQUAL 0)
@@ -154,7 +159,7 @@ foreach(index RANGE 0 ${last})
     string(JSON measurement GET "${results}" ${index} measurement)
     string(JSON elapsed GET "${results}" ${index} samples 0 elapsed_ns)
     set(expected 10)
-    if(name MATCHES "insert_delete/|repeated_channel$|lifetimes$")
+    if(name MATCHES "insert_delete/|repeated_channel$|lifetimes$|::coroutine_benchmarks::")
         set(expected 20)
     endif()
     if(name MATCHES "lifetimes$")
@@ -190,7 +195,7 @@ function(reject_benchmark label declaration kind expected)
         endif()
     endif()
     file(WRITE "${WORK_DIR}/bundle/qxcbuild.yml" "${probe_target}outputs:\n  probe: {target: native, type: ${kind}, build_type: Release${selection}}\n")
-    execute_process(COMMAND "${QXC}" "${WORK_DIR}/bundle" "${WORK_DIR}/rejected-${label}" native
+    execute_process(COMMAND "${QXC}" build "${WORK_DIR}/bundle" "${WORK_DIR}/rejected-${label}" native
         RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 120)
     file(WRITE "${WORK_DIR}/${label}.log" "${output}${errors}")
     if(status EQUAL 0 OR NOT errors MATCHES "${expected}")
@@ -217,6 +222,7 @@ reject_benchmark(break_after_inner "::probe BENCHMARK() BODY { BENCHMARK_LOOP { 
 reject_benchmark(continue_after_inner "::probe BENCHMARK() BODY { BENCHMARK_LOOP { MEASURE { LOOP DO { BREAK; } CONTINUE; } } }" benchmark_suite "control flow")
 reject_benchmark(break_after_static_loop "::probe BENCHMARK() BODY { BENCHMARK_LOOP { STATIC_WHILE(FALSE) {} MEASURE {} BREAK; } }" benchmark_suite "control flow")
 reject_benchmark(continue_after_static_loop "::probe BENCHMARK() BODY { BENCHMARK_LOOP { MEASURE { STATIC_WHILE(FALSE) {} CONTINUE; } } }" benchmark_suite "control flow")
+reject_benchmark(escape_from_static_loop "::probe BENCHMARK() BODY { BENCHMARK_LOOP { MEASURE { STATIC_VAR count SZ := 0; STATIC_WHILE(count == 0) { STATIC_EVAL count++; BREAK; } } } }" benchmark_suite "control flow")
 reject_benchmark(exit_measurement "::probe BENCHMARK() BODY { BENCHMARK_LOOP { LOOP DO { MEASURE { BREAK; } } } }" benchmark_suite "control flow")
 reject_benchmark(invocation_selection "::probe BENCHMARK() ONESHOT {}" benchmark_executable "without invocation syntax" "::probe#()")
 reject_benchmark(nested_invocation_selection "::probe BENCHMARK() ONESHOT {}" benchmark_executable "without invocation syntax" "::probe#()::other")
@@ -231,7 +237,7 @@ file(WRITE "${WORK_DIR}/bundle/modules/probe/sources/probe.qxs" [=[LANGUAGE QUXL
 }
 ]=])
 file(WRITE "${WORK_DIR}/bundle/qxcbuild.yml" "${probe_target}outputs:\n  probe: {target: native, type: benchmark_executable, build_type: Release, benchmark: '::probe'}\n")
-execute_process(COMMAND "${QXC}" "${WORK_DIR}/bundle" "${WORK_DIR}/floating" native
+execute_process(COMMAND "${QXC}" build "${WORK_DIR}/bundle" "${WORK_DIR}/floating" native
     RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 120)
 if(NOT status EQUAL 0)
     message(FATAL_ERROR "Floating-point fixture failed to compile: ${errors}")
@@ -258,7 +264,7 @@ file(WRITE "${WORK_DIR}/bundle/modules/probe/sources/probe.qxs" [=[LANGUAGE QUXL
 }
 ]=])
 file(WRITE "${WORK_DIR}/bundle/qxcbuild.yml" "${probe_target}outputs:\n  probe: {target: native, type: benchmark_suite, build_type: Release}\n")
-execute_process(COMMAND "${QXC}" "${WORK_DIR}/bundle" "${WORK_DIR}/exception" native
+execute_process(COMMAND "${QXC}" build "${WORK_DIR}/bundle" "${WORK_DIR}/exception" native
     RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 120)
 if(NOT status EQUAL 0)
     message(FATAL_ERROR "Exception fixture failed to compile: ${errors}")
@@ -294,7 +300,7 @@ IMPORT std;
 }
 ]=])
 file(WRITE "${WORK_DIR}/bundle/qxcbuild.yml" "${probe_target}outputs:\n  probe: {target: native, type: benchmark_executable, build_type: Release, benchmark: '::probe'}\n")
-execute_process(COMMAND "${QXC}" "${WORK_DIR}/bundle" "${WORK_DIR}/parser-exception" native
+execute_process(COMMAND "${QXC}" build "${WORK_DIR}/bundle" "${WORK_DIR}/parser-exception" native
     RESULT_VARIABLE status OUTPUT_VARIABLE output ERROR_VARIABLE errors TIMEOUT 120)
 if(NOT status EQUAL 0)
     message(FATAL_ERROR "Parser exception fixture failed to compile: ${errors}")

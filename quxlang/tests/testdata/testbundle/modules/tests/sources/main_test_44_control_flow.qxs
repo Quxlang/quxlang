@@ -281,6 +281,13 @@ LANGUAGE QUXLANG EN 0.0;
     };
     TEST_ASSERT(count == 3);
     TEST_ASSERT(sum == 5);
+
+    VAR floating_sum F64;
+    LOOP VALUE(value F64) FROM(1.0 AS F64) UNTIL(4.0 AS F64) DO
+    {
+      floating_sum += value;
+    }
+    TEST_ASSERT(floating_sum == 6.0);
   }
 
   DOC <$ Records one RETURN_UNEQUAL operand evaluation. $>

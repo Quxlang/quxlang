@@ -97,7 +97,7 @@ PRIVATE(MODULE) ::allocation_region_backing_reuse_test INCLUDE_IF(ARCH_IS_LAYOUT
 
 DOC <$
     An extent records its complete inventory at creation, restores that inventory
-    when its final issued region is returned, and joins a list of reusable extents.
+    when its final issued region is returned and the pool retains the mapping.
     $>
 PRIVATE(MODULE) ::allocation_region_extent_lifetime_test INCLUDE_IF(ARCH_IS_LAYOUTLESS == FALSE) UNIT_TEST
 {
@@ -129,15 +129,22 @@ PRIVATE(MODULE) ::allocation_region_extent_lifetime_test INCLUDE_IF(ARCH_IS_LAYO
   }
   VAR region MUT->layer3_region := layer4_region_acquire();
   TEST_ASSERT(region??);
-  VAR owner MUT->layer4_backing_extent := region->.backing;
   layer4_region_release(@region region);
   layer4_region_backing.mtx.lock();
-  VAR list layer4_extent_membership := owner->.list;
-  VAR issued SZ := owner->.issued;
-  VAR complete BOOL := issued > 0 || (owner->.unissued == owner->.region_count && owner->.next == owner->.first);
+  VAR idle [2]MUT->layer4_backing_extent;
+  idle[0] := layer4_region_backing.retained.newest;
+  idle[1] := layer4_region_backing.purged.newest;
+  VAR inventory_complete BOOL := TRUE;
+  LOOP VALUE(extent) IN(idle) DO
+  {
+    IF (extent??)
+    {
+      inventory_complete := inventory_complete && extent->.issued == 0 &&
+        extent->.unissued == extent->.region_count && extent->.next == extent->.first;
+    }
+  }
   layer4_region_backing.mtx.unlock();
-  TEST_ASSERT(list != layer4_extent_membership::unlisted);
-  TEST_ASSERT(complete);
+  TEST_ASSERT(inventory_complete);
 }
 
 DOC <$ An unordered region group returns every bitmap slot except a held allocation. $>

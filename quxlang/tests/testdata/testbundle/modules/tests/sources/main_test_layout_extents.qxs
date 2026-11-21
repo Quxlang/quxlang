@@ -89,4 +89,9 @@ LANGUAGE QUXLANG EN 0.0;
     TEST_ASSERT(SIZEOF(aligned_boundary) == (((0 AS SZ) #!!) - 7));
     TEST_ASSERT(SIZEOF(maximum_payload) == ((0 AS SZ) #!!));
   }
+
+  ::large_float_width STATIC_TEST
+  {
+    TEST_ASSERT(SIZEOF(F4294967296E8) == 536870912);
+  }
 }

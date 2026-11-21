@@ -350,7 +350,9 @@ An unavailable operation returns `FALSE`. These traits describe construction
 and swap; assignment has a separate operation contract.
 
 A user-defined operation returns `TRUE` when its declaration specifies
-`NOEXCEPT` or an applicable `NOEXCEPT_IF(TRUE)`. An unannotated user function
+`NOEXCEPT` or an applicable `NOEXCEPT_IF(TRUE)` and the operands bind directly.
+Operations that require default arguments or potentially throwing argument
+adaptations return `FALSE`. An unannotated user function
 returns `FALSE`, including a function with an empty body. Generated operations
 are inspected through their generated routines, including calls to member and
 base operations. Indirect calls and allocation paths without a proven

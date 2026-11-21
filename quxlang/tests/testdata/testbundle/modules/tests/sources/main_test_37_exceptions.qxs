@@ -334,6 +334,35 @@ LANGUAGE QUXLANG EN 0.0;
     CATCH DEFAULT {}
   }
 
+  ::potentially_throwing_member STRUCT
+  {
+    .observed VAR MUT->BOOL;
+    .DESTRUCTOR FUNCTION() NOEXCEPT_IF(FALSE) { .observed-> := TRUE; }
+  }
+  ::potentially_throwing_owner STRUCT { .member VAR potentially_throwing_member; }
+
+  DOC <$ The implicit enclosing destructor destroys fields with a potentially throwing destructor. $>
+  ::potentially_throwing_member_cleanup INCLUDE_IF(ARCH_IS_LAYOUTLESS == FALSE) UNIT_TEST
+  {
+    VAR observed BOOL;
+    {
+      VAR owner potentially_throwing_owner;
+      owner.member.observed := observed<-;
+    }
+    TEST_ASSERT(observed);
+  }
+
+  ::overaligned_exception STRUCT ALIGN(8192) {}
+
+  DOC <$ Unsupported exception storage alignment raises the allocation-failure sentinel. $>
+  ::overaligned_exception_storage INCLUDE_IF(ARCH_IS_LAYOUTLESS == FALSE) UNIT_TEST
+  {
+    VAR caught BOOL;
+    TRY { THROW overaligned_exception(); }
+    CATCH UNWIND_OUT_OF_MEMORY { caught := TRUE; }
+    TEST_ASSERT(caught);
+  }
+
   ::catching_destructor STRUCT
   {
     .observed VAR MUT->BOOL;

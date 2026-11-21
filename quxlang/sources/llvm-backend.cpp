@@ -5750,9 +5750,9 @@ namespace quxlang::llvm_backend::detail
                 arguments = ordered_call_arguments(state, ir_builder, abi, args);
             }
             quxlang::vmir2::state_map saved_state = state.current_state;
-            state.current_state[slot].stage = quxlang::vmir2::slot_stage::dead;
+            state.current_state[slot].destruction_started = true;
             llvm::BasicBlock* continuation = ir_builder.GetInsertBlock();
-            emit_unwindable_call(state, continuation, abi, callee, std::move(arguments), args);
+            emit_unwindable_call(state, continuation, abi, callee, std::move(arguments), {}, false);
             state.current_state = std::move(saved_state);
             if (enclosing_group != nullptr)
             {
@@ -5803,7 +5803,7 @@ namespace quxlang::llvm_backend::detail
                     poison_slot_storage(state, ir_builder, action.slot);
                     break;
                 }
-                state.current_state[action.slot].stage = quxlang::vmir2::slot_stage::dead;
+                state.current_state[action.slot] = quxlang::vmir2::slot_state{};
             }
             state.current_state = std::move(saved_state);
         }

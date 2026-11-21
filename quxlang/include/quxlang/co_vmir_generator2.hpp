@@ -1005,7 +1005,8 @@ namespace quxlang
         auto static_name_info(static_local_ref const& symbol) const -> published_name
         {
             codegen_static const& value = state.statics.at(symbol);
-            publish_static_var object{.symbol = symbol, .object = constexpr_static{.type = value.type, .value = value.value, .mutation_result_id = value.mutation_result_id}};
+            publish_static_var object{.symbol = symbol, .object = constexpr_static{
+                .type = value.type, .value = value.value, .mutation_result_id = value.mutation_result_id, .minimum_alignment = value.minimum_alignment}};
             if (value.mutation_result_id.has_value()) return object;
             return publish_static{.binding = std::move(object)};
         }
@@ -2210,6 +2211,10 @@ namespace quxlang
             {
                 std::string const& name = call_symbol.template get_as< submember >().name;
                 lifecycle = keywords::is_constructor_name(name) || name == "DESTRUCTOR" || name == "FULLOBJECT_DESTRUCTOR" || name == "SUBOBJECT_DESTRUCTOR";
+                if (name == "CO_COROUTINE_CALL")
+                {
+                    forward_coroutine_receiver(bidx, args);
+                }
             }
             if (intercept_function_call && !lifecycle && state.coroutine.has_value() && !state.generating_controller_hook &&
                 execution_mode == call_execution_mode::ordinary)
@@ -2908,7 +2913,8 @@ namespace quxlang
             if (state.statics.contains(symbol)) co_return;
             constexpr_static object = co_await co_find_body_static< CoroutineBaseType >(body_context(), symbol);
             if (static_evaluation && !mutable_static_evaluation) object.mutation_result_id.reset();
-            state.statics.emplace(symbol, codegen_static{.type = object.type, .value = object.value, .mutation_result_id = object.mutation_result_id});
+            state.statics.emplace(symbol, codegen_static{
+                .type = object.type, .value = object.value, .mutation_result_id = object.mutation_result_id, .minimum_alignment = object.minimum_alignment});
             if (typeis< antestatal_value >(object.value)) co_await co_load_static_targets(constexpr_value_as_antestatal(object.value));
         }
 
@@ -4108,6 +4114,33 @@ namespace quxlang
             return value_index(state.genvalues.size() - 1);
         }
 
+        /** Converts a bound callable to the descriptor and receiver pack used by CO_COROUTINE_CALL. */
+        void forward_coroutine_receiver(block_index& block, codegen_invocation_args& arguments)
+        {
+            auto callable = arguments.named.find("COROUTINE");
+            auto packed = arguments.named.find("ARGUMENTS");
+            if (callable == arguments.named.end() || packed == arguments.named.end() ||
+                !state.genvalues.at(callable->second).template type_is< codegen_binding >() ||
+                !state.genvalues.at(packed->second).template type_is< codegen_field_pack >())
+            {
+                return;
+            }
+            codegen_binding binding = state.genvalues.at(callable->second).template get_as< codegen_binding >();
+            if (binding.bound_value == value_index(0))
+            {
+                return;
+            }
+
+            codegen_field_pack pack = field_pack(block, packed->second);
+            if (!pack.schema.fields.emplace("RECEIVER", current_type(block, binding.bound_value)).second)
+            {
+                throw semantic_compilation_error("CO_COROUTINE_CALL cannot accept both a bound receiver and a RECEIVER argument");
+            }
+            pack.fields.named.emplace("RECEIVER", binding.bound_value);
+            callable->second = create_binding(value_index(0), std::move(binding.attached_symbol));
+            packed->second = create_field_pack(block, std::move(pack.schema), std::move(pack.fields));
+        }
+
         /** Requires an available pack binding and copies its compile-time field map. */
         codegen_field_pack field_pack(block_index block, value_index value)
         {
@@ -4537,7 +4570,17 @@ namespace quxlang
         /** Reflects canonical user and builtin overload ordinals without deduplicating their signatures. */
         auto co_generate(block_index& block, expression_functum_overload const& expr) -> co_type< value_index >
         {
-            type_symbol callable = co_await co_resolve_type_symbol(block, expr.callable);
+            std::optional< type_symbol > local_callable;
+            if (expr.callable.template type_is< freebound_identifier >())
+            {
+                std::optional< value_index > local = local_value_direct_lookup(block, expr.callable.template get_as< freebound_identifier >().name);
+                if (local.has_value() && state.genvalues.at(*local).template type_is< codegen_binding >())
+                {
+                    codegen_binding const& binding = state.genvalues.at(*local).template get_as< codegen_binding >();
+                    if (binding.bound_value != value_index(0)) local_callable = binding.attached_symbol;
+                }
+            }
+            type_symbol callable = local_callable.has_value() ? std::move(*local_callable) : co_await co_resolve_type_symbol(block, expr.callable);
             if (callable.template type_is< attached_type_reference >()) callable = callable.template get_as< attached_type_reference >().attached_symbol;
             if ((co_await rpnx::querygraph::request< symbol_type_query >(callable)) != symbol_kind::functum)
                 throw semantic_compilation_error("Overload reflection requires a functum binding");
@@ -12411,16 +12454,9 @@ namespace quxlang
 
             auto end_input = co_await co_generate_expr(current_block, st.to_expr.has_value() ? *st.to_expr : *st.until_expr);
             auto end_value = co_await co_gen_construct_with_target_type(current_block, end_input, sequence_type, allowed_adaptations::source_rebinding);
-            value_index by_value;
-            if (st.by_expr.has_value())
-            {
-                auto by_input = co_await co_generate_expr(current_block, *st.by_expr);
-                by_value = co_await co_gen_construct_with_target_type(current_block, by_input, sequence_type, allowed_adaptations::source_rebinding);
-            }
-            else
-            {
-                by_value = this->create_small_uint_value(current_block, 1, sequence_type);
-            }
+            expression by_expression = st.by_expr.value_or(expression_numeric_literal{.value = "1"});
+            value_index by_input = co_await co_generate_expr(current_block, by_expression);
+            value_index by_value = co_await co_gen_construct_with_target_type(current_block, by_input, sequence_type, allowed_adaptations::source_rebinding);
 
             block_index condition_block = this->generate_subblock(current_block, "loop_sequence_condition");
             std::optional< block_index > filter_block;
@@ -15077,6 +15113,7 @@ namespace quxlang
         /// Emits a small unsigned integer constant into a new local of the requested target type.
         auto create_small_uint_value(block_index& current_block, std::uint64_t value, type_symbol const& target_type) -> value_index
         {
+            assert(target_type.template type_is< int_type >() || target_type.template type_is< byte_type >());
             auto result = this->create_local_value(target_type);
             vmir2::load_const_int instr;
             instr.value = std::to_string(value);

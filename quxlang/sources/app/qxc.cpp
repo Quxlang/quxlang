@@ -44,8 +44,18 @@
 
 #include <rpnx/serialization4.hpp>
 
-// Defines the process-wide C++ allocation operators in this translation unit.
+#if defined(__clang__)
+#if __has_feature(address_sanitizer)
+#define QUXLANG_QXC_ADDRESS_SANITIZER
+#endif
+#elif defined(__SANITIZE_ADDRESS__)
+#define QUXLANG_QXC_ADDRESS_SANITIZER
+#endif
+
+// ASan supplies its own C++ allocation operators for heap tracking.
+#if !defined(QUXLANG_QXC_ADDRESS_SANITIZER)
 #include <mimalloc-new-delete.h>
+#endif
 
 #include <cstdint>
 #include <filesystem>

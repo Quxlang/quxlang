@@ -571,6 +571,8 @@ DOC <$
   {
     .workers VAR std::dynarr#std::thread;
     .context_control VAR MUT->async_context_control;
+    DOC <$ Counts accepted stop requests across attempts to join the pool. $>
+    .posted_stops VAR SZ;
   }
 
   DOC <$ Starts worker_count completion workers for context. Partial construction stops and joins every worker already started. $>
@@ -597,7 +599,7 @@ DOC <$
     {
       IF (.workers.size() > 0)
       {
-        request_async_stop(@control .context_control, @worker_count .workers.size());
+        request_async_stop(@control .context_control, @worker_count .workers.size(), @posted .posted_stops);
         LOOP VALUE(index) FROM(0 AS SZ) UNTIL(.workers.size()) DO { .workers[index].join(); };
       }
       .context_control->.drain_mutex.lock();
@@ -612,6 +614,7 @@ DOC <$
   {
     .workers <-> OTHER.workers;
     .context_control <-> OTHER.context_control;
+    .posted_stops <-> OTHER.posted_stops;
   }
 
   DOC <$ Drains callbacks and joins owned workers. $>
@@ -630,9 +633,10 @@ DOC <$
       .context_control->.drain_condition.wait(@locked_mutex .context_control->.drain_mutex);
     }
     .context_control->.drain_mutex.unlock();
-    request_async_stop(@control .context_control, @worker_count .workers.size());
+    request_async_stop(@control .context_control, @worker_count .workers.size(), @posted .posted_stops);
     LOOP VALUE(index) FROM(0 AS SZ) UNTIL(.workers.size()) DO { .workers[index].join(); };
     .workers.clear();
+    .posted_stops := 0;
     .context_control->.drain_mutex.lock();
     .context_control->.pool_attached := FALSE;
     .context_control->.drain_mutex.unlock();

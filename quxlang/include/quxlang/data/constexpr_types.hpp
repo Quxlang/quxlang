@@ -88,7 +88,10 @@ namespace quxlang
         /// Result ID used to return mutations, or nullopt when the static is read-only.
         std::optional< std::uint64_t > mutation_result_id;
 
-        RPNX_MEMBER_METADATA(constexpr_static, type, value, mutation_result_id);
+        /** Minimum byte alignment when the binding is materialized in native storage. */
+        std::uint64_t minimum_alignment = 1;
+
+        RPNX_MEMBER_METADATA(constexpr_static, type, value, mutation_result_id, minimum_alignment);
     };
 
     /// Result map returned by constexpr v3 evaluation.

@@ -31,7 +31,7 @@ fi
 mkdir -p "$output_dir"
 
 printf 'Compiling fusion native expected-failure executables...\n'
-"$qxc_path" "$input_dir" "$output_dir" linux-x64
+"$qxc_path" build "$input_dir" "$output_dir" linux-x64
 
 output_dir="$(cd -- "$output_dir" && pwd)"
 passed=0

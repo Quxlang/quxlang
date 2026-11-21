@@ -90,6 +90,12 @@ LANGUAGE QUXLANG EN 0.0;
     TEST_ASSERT((ADDRESS_LAUNDER_ESCAPE_ALLOC_REGION thread_value<-) % 64 == 0);
     TEST_ASSERT((ADDRESS_LAUNDER_ESCAPE_ALLOC_REGION constant_value<-) % 64 == 0);
     TEST_ASSERT((ADDRESS_LAUNDER_ESCAPE_ALLOC_REGION frozen<-) % 64 == 0);
+    STATIC captured I32 ALIGN(8192) := 37;
+    AUTO capture_alignment := -< :BOOL
+    {
+      RETURN (ADDRESS_LAUNDER_ESCAPE_ALLOC_REGION captured<-) % 8192 == 0;
+    };
+    TEST_ASSERT(capture_alignment());
     TEST_ASSERT((ADDRESS_LAUNDER_ESCAPE_ALLOC_REGION pointer) % 32 == 0);
     DELETE pointer;
   }
