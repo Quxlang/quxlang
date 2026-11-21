@@ -1,0 +1,50 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::measurement STRUCT
+{
+  .station VAR I32;
+  .level VAR I32;
+}
+
+::main FUNCTION(): I32
+{
+  VAR levels [7]I32 :[4, 9, 9, 2, 9, 9, 6];
+  VAR pattern [2]I32 :[9, 9];
+  AUTO positive := -< (@ARG:value I32): BOOL = value > 0;
+
+  std::printf#("all positive {all}, nines {nines}, above five {above}\n")(
+    @all std::all_of(@range levels, @predicate positive),
+    @nines std::count(@range levels, @value 9),
+    @above std::count_if(@range levels, @predicate -< (@ARG:value I32): BOOL = value > 5));
+
+  AUTO first_match := std::search(@range1 levels, @range2 pattern);
+  AUTO last_match := std::find_end(@range1 levels, @range2 pattern);
+  std::printf#("pattern begins at {first} and at {last}\n")(
+    @first first_match.BEGIN() - levels.BEGIN(), @last last_match.BEGIN() - levels.BEGIN());
+
+  AUTO extrema := std::minmax_element(@first levels.BEGIN(), @last levels.END());
+  std::printf#("minimum {minimum} at {minimum_index}, maximum {maximum} at {maximum_index}\n")(
+    @minimum extrema.min->, @minimum_index extrema.min - levels.BEGIN(),
+    @maximum extrema.max->, @maximum_index extrema.max - levels.BEGIN());
+
+  VAR total I32 := std::fold_left(@range levels, @initial (0 AS I32),
+    @operation -< (@accumulator I32, @value I32): I32 = accumulator + value);
+  std::printf#("total {total}\n")(@total total);
+
+  VAR measurements [3]measurement;
+  measurements[0].station := 31; measurements[0].level := 4;
+  measurements[1].station := 14; measurements[1].level := 9;
+  measurements[2].station := 27; measurements[2].level := 6;
+  AUTO level := -< (@ARG:item CONST& measurement): CONST& I32 = item.level;
+  AUTO found := std::find(@range measurements, @value 9, @projection level);
+  std::printf#("level 9 was reported by station {station}\n")(@station found->.station);
+
+  VAR prefix [3]I32 :[4, 9, 1];
+  AUTO difference := std::mismatch(@range1 levels, @range2 prefix);
+  std::printf#("first difference at {index}, prefix orders first {less}\n")(
+    @index difference.in1 - levels.BEGIN(),
+    @less std::lexicographical_compare(@range1 prefix, @range2 levels) == ORDER::LESS);
+  RETURN 0;
+}

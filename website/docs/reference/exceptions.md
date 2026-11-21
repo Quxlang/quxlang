@@ -44,7 +44,7 @@ A bare literal type, `VOID`, or an uninitialized/destroyed storage slot is not
 a throwable owned value. Give a literal a concrete type:
 
 ```quxlang
-TRY { THROW I32(@OTHER 42); }
+TRY { THROW 42 AS I32; }
 CATCH error CONST& I32 { ASSERT(error == 42); }
 ```
 

@@ -1,0 +1,61 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::conversion ALIAS CONST->PROCEDURE(@ARG I32: I32);
+
+::to_fahrenheit_tenths FUNCTION(@ARG:celsius_tenths I32): I32
+{
+  RETURN (celsius_tenths * 9 / 5) + 320;
+}
+
+::to_kelvin_tenths FUNCTION(@ARG:celsius_tenths I32): I32
+{
+  RETURN celsius_tenths + 2732;
+}
+
+::select_conversion FUNCTION(@ARG:use_kelvin BOOL): conversion
+{
+  IF (use_kelvin)
+  {
+    RETURN to_kelvin_tenths<-;
+  }
+  RETURN to_fahrenheit_tenths<-;
+}
+
+::for_each_reading FUNCTION(@readings MUT& [4]I32, @action AUTO(callable))
+{
+  LOOP ITEM(reading) IN(readings) DO
+  {
+    action(reading);
+  }
+}
+
+::print_converted FUNCTION(@label STRING_CONSTANT, @readings CONST& [4]I32, @convert conversion)
+{
+  std::print(label);
+  LOOP ITEM(reading) IN(readings) DO
+  {
+    std::printf#(" {converted}")(@converted convert(reading));
+  }
+  std::print("\n");
+}
+
+::main FUNCTION(): I32
+{
+  VAR readings [4]I32 :[215, 198, 240, 187];
+  VAR offset I32 := 3;
+  AUTO calibrate := -< [=offset] (@ARG:reading MUT& I32) { reading += offset; };
+  offset := 1000;
+  for_each_reading(@readings readings, @action calibrate);
+
+  VAR total I32 := 0;
+  for_each_reading(@readings readings, @action -< (@ARG:reading MUT& I32) { total += reading; });
+  std::printf#("calibrated total {total}\n")(@total total);
+
+  print_converted(@label "fahrenheit tenths:", @readings readings,
+    @convert select_conversion(FALSE));
+  print_converted(@label "kelvin tenths:", @readings readings,
+    @convert select_conversion(TRUE));
+  RETURN 0;
+}

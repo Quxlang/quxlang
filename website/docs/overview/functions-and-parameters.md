@@ -91,8 +91,8 @@ Member-function receiver qualifiers are covered on
 ## Capturing keyword arguments
 
 A final `@KWARGS ...` parameter collects unmatched named arguments into a
-[composite](composites.md#named-option-forwarding). The `APPLY` form passes that
-record to another callable. `COMPOSITE_*` reflection inspects optional fields.
+[pack](packs.md). The expansion `...FORWARD PACK(KWARGS)` transfers those
+arguments to another call without constructing an intermediate record.
 
 ## Reference
 

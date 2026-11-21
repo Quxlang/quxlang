@@ -4,12 +4,12 @@
 #define QUXLANG_MANIPULATORS_NUMERIC_LITERAL_UTILS_HEADER_GUARD
 
 #include <quxlang/data/basic_types.hpp>
+#include <quxlang/data/compilation_result.hpp>
 #include <quxlang/bytemath.hpp>
 #include <quxlang/fixed_bytemath.hpp>
 
 #include <algorithm>
 #include <cctype>
-#include <stdexcept>
 #include <string>
 
 namespace quxlang
@@ -34,11 +34,11 @@ namespace quxlang
         return !is_integer_literal(text) && !text.empty();
     }
 
-    // Parse a signed decimal literal string into a bytemath unlimited signed integer.
+    /** Parses a signed integer literal or raises a semantic compilation error. */
     inline bytemath::sle_int_unlimited literal_to_sle(std::string const& text)
     {
         if (!is_integer_literal(text))
-            throw std::invalid_argument("not an integer literal: " + text);
+            throw semantic_compilation_error("Expected an integer literal, got " + text);
 
         bool negative = false;
         std::string digits = text;
@@ -169,7 +169,7 @@ namespace quxlang
         auto a = literal_to_sle(lhs);
         auto b = literal_to_sle(rhs);
         if (bytemath::raw_is_zero(b.data))
-            throw std::invalid_argument("Division by zero in numeric literal");
+            throw semantic_compilation_error("Division by zero in numeric literal");
         return sle_to_literal(bytemath::le_signed_div(std::move(a), std::move(b)));
     }
 
@@ -178,7 +178,7 @@ namespace quxlang
         auto a = literal_to_sle(lhs);
         auto b = literal_to_sle(rhs);
         if (bytemath::raw_is_zero(b.data))
-            throw std::invalid_argument("Modulus by zero in numeric literal");
+            throw semantic_compilation_error("Modulus by zero in numeric literal");
         // remainder = a - (a / b) * b  (C-style truncated division)
         auto quotient = bytemath::le_signed_div(a, b);
         auto product = bytemath::le_signed_mult(b, quotient);

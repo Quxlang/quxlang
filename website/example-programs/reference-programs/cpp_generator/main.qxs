@@ -1,0 +1,53 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::generator STRUCT MOVE_ONLY
+{
+  ::promise_type STRUCT
+  {
+    .value VAR I32;
+    .get_return_object FUNCTION(@handle std::cpp_coroutine_handle#promise_type) MUT: generator
+    {
+      RETURN generator(handle);
+    }
+    .initial_suspend FUNCTION(): std::cpp_suspend_always { RETURN std::cpp_suspend_always(); }
+    .final_suspend FUNCTION() NOEXCEPT: std::cpp_suspend_always { RETURN std::cpp_suspend_always(); }
+    .return_void FUNCTION() {}
+    .yield_value FUNCTION(@value I32) MUT: std::cpp_suspend_always
+    {
+      .value := value;
+      RETURN std::cpp_suspend_always();
+    }
+    .unhandled_exception FUNCTION() { THROW_EXCEPTION_PTR(CURRENT_EXCEPTION()); }
+  }
+
+  .handle VAR std::cpp_coroutine_handle#promise_type;
+  .CONSTRUCTOR FUNCTION(@ARG:handle std::cpp_coroutine_handle#promise_type) { .handle := handle; }
+  .CONSTRUCTOR FUNCTION(@OTHER TEMP& generator) { .handle := OTHER.handle; OTHER.handle := NULL; }
+  .DESTRUCTOR FUNCTION() { IF (.handle??) { .handle.destroy(); } }
+}
+
+::squares COROUTINE(@ARG:count I32): generator
+{
+  VAR index I32 := 1;
+  LOOP WHILE (index <= count) DO
+  {
+    YIELD index * index;
+    index++;
+  }
+}
+
+::main FUNCTION(): I32
+{
+  VAR scheduler std::cpp_style_coroutine_base;
+  VAR sequence := ON(scheduler) RUN squares(3);
+  sequence.handle.resume();
+  LOOP WHILE (sequence.handle.done() == FALSE) DO
+  {
+    std::printf#("yielded {value}\n")(@value sequence.handle.promise().value);
+    sequence.handle.resume();
+  }
+  std::print("done\n");
+  RETURN 0;
+}

@@ -1,0 +1,35 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR standard_output io::file_ref := std::standard_output();
+
+  VAR header [14]BYTE :['m', 'e', 'a', 's', 'u', 'r', 'e', 'm', 'e', 'n', 't', 's', ':', '\n'];
+  VAR header_bytes io::buffer_ref :(@data header[&0], @size header.SIZE());
+  VAR transfer io::transfer_result;
+  standard_output.write(@buffer header_bytes, @result transfer);
+  IF (transfer.succeeded == FALSE || transfer.size != header.SIZE())
+  {
+    RETURN 1;
+  }
+
+  VAR offsets [3]I64 :[-40, 0, 125];
+  VAR writer std::buffered_writer :(@EXPLICIT standard_output);
+  LOOP VALUE(index) FROM(0 AS SZ) UNTIL(offsets.SIZE()) DO
+  {
+    writer.write("sample ");
+    writer.write_unsigned((index + 1) AS U64);
+    writer.write(": offset ");
+    writer.write_signed(offsets[index]);
+    writer.write(", scaled ");
+    writer.write_fixed(@value (offsets[index] AS APPROXIMATE F64) / 8.0, @precision 3);
+    writer.write_byte('\n');
+  }
+  writer.flush();
+
+  std::printf#("header bytes transferred directly: {size}\n")(@size transfer.size);
+  RETURN 0;
+}

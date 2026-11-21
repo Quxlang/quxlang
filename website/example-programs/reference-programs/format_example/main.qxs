@@ -1,0 +1,21 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR name std::string := "sensor";
+  VAR count I32 := 42;
+  VAR ratio F64 := 12.5;
+
+  std::print("plain text\n");
+  std::printf#("{} + {} = {}\n")(% [2, 3, 5]);
+  std::printf#("{1} follows {0}\n")(% ["first", "second"]);
+  std::printf#("{name}: {count} items, {{literal braces}}\n")(@name name, @count count);
+  std::printf#("{value:d} {value:b} {value:o} {value:x} {value:X}\n")(@value 255 AS U8);
+  std::printf#("{ratio} {ratio:.2f} {ratio:e} {ratio:.3E}\n")(@ratio ratio);
+
+  VAR line std::string := std::fmt#("{enabled}/{disabled}\n")(@enabled TRUE, @disabled FALSE);
+  std::print(line);
+  RETURN 0;
+}

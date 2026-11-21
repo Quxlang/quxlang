@@ -1,0 +1,4 @@
+read through an invalid reference: closed true
+zero backlog: invalid_argument true
+bind to an occupied endpoint: address_in_use true
+connect to a port without a listener: connection_refused true

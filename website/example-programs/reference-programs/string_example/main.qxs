@@ -1,0 +1,17 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR greeting std::string := "Hello, ";
+  VAR name std::string := "Quxlang";
+  VAR message std::string := greeting + name;
+  message.push_back(33);
+  std::print(message);
+  std::print("\n");
+  std::printf#("{size} bytes, first byte {first}, matches literal: {equal}\n")(
+    @size message.size(), @first (message[0] AS U8),
+    @equal message == "Hello, Quxlang!");
+  RETURN 0;
+}

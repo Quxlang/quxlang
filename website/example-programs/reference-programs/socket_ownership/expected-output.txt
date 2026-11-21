@@ -1,0 +1,7 @@
+default owner open: false
+ephemeral port assigned: true
+source open after move: false
+owner open after release: false
+released reference valid: true
+first close: true
+second close: true

@@ -1,0 +1,3 @@
+empty reference valid: false
+copied reference valid: true
+copied native handle: 1

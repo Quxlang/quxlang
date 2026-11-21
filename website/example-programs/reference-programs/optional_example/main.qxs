@@ -1,0 +1,35 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::first_negative_index FUNCTION(@ARG:values CONST& [4]I32): std::optional#SZ
+{
+  LOOP VALUE(index) FROM(0 AS SZ) UNTIL(4) DO
+  {
+    IF (values[index] < 0) { RETURN index; }
+  }
+  RETURN NULL;
+}
+
+::main FUNCTION(): I32
+{
+  VAR readings [4]I32 :[3, 8, -2, 5];
+  VAR position std::optional#SZ := first_negative_index(readings);
+  IF (position??)
+  {
+    std::printf#("first negative reading at index {index}\n")(@index position.value());
+  }
+
+  readings[2] := 2;
+  position := first_negative_index(readings);
+  std::printf#("has value after correction: {engaged}\n")(@engaged position.has_value());
+
+  VAR threshold std::optional#I32;
+  VAR stored MUT& I32 := threshold.emplace(@OTHER 10);
+  stored += 5;
+  std::printf#("threshold {value}\n")(@value threshold.value());
+
+  threshold := NULL;
+  std::printf#("threshold has value: {engaged}\n")(@engaged threshold.has_value());
+  RETURN 0;
+}

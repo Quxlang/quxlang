@@ -1,0 +1,3 @@
+suspensions: 3, result: 6
+source owns frame: false, destination owns frame: true
+result through view: 10

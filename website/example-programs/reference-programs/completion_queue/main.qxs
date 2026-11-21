@@ -1,0 +1,43 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT std;
+
+DOC <$ Stores the result of one completed transfer in caller-owned storage. $>
+::record_transfer STRUCT
+{
+  .destination VAR MUT->io::transfer_result;
+
+  .OPERATOR() FUNCTION(@result io::transfer_result)
+  {
+    .destination-> := result;
+  }
+}
+
+::main FUNCTION(): I32
+{
+  VAR context io::async_context :(@entries 8);
+  std::printf#("valid: {valid}\n")(@valid context.valid());
+
+  VAR path std::string := "/dev/zero";
+  VAR source io::file := io::open_read(@path path);
+  VAR bytes [4]BYTE;
+  bytes[0] := 7;
+  VAR buffer io::buffer_ref :(@data bytes[&0], @size 4);
+  VAR result io::transfer_result;
+  VAR callback record_transfer;
+  callback.destination := result<-;
+
+  context.read(@descriptor source.reference().descriptor, @buffer buffer, @offset 0, @callback callback);
+  std::printf#("outstanding after submission: {count}\n")(@count context.outstanding());
+
+  // No worker pool is attached, so this thread consumes the completion and runs the callback.
+  LOOP WHILE (context.outstanding() != 0) DO
+  {
+    context.wait_one();
+  }
+  std::printf#("outstanding after completion: {count}\n")(@count context.outstanding());
+  std::printf#("succeeded: {succeeded}, size: {size}, first byte: {byte}\n")(
+    @succeeded result.succeeded, @size result.size, @byte bytes[0] AS U8);
+  RETURN 0;
+}

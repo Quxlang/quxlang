@@ -1,0 +1,81 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::sensor GENERIC
+{
+  .label FUNCTION() CONST: STRING_CONSTANT;
+  .sample FUNCTION() MUT: I32;
+}
+
+::thermometer STRUCT
+{
+  .tenths_of_degree VAR I32;
+
+  .label FUNCTION() CONST: STRING_CONSTANT
+  {
+    RETURN "temperature";
+  }
+
+  .sample FUNCTION() MUT: I32
+  {
+    .tenths_of_degree += 4;
+    RETURN .tenths_of_degree;
+  }
+}
+
+::door_counter STRUCT
+{
+  .openings VAR I32;
+
+  .label FUNCTION() CONST: STRING_CONSTANT
+  {
+    RETURN "door openings";
+  }
+
+  .sample FUNCTION() MUT: I32
+  {
+    .openings++;
+    RETURN .openings;
+  }
+}
+
+::report_style INTERFACE
+{
+  .write FUNCTION(@label STRING_CONSTANT, @value I32);
+}
+
+::plain_style IMPLEMENTATION(report_style)
+{
+  ::write FUNCTION(@label STRING_CONSTANT, @value I32)
+  {
+    std::printf#("{label}: {value}\n")(@label label, @value value);
+  }
+}
+
+::tagged_style IMPLEMENTATION(report_style)
+{
+  ::write FUNCTION(@label STRING_CONSTANT, @value I32)
+  {
+    std::printf#("[sensor] name=\"{label}\" value={value}\n")(@label label, @value value);
+  }
+}
+
+::poll FUNCTION(@sensors MUT& [2]sensor, @style report_style)
+{
+  LOOP ITEM(item) IN(sensors) DO
+  {
+    style.write(@label item.label(), @value item.sample());
+  }
+}
+
+::main FUNCTION(): I32
+{
+  VAR hallway thermometer;
+  hallway.tenths_of_degree := 205;
+  VAR sensors [2]sensor :[hallway, door_counter()];
+  poll(@sensors sensors, @style plain_style);
+  poll(@sensors sensors, @style tagged_style);
+  std::printf#("original thermometer still reads {value}\n")(@value hallway.tenths_of_degree);
+  RETURN 0;
+}

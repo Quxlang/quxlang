@@ -1,0 +1,33 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR responses [9]I32 :[200, 404, 200, 500, 200, 404, 301, 200, 500];
+
+  VAR frequencies std::map#[I32:SZ];
+  LOOP ITEM(status_code) IN(responses) DO
+  {
+    frequencies[status_code]++;
+  }
+
+  LOOP INDEX(status_code) VALUE(count) IN(frequencies) DO
+  {
+    std::printf#("status {status_code}: {count}\n")(@status_code status_code, @count count);
+  }
+
+  std::printf#("distinct status codes: {count}\n")(@count frequencies.size());
+  std::printf#("successful responses: {count}\n")(@count frequencies.at(@key 200));
+  std::printf#("status 503 observed: {observed}\n")(@observed frequencies.contains(@key 503));
+
+  TRY
+  {
+    std::printf#("status 503: {count}\n")(@count frequencies.at(@key 503));
+  }
+  CATCH error CONST& std::container_error
+  {
+    std::print("status 503 has no entry\n");
+  }
+  RETURN 0;
+}

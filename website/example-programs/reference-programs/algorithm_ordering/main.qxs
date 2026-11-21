@@ -1,0 +1,54 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::print_values FUNCTION(@label STRING_CONSTANT, @first CONST=>>I32, @last CONST=>>I32)
+{
+  std::print(label);
+  LOOP WHILE (first != last) DO
+  {
+    std::printf#(" {value}")(@value first->);
+    first++;
+  }
+  std::print("\n");
+}
+
+::main FUNCTION(): I32
+{
+  VAR values [9]I32 :[8, 3, 1, 7, 2, 6, 2, 4, 5];
+
+  std::nth_element(@range values, @nth values[&4]);
+  std::printf#("median {median}\n")(@median values[4]);
+
+  std::sort(@range values);
+  print_values(@label "ascending:", @first values.BEGIN(), @last values.END());
+
+  AUTO twos := std::equal_range(@range values, @value 2);
+  std::printf#("value 2 occupies indexes {first} to {last}, contains 9: {found}\n")(
+    @first twos.BEGIN() - values.BEGIN(), @last twos.END() - values.BEGIN(),
+    @found std::binary_search(@range values, @value 9));
+
+  std::sort(@range values, @compare -< (@left I32, @right I32): ORDER = right <=> left);
+  print_values(@label "descending:", @first values.BEGIN(), @last values.END());
+
+  VAR left [4]I32 :[1, 2, 2, 5];
+  VAR right [4]I32 :[2, 2, 3, 6];
+  VAR output [8]I32;
+  AUTO merged := std::merge(@range1 left, @range2 right, @output output.BEGIN());
+  print_values(@label "merged:", @first output.BEGIN(), @last merged.out);
+  AUTO united := std::set_union(@range1 left, @range2 right, @output output.BEGIN());
+  print_values(@label "union:", @first output.BEGIN(), @last united.out);
+  AUTO common := std::set_intersection(@range1 left, @range2 right, @output output.BEGIN());
+  print_values(@label "intersection:", @first output.BEGIN(), @last common.out);
+
+  VAR heap [5]I32 :[4, 9, 1, 7, 3];
+  std::make_heap(@range heap);
+  std::pop_heap(@range heap);
+  std::printf#("largest {largest}, next largest {next}\n")(@largest heap[4], @next heap[0]);
+
+  VAR permutation [3]I32 :[1, 2, 3];
+  VAR advanced BOOL := std::next_permutation(@range permutation);
+  print_values(@label "next permutation:", @first permutation.BEGIN(), @last permutation.END());
+  std::printf#("advanced {advanced}\n")(@advanced advanced);
+  RETURN 0;
+}

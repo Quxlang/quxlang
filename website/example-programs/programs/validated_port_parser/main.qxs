@@ -1,0 +1,84 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::syntax_error STRUCT
+{
+  .position VAR SZ;
+}
+
+::range_error STRUCT
+{
+  .value VAR I64;
+}
+
+::field_scope STRUCT
+{
+  .index VAR I32;
+
+  .CONSTRUCTOR FUNCTION(@index I32, @text CONST& std::string)
+  {
+    .index := index;
+    std::printf#("field {index}: parsing \"{text}\"\n")(@index index, @text text);
+  }
+
+  .DESTRUCTOR FUNCTION()
+  {
+    std::printf#("field {index}: done\n")(@index .index);
+  }
+}
+
+::parse_port FUNCTION(@ARG:text CONST& std::string): I32
+{
+  VAR value I64 := 0;
+  LOOP VALUE(position SZ) FROM(0) UNTIL(text.size()) DO
+  {
+    VAR character BYTE := text[position];
+    IF (character < '0' || character > '9')
+    {
+      VAR error syntax_error;
+      error.position := position;
+      THROW error;
+    }
+    value := value * 10 + (((character AS U8) - 48) AS I64);
+    IF (value > 65535)
+    {
+      VAR error range_error;
+      error.value := value;
+      THROW error;
+    }
+  }
+  RETURN value AS CHECKED I32;
+}
+
+::report_field FUNCTION(@index I32, @text CONST& std::string)
+{
+  VAR scope field_scope :(@index index, @text text);
+  TRY
+  {
+    VAR port I32 := parse_port(text);
+    std::printf#("field {index}: port {port}\n")(@index index, @port port);
+  }
+  CATCH error CONST& syntax_error
+  {
+    std::printf#("field {index}: unexpected character at offset {position}\n")(
+      @index index, @position error.position);
+  }
+}
+
+::main FUNCTION(): I32
+{
+  VAR fields [4]std::string :["8080", "44x3", "70000", "22"];
+  TRY
+  {
+    LOOP INDEX(index) IN(fields) DO
+    {
+      report_field(@index index AS CHECKED I32, @text fields[index]);
+    }
+  }
+  CATCH error CONST& range_error
+  {
+    std::printf#("configuration rejected: {value} exceeds 65535\n")(@value error.value);
+  }
+  RETURN 0;
+}

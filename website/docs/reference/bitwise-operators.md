@@ -10,13 +10,13 @@ The binary operands have the same concrete type and the result has that type:
 | Operator | Per-bit result |
 | --- | --- |
 | `a #&& b` | and |
-| `a #\|\| b` | or |
+| <code>a #&#124;&#124; b</code> | or |
 | `a #^^ b` | exclusive or |
 | `a #!^ b` | equivalence, or not-exclusive-or |
 | `a #!& b` | nand |
-| `a #!\| b` | nor |
-| `a #^> b` | `a` implies `b`, equivalent to `(#!!a) #\|\| b` |
-| `a #^< b` | `b` implies `a`, equivalent to `a #\|\| (#!!b)` |
+| <code>a #!&#124; b</code> | nor |
+| `a #^> b` | `a` implies `b`, equivalent to <code>(#!!a) #&#124;&#124; b</code> |
+| `a #^< b` | `b` implies `a`, equivalent to <code>a #&#124;&#124; (#!!b)</code> |
 
 Every result bit is computed independently across the entire declared width:
 

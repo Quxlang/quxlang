@@ -1,0 +1,20 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR samples std::dynarr#I32;
+  samples.reserve(4);
+  samples.push_back(12);
+  samples.push_back(30);
+  samples.insert(@index 1, @value (21 AS I32));
+  samples.erase(@index 0);
+  LOOP INDEX(index) VALUE(sample) IN(samples) DO
+  {
+    std::printf#("samples[{index}] = {sample}\n")(@index index, @sample sample);
+  };
+  std::printf#("size {size}, capacity {capacity}\n")(
+    @size samples.size(), @capacity samples.capacity());
+  RETURN 0;
+}

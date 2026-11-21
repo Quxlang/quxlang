@@ -1,0 +1,82 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::circle STRUCT
+{
+  .radius VAR F64;
+}
+
+::rectangle STRUCT
+{
+  .width VAR F64;
+  .height VAR F64;
+
+  .CONSTRUCTOR FUNCTION(@width F64, @height F64)
+  {
+    .width := width;
+    .height := height;
+  }
+}
+
+::shape INLINE_VARIANT [circle DEFAULT, rectangle, VOID];
+
+::area FUNCTION(@ARG:value CONST& circle): F64
+{
+  RETURN (3.141592653589793 AS APPROXIMATE F64) * value.radius * value.radius;
+}
+
+::area FUNCTION(@ARG:value CONST& rectangle): F64
+{
+  RETURN value.width * value.height;
+}
+
+::describe FUNCTION(@ARG:value CONST& shape)
+{
+  MATCH value AS payload
+  {
+    TYPE circle
+    {
+      std::printf#("circle with radius {radius:.1f}\n")(@radius payload.radius);
+    }
+    TYPE rectangle WHERE payload.width == payload.height
+    {
+      std::printf#("square with side {side:.1f}\n")(@side payload.width);
+    }
+    TYPE rectangle OTHERWISE
+    {
+      std::printf#("rectangle {width:.1f} by {height:.1f}\n")(
+        @width payload.width, @height payload.height);
+    }
+    TYPE VOID
+    {
+      std::print("empty slot\n");
+    }
+  }
+}
+
+::main FUNCTION(): I32
+{
+  VAR shapes [4]shape;
+  shapes[1] := rectangle(@width 2.0, @height 3.5);
+  shapes[2] := NULL;
+  shapes[3] := rectangle(@width 4.0, @height 4.0);
+  IF (shapes[0] ISA circle)
+  {
+    (UNWRAP shapes[0] INTO circle).radius := 1.5;
+  }
+  VAR total_area F64 := 0.0;
+  VAR occupied_slots I32 := 0;
+  LOOP ITEM(item) IN(shapes) DO
+  {
+    describe(item);
+    VISIT item
+    {
+      total_area += area(item);
+      occupied_slots++;
+    }
+  }
+  std::printf#("{count} shapes, total area {total:.2f}\n")(
+    @count occupied_slots, @total total_area);
+  RETURN 0;
+}

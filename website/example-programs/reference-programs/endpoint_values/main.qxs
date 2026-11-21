@@ -1,0 +1,43 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT net;
+IMPORT std;
+
+::describe FUNCTION(@ARG:value CONST& net::endpoint)
+{
+  MATCH value.address AS address
+  {
+    TYPE net::ipv4_address
+    {
+      std::printf#("IPv4 {first}.{second}.{third}.{fourth} port {port}\n")(
+        @first address.data[0], @second address.data[1], @third address.data[2], @fourth address.data[3],
+        @port value.port);
+    }
+    TYPE net::ipv6_address
+    {
+      std::printf#("IPv6 last byte {last} port {port} scope {scope}\n")(
+        @last address.data[15], @port value.port, @scope value.scope_id);
+    }
+  }
+}
+
+::main FUNCTION(): I32
+{
+  VAR unspecified net::endpoint;
+  describe(unspecified);
+
+  VAR loopback net::ipv4_address;
+  loopback.data[0] := 127;
+  loopback.data[3] := 1;
+  VAR local net::endpoint;
+  local.address := net::ip_address(@OTHER loopback);
+  local.port := 8080;
+  describe(local);
+
+  VAR loopback_6 net::ipv6_address;
+  loopback_6.data[15] := 1;
+  local.address := net::ip_address(@OTHER loopback_6);
+  describe(local);
+  std::printf#("holds IPv6: {result}\n")(@result local.address ISA net::ipv6_address);
+  RETURN 0;
+}

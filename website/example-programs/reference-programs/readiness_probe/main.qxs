@@ -1,0 +1,40 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT std;
+
+::await_writable STRUCT
+{
+  ::value_type ALIAS BOOL;
+  .descriptor VAR I32;
+  .notified VAR BOOL;
+
+  .start FUNCTION(@submission CONST& io::async_submission_ref) MUT: BOOL
+  {
+    submission.wait(@descriptor .descriptor, @writing TRUE);
+    RETURN FALSE;
+  }
+
+  .complete FUNCTION(@submission CONST& io::async_submission_ref, @size SZ, @error U32) MUT: BOOL
+  {
+    .notified := error == 0;
+    RETURN TRUE;
+  }
+
+  .result FUNCTION() MUT: BOOL
+  {
+    RETURN .notified;
+  }
+}
+
+::main FUNCTION(): I32
+{
+  VAR runtime io::async_runtime :(@workers 1);
+  VAR operation await_writable;
+  operation.descriptor := 1;
+  VAR pending := runtime.submit(@operation operation);
+  VAR ready BOOL := pending.get();
+  std::printf#("standard output writable: {ready}\n")(@ready ready);
+  runtime.drain();
+  RETURN 0;
+}

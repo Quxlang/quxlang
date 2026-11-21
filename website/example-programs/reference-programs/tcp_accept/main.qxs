@@ -1,0 +1,34 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT net;
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR address net::ipv4_address;
+  address.data[0] := 127;
+  address.data[3] := 1;
+  VAR endpoint net::endpoint;
+  endpoint.address := net::ip_address(@OTHER address);
+
+  VAR listener net::tcp_listener :(@address endpoint.address);
+  listener.bind(@endpoint endpoint);
+  listener.listen(@backlog 16);
+  endpoint := listener.local_endpoint();
+  std::printf#("listening on an ephemeral port: {assigned}\n")(@assigned endpoint.port != 0);
+
+  // The accept operation is submitted before any client exists and completes after the connection arrives.
+  VAR runtime io::async_runtime :(@workers 1);
+  VAR pending := listener.async_accept(@runtime runtime);
+
+  VAR client net::tcp_connection :(@address endpoint.address);
+  client.connect(@endpoint endpoint);
+  VAR server net::tcp_connection := pending.get();
+  std::printf#("accepted connection open: {open}\n")(@open server.is_open());
+  std::printf#("accepted connection uses the listening port: {same}\n")(
+    @same server.local_endpoint().port == endpoint.port);
+
+  runtime.drain();
+  RETURN 0;
+}

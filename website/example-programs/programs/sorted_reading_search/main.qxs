@@ -1,0 +1,37 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR readings std::dynarr#I32;
+  readings.push_back(42);
+  readings.push_back(17);
+  readings.push_back(56);
+  readings.push_back(8);
+  readings.push_back(23);
+  readings.push_back(35);
+  readings.push_back(29);
+
+  std::sort(@range readings);
+  std::print("sorted:");
+  LOOP VALUE(reading) IN(readings) DO
+  {
+    std::printf#(" {reading}")(@reading reading);
+  }
+  std::print("\n");
+
+  std::printf#("sorted order confirmed: {sorted}\n")(@sorted std::is_sorted(@range readings));
+  std::printf#("23 recorded: {found}\n")(@found std::binary_search(@range readings, @value 23));
+  std::printf#("30 recorded: {found}\n")(@found std::binary_search(@range readings, @value 30));
+
+  AUTO position := std::lower_bound(@range readings, @value 30);
+  IF (position != readings.END())
+  {
+    std::printf#("first reading of at least 30: {reading} at index {index}\n")(
+      @reading position->, @index position - readings.BEGIN());
+  }
+  std::printf#("minimum {minimum}, median {median}, maximum {maximum}\n")(
+    @minimum readings.front(), @median readings[readings.size() / 2], @maximum readings.back());
+  RETURN 0;
+}

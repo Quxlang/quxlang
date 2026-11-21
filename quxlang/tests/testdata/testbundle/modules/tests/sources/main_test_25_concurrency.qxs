@@ -16,6 +16,11 @@ PRIVATE(MODULE)
     EXTERN_PROCEDURE["/usr/lib/libSystem.B.dylib":"unlink"]
     CALLABLE CALLCONV CCALL(@path CONST=>>BYTE; RETURN I32);
 
+  DOC <$ Identifies the process for the Windows asynchronous I/O test's file name. $>
+  ::async_test_windows_process_id INCLUDE_IF(OS_WINDOWS)
+    EXTERN_PROCEDURE["kernel32":"GetCurrentProcessId"]
+    CALLABLE CALLCONV CCALL(; RETURN U32);
+
   ::shared_ptr_move_transfer_probe FUNCTION(@source TEMP& std::shared_ptr#(I32)): BOOL
   {
     VAR moved std::shared_ptr#(I32) := FORWARD(source);
@@ -551,27 +556,26 @@ DOC <$ Copies ownership repeatedly on a worker thread. $>
   VAR context io::async_context := io::async_context(@entries 4);
   TEST_ASSERT(context.valid());
 
-  VAR path [4]BYTE;
-  path[0] := 78;
-  path[1] := 85;
-  path[2] := 76;
-  path[3] := 0;
-  VAR null_address ADDRESS;
+  VAR name std::string := std::fmt#("quxlang-async-{process_id}.tmp")(
+    @process_id async_test_windows_process_id());
+  VAR path [64]BYTE;
+  LOOP VALUE(index) FROM(0 AS SZ) UNTIL(name.size()) DO { path[index] := name[index]; }
+  path[name.size()] := 0;
   VAR handle ADDRESS := syscall::windows::create_file_a(
     @path path[& 0],
-    @desired_access 1073741824,
+    @desired_access 1073741824, // GENERIC_WRITE
     @share_mode 0,
-    @security_attributes null_address,
-    @creation_disposition 3,
-    @flags 1073741824,
-    @template_file null_address
+    @security_attributes NULL,
+    @creation_disposition 1, // CREATE_NEW
+    @flags 1140850688, // FILE_FLAG_OVERLAPPED | FILE_FLAG_DELETE_ON_CLOSE
+    @template_file NULL
   );
-  VAR invalid_handle ADDRESS := null_address - 1;
-  TEST_ASSERT(handle != invalid_handle);
+  VAR descriptor io::io_descriptor_ref := io::io_descriptor_ref(@native_handle handle);
+  TEST_ASSERT(descriptor.is_valid());
 
   VAR asynchronous_file io::async_file := io::async_file(
     @context context,
-    @native_ref io::file_ref(@descriptor io::io_descriptor_ref(@native_handle handle))
+    @native_ref io::file_ref(@descriptor descriptor)
   );
   VAR pool io::thread_pool := io::thread_pool(
     @context context,
@@ -594,6 +598,11 @@ DOC <$ Copies ownership repeatedly on a worker thread. $>
     @offset 0,
     @callback capture
   );
+  context.drain();
+  TEST_ASSERT(completed && result.succeeded && result.size == 1);
+
+  completed := FALSE;
+  context.write(@descriptor descriptor, @buffer buffer, @offset 0, @callback capture);
   pool.join();
 
   TEST_ASSERT(completed);

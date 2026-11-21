@@ -1,0 +1,3 @@
+samples[0] = 21
+samples[1] = 30
+size 2, capacity 4

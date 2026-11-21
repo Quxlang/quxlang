@@ -1,0 +1,4 @@
+ready before completion: false
+value: 42
+valid after get: false
+broken promise

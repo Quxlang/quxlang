@@ -1,0 +1,26 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR producer std::promise#I32;
+  VAR result std::future#I32 := producer.get_future();
+  std::printf#("ready before completion: {ready}\n")(@ready result.is_ready());
+
+  AUTO produce := -< [producer] { producer.set_value(@value 42); };
+  VAR worker std::thread := std::thread(produce);
+  VAR value I32 := result.get();
+  worker.join();
+  std::printf#("value: {value}\n")(@value value);
+  std::printf#("valid after get: {valid}\n")(@valid result.valid());
+
+  VAR abandoned std::future#I32;
+  {
+    VAR dropped std::promise#I32;
+    abandoned := dropped.get_future();
+  }
+  TRY { abandoned.get(); }
+  CATCH error CONST& std::broken_promise { std::print("broken promise\n"); }
+  RETURN 0;
+}

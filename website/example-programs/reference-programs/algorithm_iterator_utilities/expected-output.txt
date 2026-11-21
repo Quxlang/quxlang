@@ -1,0 +1,4 @@
+interior holds 4 elements, 2 of them equal to 7
+appended 2 elements: 30 18
+equal true, less true, projected 30
+scratch slots 4

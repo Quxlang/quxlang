@@ -48,6 +48,7 @@ LANGUAGE QUXLANG EN 0.0;
 
   ::integers DUAL_TEST
   {
+    TEST_ASSERT(fmt#("{} {} {}")(% [-128 AS I8, 0 AS I8, 127 AS I8]) == "-128 0 127");
     TEST_ASSERT(fmt#("{}")(% [-9223372036854775808 AS I64]) == "-9223372036854775808");
     TEST_ASSERT(fmt#("{}")(% [18446744073709551615 AS U64]) == "18446744073709551615");
     TEST_ASSERT(fmt#("{} {}")(% [-1 AS I1, 7 AS U3]) == "-1 7");
@@ -155,6 +156,7 @@ LANGUAGE QUXLANG EN 0.0;
 
   ::integer_modifiers DUAL_TEST
   {
+    TEST_ASSERT(fmt#("{0:b} {0:x}")(% [-128 AS I8]) == "-10000000 -80");
     TEST_ASSERT(fmt#("{0:d} {0:b} {0:B} {0:o} {0:x} {0:X}")(% [42 AS I32]) == "42 101010 101010 52 2a 2A");
     TEST_ASSERT(fmt#("{0:b} {0:o} {0:x}")(% [-42 AS I32]) == "-101010 -52 -2a");
     TEST_ASSERT(fmt#("{value:X}/{value:d}")(@value 255 AS U8) == "FF/255");
@@ -197,6 +199,6 @@ LANGUAGE QUXLANG EN 0.0;
     VAR text string := "owned ";
     print(text);
     printf#("{name}={}\n")(% [42], @name "value");
-    printf#("modifiers: {hex:X} {scientific:.2e}\n")(@hex 255 AS U8, @scientific 12.5 AS F64);
+    printf#("modifiers: {hex:X} {scientific:.2e}\n")(@hex -128 AS I8, @scientific 12.5 AS F64);
   }
 }

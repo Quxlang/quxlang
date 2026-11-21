@@ -1,4 +1,4 @@
-# Packs
+# Overview of Packs
 
 Packs assemble arguments while preserving each argument's value category.
 Their fields are independent values, so forwarding an owned field can initialize
@@ -18,7 +18,7 @@ A local pack uses `PACK` and a `...{}` or `...[]` literal. Ordinary expansion
 preserves the pack; `FORWARD PACK` consumes it.
 
 ```quxlang
-PACK arguments ...{ .value = I32(@OTHER 42) };
+PACK arguments ...{ .value = 42 AS I32 };
 inspect(...arguments);
 FORWARD PACK(arguments) TO consume;
 ```

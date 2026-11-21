@@ -1,0 +1,7 @@
+readings equal to 19: 2
+invalid readings: 2
+first invalid reading at index 1
+valid: 21 19 24 30 19 26
+calibrated tenths: 215 195 245 305 195 265
+hottest valid reading: 30
+every valid reading below 40: true

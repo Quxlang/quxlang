@@ -1,6 +1,6 @@
 # Quxlang
 
-Quxlang is a systems programming langauge focused on providing fast
+Quxlang is a systems programming language focused on providing fast
 cross-platform deterministic and reproducible builds.
 
 This website documents the current compiler surface with feature-focused pages
@@ -10,6 +10,18 @@ than a long-term compatibility promise.
 
 !!! warning "NO WARRANTY"
     These docs are provided without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose and noninfringement. In no event shall the authors or copyright holders be liable for any claim, damages or other liability, whether in an action of contract, tort or otherwise, arising from, out of or in connection with the software or the use or other dealings in the software.
+
+## Documentation sections
+
+| Section | Contents |
+| --- | --- |
+| [Overview](overview/index.md) | An example-oriented introduction to each language feature, beginning with [Getting Started](overview/getting-started.md) and a [first program](overview/first-program.md) |
+| [Language Reference](reference/index.md) | The complete rules for syntax, semantics, failure conditions, and target restrictions |
+| [Standard Modules Reference](standard-modules/index.md) | The public declarations of the `std`, `io`, and `net` modules |
+| [Example Programs](examples/index.md) | Complete programs with their output, each built and run by the documentation verification script |
+| [Implementation Status](status/index.md) | Supported targets and backends, feature status, and known issues |
+| [Philosophy](philosophy/index.md) | The design goals behind determinism, value semantics, safety boundaries, and control flow |
+| [Evolution from C++](evolution/index.md) | The principal differences between Quxlang and C++ |
 
 ## Development Status
 
@@ -33,6 +45,9 @@ CLI/CIR support is planned for the future, but there is no current code for this
 is expected to perform much better than JVM due to CIR having pointers in the intermediate
 representation, which makes translation relatively trivial.
 
+[Implementation Status](status/index.md) contains the complete target, backend,
+and feature tables.
+
 ## Other Links
 
 - [Code Repository (GitHub)](https://github.com/quxlang/quxlang)
@@ -44,88 +59,15 @@ representation, which makes translation relatively trivial.
 !!! warning "AI Usage"
     This documentation contains a mixture of human written and AI generated content and may contain errors. Please report any issues on [GitHub](https://github.com/Quxlang/quxlang/issues/new).
 
-## Overview
-
-- [Getting Started](overview/getting-started.md) explains the source-bundle model and the
-  shortest path to a first program.
-- [First Program](overview/first-program.md) walks through one complete source file.
-- [The `qxcbuild.yml` Overview](overview/qxcbuild-file.md) introduces targets,
-  module mappings, build options, and outputs.
-- [Language Overview](overview/index.md) gives an example-led tour of every
-  language feature.
-- [Syntax at a Glance](overview/syntax-examples.md) is a compact lookup page.
-- [Design Philosophy](philosophy/index.md) explains the goals behind
-  determinism, value semantics, safety boundaries, and control flow.
-
 ## Pronunciation & Notes
 
-Quxlang is pronounced like "k-whuh-ks-lang" /ˈkwʌks.læŋɡ/.  Quxlang is a proper noun, simliar to Erlang, the language is never called "Qux".
-
-## Explore the language
-
-#### Values and computation
-
-Read about [primitive types](overview/primitive-types-and-literals.md),
-[arrays](overview/arrays.md),
-[references](overview/references.md), [pointers](overview/pointers.md),
-[arithmetic operators](overview/arithmetic-operators.md),
-[comparison operators](overview/comparison-operators.md), and
-[conversions](overview/conversions.md).
-
-#### Functions and reusable code
-
-Read about [functions](overview/functions-and-parameters.md), the explicit
-[call argument model](overview/call-arguments.md),
-[overloads](overview/overload-resolution.md),
-[templates](overview/templates-and-value-parameters.md),
-[variadic packs](overview/variadic-packs.md), and
-[lambdas](overview/lambdas.md).
-
-#### Control flow and compile-time execution
-
-Read about [conditional statements](overview/conditional-statements.md),
-[`LOOP WHILE` loops](overview/while-loops.md),
-[`LOOP` clauses](overview/loop-statements.md),
-[labels](overview/labels-and-goto.md), and
-[static evaluation](overview/compile-time-evaluation.md).
-
-#### Data modeling and lifetime
-
-Read about [structures](overview/structs-and-members.md),
-[inheritance](overview/inheritance.md),
-[constructors and destructors](overview/constructors-and-destructors.md),
-[explicit storage lifetime](overview/typed-storage-and-lifetime.md),
-[compile-time allocation](overview/constexpr-allocation.md),
-[`STATIC` constants](overview/static-compile-time-constants.md),
-[`NEW` and `DELETE`](overview/new-and-delete.md),
-[enums](overview/enums.md), [flagsets](overview/flagsets.md),
-[unions](overview/unions.md), [variants](overview/variants.md), and
-[`MATCH`](overview/match.md).
-
-#### Abstraction and configuration
-
-Read about [interfaces](overview/interfaces-and-implementations.md),
-[generics](overview/generics.md),
-[conditional declarations](overview/availability-and-targets.md),
-[privacy](overview/privacy.md), and
-[build options](overview/build-options.md).
-
-#### Interoperation, concurrency, and testing
-
-Read about [serialization](overview/serialization.md),
-[integer encodings](overview/integer-serialization.md),
-[external procedures](overview/external-procedures.md),
-[assembly procedures](overview/assembly-procedures.md),
-[atomic objects](overview/atomics.md),
-[thread-local variables](overview/thread-local-variables.md),
-[tests](overview/tests.md), and
-[explicit diagnostics](overview/diagnostics-and-failure.md).
+Quxlang is pronounced like "k-whuh-ks-lang" /ˈkwʌks.læŋɡ/.  Quxlang is a proper noun, similar to Erlang, the language is never called "Qux".
 
 ## Current documentation boundary
 
-The language reference covers implemented source forms supported by the live
-parser and exercised compiler paths. Target-specific gaps, including the lack
-of inheritance support in the JVM backend, are stated on the affected feature
-pages. Other forward-looking work is intentionally not listed as a current
-feature. Low-level VMIR instruction specifications are included in repository
-engineering documents rather than as part of the source-language reference.
+The Language Reference covers source forms that the current parser accepts and that
+the compiler implements. [Implementation Status](status/index.md) lists
+target-specific gaps, including the features that are unavailable on the JVM
+backend. Forward-looking work is not documented as a current feature.
+Low-level VMIR instruction specifications are maintained in repository
+engineering documents and are outside the source-language reference.

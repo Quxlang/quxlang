@@ -1,0 +1,22 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR readings std::geometric_array#I32;
+  VAR first MUT& I32 := readings.emplace_back(@OTHER (5 AS I32));
+  LOOP VALUE(reading I32) FROM(6) UNTIL(15) DO
+  {
+    readings.push_back(reading);
+  }
+  first := 50;
+  std::printf#("size {size}, capacity {capacity}, front {front}, back {back}\n")(
+    @size readings.size(), @capacity readings.capacity(),
+    @front readings.front(), @back readings.back());
+  readings.resize(3);
+  readings.shrink_to_fit();
+  std::printf#("size {size}, capacity {capacity}\n")(
+    @size readings.size(), @capacity readings.capacity());
+  RETURN 0;
+}

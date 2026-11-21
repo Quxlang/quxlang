@@ -1,0 +1,33 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::resource STRUCT
+{
+  .number VAR I32;
+
+  .CONSTRUCTOR FUNCTION(@number I32) { .number := number; }
+
+  .DESTRUCTOR FUNCTION()
+  {
+    std::printf#("destroy resource {number}\n")(@number .number);
+  }
+}
+
+::main FUNCTION(): I32
+{
+  AUTO first := std::make_unique#resource(@number 1);
+  VAR second std::unique_ptr#resource := MOVE(first);
+  std::printf#("first has value: {first}, second owns resource {number}\n")(
+    @first first.has_value(), @number second->.number);
+
+  second.reset(@pointer NEW resource :(@number 2));
+
+  VAR released MUT->resource := second.release();
+  std::printf#("second has value after release: {second}\n")(@second second.has_value());
+  DELETE released;
+
+  AUTO third := std::make_unique#resource(@number 3);
+  std::print("end of main\n");
+  RETURN 0;
+}

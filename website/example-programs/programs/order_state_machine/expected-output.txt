@@ -1,0 +1,8 @@
+initial state received
+received -> paid
+event ignored in state paid
+paid -> packed
+packed -> shipped
+event ignored in state shipped
+shipped -> delivered
+final state delivered

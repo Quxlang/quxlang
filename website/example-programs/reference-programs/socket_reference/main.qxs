@@ -1,0 +1,34 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT net;
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR invalid net::tcp_listener_ref;
+  std::printf#("default reference valid: {valid}\n")(@valid invalid.is_valid());
+  std::printf#("closing an invalid reference: {result}\n")(@result invalid.close());
+
+  VAR address net::ipv4_address;
+  address.data[0] := 127;
+  address.data[3] := 1;
+  VAR local net::endpoint;
+  local.address := net::ip_address(@OTHER address);
+
+  VAR listener net::tcp_listener :(@address local.address);
+  VAR reference net::tcp_listener_ref := listener.reference();
+  VAR copy net::tcp_listener_ref := reference;
+  std::printf#("borrowed reference valid: {valid}\n")(@valid copy.is_valid());
+
+  // Both copies designate the socket that the owner holds.
+  reference.bind(@endpoint local);
+  copy.listen(@backlog 4);
+  std::printf#("same local port through owner and copy: {same}\n")(
+    @same listener.local_endpoint().port == copy.local_endpoint().port);
+
+  // The owner closes the socket. The copies keep the stored handle value and are not updated.
+  std::printf#("owner close: {result}\n")(@result listener.close());
+  std::printf#("owner open: {open}\n")(@open listener.is_open());
+  std::printf#("stale copy reports valid: {valid}\n")(@valid copy.is_valid());
+  RETURN 0;
+}

@@ -1,0 +1,24 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR visits std::unordered_map#[U64:I32];
+  VAR page U64 := 404;
+  visits[page] := 1;
+  visits[page] += 2;
+  visits.insert(@key (200 AS U64), @value (5 AS I32));
+  visits.insert_or_assign(@key (200 AS U64), @value (6 AS I32));
+  VAR total I32 := 0;
+  LOOP INDEX(code) VALUE(count) IN(visits) DO
+  {
+    total += count;
+  };
+  std::printf#("404: {missing}, 200: {found}, total {total}\n")(
+    @missing visits.at(page), @found visits.at(200 AS U64), @total total);
+  visits.erase(page);
+  std::printf#("size {size}, contains 404: {present}\n")(
+    @size visits.size(), @present visits.contains(page));
+  RETURN 0;
+}

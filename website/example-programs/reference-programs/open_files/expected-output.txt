@@ -1,0 +1,5 @@
+read-write open, write: true 1
+read-only open, read: true 0
+read-only open, write: false 0
+open failure is negative: true
+embedded null byte: -1

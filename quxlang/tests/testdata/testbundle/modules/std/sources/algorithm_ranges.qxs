@@ -100,19 +100,14 @@ DOC <$ Rejects a temporary range whose storage may expire. $>
 { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
 
 DOC <$ Applies find_first_of to the borrowed range boundaries. $>
-::find_first_of FUNCTION(@range1 AUTO& AUTO, @range2 AUTO& AUTO, @KWARGS:options ...): AUTO
+::find_first_of FUNCTION(@range1 AUTO& AUTO(range1_type), @range2 AUTO& AUTO(range2_type), @KWARGS:options ...): AUTO
 {
+  STATIC_IF(SAME_TYPES(DECLTYPE(range1), TEMP& range1_type) ||
+    SAME_TYPES(DECLTYPE(range2), TEMP& range2_type))
+  { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
   PACK forwarded_arguments FUSE(...{ .first1 = range1.BEGIN(); .last1 = range1.END(); .first2 = range2.BEGIN(); .last2 = range2.END(); }, options);
   RETURN FORWARD PACK(forwarded_arguments) TO find_first_of;
 }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::find_first_of FUNCTION(@range1 TEMP& AUTO, @range2 AUTO& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::find_first_of FUNCTION(@range1 AUTO& AUTO, @range2 TEMP& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
 
 DOC <$ Applies adjacent_find to the borrowed range boundaries. $>
 ::adjacent_find FUNCTION(@range AUTO& AUTO, @KWARGS:options ...): AUTO
@@ -126,34 +121,24 @@ DOC <$ Rejects a temporary range whose storage may expire. $>
 { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
 
 DOC <$ Applies search to the borrowed range boundaries. $>
-::search FUNCTION(@range1 AUTO& AUTO, @range2 AUTO& AUTO, @KWARGS:options ...): AUTO
+::search FUNCTION(@range1 AUTO& AUTO(range1_type), @range2 AUTO& AUTO(range2_type), @KWARGS:options ...): AUTO
 {
+  STATIC_IF(SAME_TYPES(DECLTYPE(range1), TEMP& range1_type) ||
+    SAME_TYPES(DECLTYPE(range2), TEMP& range2_type))
+  { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
   PACK forwarded_arguments FUSE(...{ .first1 = range1.BEGIN(); .last1 = range1.END(); .first2 = range2.BEGIN(); .last2 = range2.END(); }, options);
   RETURN FORWARD PACK(forwarded_arguments) TO search;
 }
 
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::search FUNCTION(@range1 TEMP& AUTO, @range2 AUTO& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::search FUNCTION(@range1 AUTO& AUTO, @range2 TEMP& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
 DOC <$ Applies find_end to the borrowed range boundaries. $>
-::find_end FUNCTION(@range1 AUTO& AUTO, @range2 AUTO& AUTO, @KWARGS:options ...): AUTO
+::find_end FUNCTION(@range1 AUTO& AUTO(range1_type), @range2 AUTO& AUTO(range2_type), @KWARGS:options ...): AUTO
 {
+  STATIC_IF(SAME_TYPES(DECLTYPE(range1), TEMP& range1_type) ||
+    SAME_TYPES(DECLTYPE(range2), TEMP& range2_type))
+  { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
   PACK forwarded_arguments FUSE(...{ .first1 = range1.BEGIN(); .last1 = range1.END(); .first2 = range2.BEGIN(); .last2 = range2.END(); }, options);
   RETURN FORWARD PACK(forwarded_arguments) TO find_end;
 }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::find_end FUNCTION(@range1 TEMP& AUTO, @range2 AUTO& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::find_end FUNCTION(@range1 AUTO& AUTO, @range2 TEMP& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
 
 DOC <$ Applies search_n to the borrowed range boundaries. $>
 ::search_n FUNCTION(@range AUTO& AUTO, @KWARGS:options ...): AUTO
@@ -167,64 +152,44 @@ DOC <$ Rejects a temporary range whose storage may expire. $>
 { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
 
 DOC <$ Applies equal to the borrowed range boundaries. $>
-::equal FUNCTION(@range1 AUTO& AUTO, @range2 AUTO& AUTO, @KWARGS:options ...): AUTO
+::equal FUNCTION(@range1 AUTO& AUTO(range1_type), @range2 AUTO& AUTO(range2_type), @KWARGS:options ...): AUTO
 {
+  STATIC_IF(SAME_TYPES(DECLTYPE(range1), TEMP& range1_type) ||
+    SAME_TYPES(DECLTYPE(range2), TEMP& range2_type))
+  { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
   PACK forwarded_arguments FUSE(...{ .first1 = range1.BEGIN(); .last1 = range1.END(); .first2 = range2.BEGIN(); .last2 = range2.END(); }, options);
   RETURN FORWARD PACK(forwarded_arguments) TO equal;
 }
 
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::equal FUNCTION(@range1 TEMP& AUTO, @range2 AUTO& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::equal FUNCTION(@range1 AUTO& AUTO, @range2 TEMP& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
 DOC <$ Applies mismatch to the borrowed range boundaries. $>
-::mismatch FUNCTION(@range1 AUTO& AUTO, @range2 AUTO& AUTO, @KWARGS:options ...): AUTO
+::mismatch FUNCTION(@range1 AUTO& AUTO(range1_type), @range2 AUTO& AUTO(range2_type), @KWARGS:options ...): AUTO
 {
+  STATIC_IF(SAME_TYPES(DECLTYPE(range1), TEMP& range1_type) ||
+    SAME_TYPES(DECLTYPE(range2), TEMP& range2_type))
+  { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
   PACK forwarded_arguments FUSE(...{ .first1 = range1.BEGIN(); .last1 = range1.END(); .first2 = range2.BEGIN(); .last2 = range2.END(); }, options);
   RETURN FORWARD PACK(forwarded_arguments) TO mismatch;
 }
 
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::mismatch FUNCTION(@range1 TEMP& AUTO, @range2 AUTO& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::mismatch FUNCTION(@range1 AUTO& AUTO, @range2 TEMP& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
 DOC <$ Applies lexicographical_compare to the borrowed range boundaries. $>
-::lexicographical_compare FUNCTION(@range1 AUTO& AUTO, @range2 AUTO& AUTO, @KWARGS:options ...): AUTO
+::lexicographical_compare FUNCTION(@range1 AUTO& AUTO(range1_type), @range2 AUTO& AUTO(range2_type), @KWARGS:options ...): AUTO
 {
+  STATIC_IF(SAME_TYPES(DECLTYPE(range1), TEMP& range1_type) ||
+    SAME_TYPES(DECLTYPE(range2), TEMP& range2_type))
+  { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
   PACK forwarded_arguments FUSE(...{ .first1 = range1.BEGIN(); .last1 = range1.END(); .first2 = range2.BEGIN(); .last2 = range2.END(); }, options);
   RETURN FORWARD PACK(forwarded_arguments) TO lexicographical_compare;
 }
 
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::lexicographical_compare FUNCTION(@range1 TEMP& AUTO, @range2 AUTO& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::lexicographical_compare FUNCTION(@range1 AUTO& AUTO, @range2 TEMP& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
 DOC <$ Applies is_permutation to the borrowed range boundaries. $>
-::is_permutation FUNCTION(@range1 AUTO& AUTO, @range2 AUTO& AUTO, @KWARGS:options ...): AUTO
+::is_permutation FUNCTION(@range1 AUTO& AUTO(range1_type), @range2 AUTO& AUTO(range2_type), @KWARGS:options ...): AUTO
 {
+  STATIC_IF(SAME_TYPES(DECLTYPE(range1), TEMP& range1_type) ||
+    SAME_TYPES(DECLTYPE(range2), TEMP& range2_type))
+  { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
   PACK forwarded_arguments FUSE(...{ .first1 = range1.BEGIN(); .last1 = range1.END(); .first2 = range2.BEGIN(); .last2 = range2.END(); }, options);
   RETURN FORWARD PACK(forwarded_arguments) TO is_permutation;
 }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::is_permutation FUNCTION(@range1 TEMP& AUTO, @range2 AUTO& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::is_permutation FUNCTION(@range1 AUTO& AUTO, @range2 TEMP& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
 
 DOC <$ Applies min_element to the borrowed range boundaries. $>
 ::min_element FUNCTION(@range AUTO& AUTO, @KWARGS:options ...): AUTO
@@ -370,19 +335,14 @@ DOC <$ Rejects a temporary range whose storage may expire. $>
 { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
 
 DOC <$ Applies transform to the borrowed range boundaries. $>
-::transform FUNCTION(@range1 AUTO& AUTO, @range2 AUTO& AUTO, @KWARGS:options ...): AUTO
+::transform FUNCTION(@range1 AUTO& AUTO(range1_type), @range2 AUTO& AUTO(range2_type), @KWARGS:options ...): AUTO
 {
+  STATIC_IF(SAME_TYPES(DECLTYPE(range1), TEMP& range1_type) ||
+    SAME_TYPES(DECLTYPE(range2), TEMP& range2_type))
+  { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
   PACK forwarded_arguments FUSE(...{ .first1 = range1.BEGIN(); .last1 = range1.END(); .first2 = range2.BEGIN(); .last2 = range2.END(); }, options);
   RETURN FORWARD PACK(forwarded_arguments) TO transform;
 }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::transform FUNCTION(@range1 TEMP& AUTO, @range2 AUTO& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::transform FUNCTION(@range1 AUTO& AUTO, @range2 TEMP& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
 
 DOC <$ Applies fill to the borrowed range boundaries. $>
 ::fill FUNCTION(@range AUTO& AUTO, @KWARGS:options ...)
@@ -539,19 +499,14 @@ DOC <$ Rejects a temporary range whose storage may expire. $>
 { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
 
 DOC <$ Applies swap_ranges to the borrowed range boundaries. $>
-::swap_ranges FUNCTION(@range1 AUTO& AUTO, @range2 AUTO& AUTO, @KWARGS:options ...): AUTO
+::swap_ranges FUNCTION(@range1 AUTO& AUTO(range1_type), @range2 AUTO& AUTO(range2_type), @KWARGS:options ...): AUTO
 {
+  STATIC_IF(SAME_TYPES(DECLTYPE(range1), TEMP& range1_type) ||
+    SAME_TYPES(DECLTYPE(range2), TEMP& range2_type))
+  { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
   PACK forwarded_arguments FUSE(...{ .first1 = range1.BEGIN(); .last1 = range1.END(); .first2 = range2.BEGIN(); .last2 = range2.END(); }, options);
   RETURN FORWARD PACK(forwarded_arguments) TO swap_ranges;
 }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::swap_ranges FUNCTION(@range1 TEMP& AUTO, @range2 AUTO& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::swap_ranges FUNCTION(@range1 AUTO& AUTO, @range2 TEMP& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
 
 DOC <$ Applies partition to the borrowed range boundaries. $>
 ::partition FUNCTION(@range AUTO& AUTO, @KWARGS:options ...): AUTO
@@ -774,94 +729,64 @@ DOC <$ Rejects a temporary range whose storage may expire. $>
 { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
 
 DOC <$ Applies merge to the borrowed range boundaries. $>
-::merge FUNCTION(@range1 AUTO& AUTO, @range2 AUTO& AUTO, @KWARGS:options ...): AUTO
+::merge FUNCTION(@range1 AUTO& AUTO(range1_type), @range2 AUTO& AUTO(range2_type), @KWARGS:options ...): AUTO
 {
+  STATIC_IF(SAME_TYPES(DECLTYPE(range1), TEMP& range1_type) ||
+    SAME_TYPES(DECLTYPE(range2), TEMP& range2_type))
+  { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
   PACK forwarded_arguments FUSE(...{ .first1 = range1.BEGIN(); .last1 = range1.END(); .first2 = range2.BEGIN(); .last2 = range2.END(); }, options);
   RETURN FORWARD PACK(forwarded_arguments) TO merge;
 }
 
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::merge FUNCTION(@range1 TEMP& AUTO, @range2 AUTO& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::merge FUNCTION(@range1 AUTO& AUTO, @range2 TEMP& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
 DOC <$ Applies set_union to the borrowed range boundaries. $>
-::set_union FUNCTION(@range1 AUTO& AUTO, @range2 AUTO& AUTO, @KWARGS:options ...): AUTO
+::set_union FUNCTION(@range1 AUTO& AUTO(range1_type), @range2 AUTO& AUTO(range2_type), @KWARGS:options ...): AUTO
 {
+  STATIC_IF(SAME_TYPES(DECLTYPE(range1), TEMP& range1_type) ||
+    SAME_TYPES(DECLTYPE(range2), TEMP& range2_type))
+  { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
   PACK forwarded_arguments FUSE(...{ .first1 = range1.BEGIN(); .last1 = range1.END(); .first2 = range2.BEGIN(); .last2 = range2.END(); }, options);
   RETURN FORWARD PACK(forwarded_arguments) TO set_union;
 }
 
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::set_union FUNCTION(@range1 TEMP& AUTO, @range2 AUTO& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::set_union FUNCTION(@range1 AUTO& AUTO, @range2 TEMP& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
 DOC <$ Applies set_intersection to the borrowed range boundaries. $>
-::set_intersection FUNCTION(@range1 AUTO& AUTO, @range2 AUTO& AUTO, @KWARGS:options ...): AUTO
+::set_intersection FUNCTION(@range1 AUTO& AUTO(range1_type), @range2 AUTO& AUTO(range2_type), @KWARGS:options ...): AUTO
 {
+  STATIC_IF(SAME_TYPES(DECLTYPE(range1), TEMP& range1_type) ||
+    SAME_TYPES(DECLTYPE(range2), TEMP& range2_type))
+  { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
   PACK forwarded_arguments FUSE(...{ .first1 = range1.BEGIN(); .last1 = range1.END(); .first2 = range2.BEGIN(); .last2 = range2.END(); }, options);
   RETURN FORWARD PACK(forwarded_arguments) TO set_intersection;
 }
 
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::set_intersection FUNCTION(@range1 TEMP& AUTO, @range2 AUTO& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::set_intersection FUNCTION(@range1 AUTO& AUTO, @range2 TEMP& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
 DOC <$ Applies set_difference to the borrowed range boundaries. $>
-::set_difference FUNCTION(@range1 AUTO& AUTO, @range2 AUTO& AUTO, @KWARGS:options ...): AUTO
+::set_difference FUNCTION(@range1 AUTO& AUTO(range1_type), @range2 AUTO& AUTO(range2_type), @KWARGS:options ...): AUTO
 {
+  STATIC_IF(SAME_TYPES(DECLTYPE(range1), TEMP& range1_type) ||
+    SAME_TYPES(DECLTYPE(range2), TEMP& range2_type))
+  { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
   PACK forwarded_arguments FUSE(...{ .first1 = range1.BEGIN(); .last1 = range1.END(); .first2 = range2.BEGIN(); .last2 = range2.END(); }, options);
   RETURN FORWARD PACK(forwarded_arguments) TO set_difference;
 }
 
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::set_difference FUNCTION(@range1 TEMP& AUTO, @range2 AUTO& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::set_difference FUNCTION(@range1 AUTO& AUTO, @range2 TEMP& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
 DOC <$ Applies set_symmetric_difference to the borrowed range boundaries. $>
-::set_symmetric_difference FUNCTION(@range1 AUTO& AUTO, @range2 AUTO& AUTO, @KWARGS:options ...): AUTO
+::set_symmetric_difference FUNCTION(@range1 AUTO& AUTO(range1_type), @range2 AUTO& AUTO(range2_type), @KWARGS:options ...): AUTO
 {
+  STATIC_IF(SAME_TYPES(DECLTYPE(range1), TEMP& range1_type) ||
+    SAME_TYPES(DECLTYPE(range2), TEMP& range2_type))
+  { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
   PACK forwarded_arguments FUSE(...{ .first1 = range1.BEGIN(); .last1 = range1.END(); .first2 = range2.BEGIN(); .last2 = range2.END(); }, options);
   RETURN FORWARD PACK(forwarded_arguments) TO set_symmetric_difference;
 }
 
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::set_symmetric_difference FUNCTION(@range1 TEMP& AUTO, @range2 AUTO& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::set_symmetric_difference FUNCTION(@range1 AUTO& AUTO, @range2 TEMP& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
 DOC <$ Applies includes to the borrowed range boundaries. $>
-::includes FUNCTION(@range1 AUTO& AUTO, @range2 AUTO& AUTO, @KWARGS:options ...): AUTO
+::includes FUNCTION(@range1 AUTO& AUTO(range1_type), @range2 AUTO& AUTO(range2_type), @KWARGS:options ...): AUTO
 {
+  STATIC_IF(SAME_TYPES(DECLTYPE(range1), TEMP& range1_type) ||
+    SAME_TYPES(DECLTYPE(range2), TEMP& range2_type))
+  { COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
   PACK forwarded_arguments FUSE(...{ .first1 = range1.BEGIN(); .last1 = range1.END(); .first2 = range2.BEGIN(); .last2 = range2.END(); }, options);
   RETURN FORWARD PACK(forwarded_arguments) TO includes;
 }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::includes FUNCTION(@range1 TEMP& AUTO, @range2 AUTO& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
-
-DOC <$ Rejects a temporary range whose storage may expire. $>
-::includes FUNCTION(@range1 AUTO& AUTO, @range2 TEMP& AUTO, @KWARGS ...): AUTO
-{ COMPILATION_ERROR "Algorithm range arguments must be lvalues."; }
 
 DOC <$ Applies next_permutation to the borrowed range boundaries. $>
 ::next_permutation FUNCTION(@range AUTO& AUTO, @KWARGS:options ...): AUTO

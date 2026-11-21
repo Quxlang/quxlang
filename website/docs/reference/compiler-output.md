@@ -1,4 +1,4 @@
-# Compiler Output and Diagnostics
+# The `qxc` Command Line
 
 The compiler provides two commands. The `build` command takes an input bundle
 and an output directory:

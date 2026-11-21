@@ -1,0 +1,50 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::reading STRUCT
+{
+  .priority VAR I32;
+  .sequence VAR I32;
+}
+
+::print_readings FUNCTION(@label STRING_CONSTANT, @readings CONST& [6]reading)
+{
+  std::print(label);
+  LOOP VALUE(index) FROM(0 AS SZ) UNTIL(6) DO
+  {
+    std::printf#(" {priority}/{sequence}")(
+      @priority readings[index].priority, @sequence readings[index].sequence);
+  }
+  std::print("\n");
+}
+
+::main FUNCTION(): I32
+{
+  VAR readings [6]reading;
+  LOOP VALUE(index) FROM(0 AS SZ) UNTIL(6) DO
+  {
+    readings[index].priority := ((5 - index) % 3) AS ASSUME I32;
+    readings[index].sequence := index AS ASSUME I32;
+  }
+  print_readings(@label "input:", @readings readings);
+
+  VAR storage [6]TYPED_STORAGE(reading);
+  VAR scratch std::scratch_ref#reading :(@storage storage[&0], @count 6);
+  AUTO priority := -< (@ARG:item CONST& reading): I32 = item.priority;
+
+  std::stable_sort(@range readings, @scratch scratch, @projection priority);
+  print_readings(@label "stable sort:", @readings readings);
+
+  AUTO boundary := std::stable_partition(@range readings, @scratch scratch,
+    @predicate -< (@ARG:item CONST& reading): BOOL = item.priority != 1);
+  print_readings(@label "stable partition:", @readings readings);
+  std::printf#("partition boundary index {index}\n")(@index boundary - readings.BEGIN());
+
+  VAR halves [5]I32 :[1, 3, 5, 2, 4];
+  VAR slots [2]TYPED_STORAGE(I32);
+  VAR small std::scratch_ref#I32 :(@storage slots[&0], @count 2);
+  std::inplace_merge(@range halves, @middle halves[&3], @scratch small);
+  std::printf#("merged halves sorted: {sorted}\n")(@sorted std::is_sorted(@range halves));
+  RETURN 0;
+}

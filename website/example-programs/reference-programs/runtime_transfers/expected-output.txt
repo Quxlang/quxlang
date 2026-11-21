@@ -1,0 +1,3 @@
+cursor future: succeeded true, size 4
+positioned future: succeeded true, size 4
+coroutine: total size 8

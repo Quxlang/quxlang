@@ -1,0 +1,18 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR readings std::geometric_array#I32;
+  readings.push_back(21);
+  VAR first MUT->I32 := readings[0]<-;
+  LOOP VALUE(index I32) FROM(0) UNTIL(16) DO
+  {
+    readings.push_back(index);
+  }
+  first-> := 22;
+  std::printf#("first {first}, readings {count}\n")(
+    @first readings[0], @count readings.size());
+  RETURN 0;
+}

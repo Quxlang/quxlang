@@ -1,0 +1,28 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR gate std::semaphore;
+  VAR published I32 := 0;
+  VAR observed I32 := 0;
+  AUTO consume := -< [gate, published, observed]
+  {
+    gate.acquire();
+    observed := published;
+  };
+  VAR worker std::thread := std::thread(consume);
+  published := 42;
+  gate.release();
+  worker.join();
+  std::printf#("observed: {observed}\n")(@observed observed);
+
+  gate.release(@count 2);
+  VAR first BOOL := gate.try_acquire();
+  VAR second BOOL := gate.try_acquire();
+  VAR third BOOL := gate.try_acquire();
+  std::printf#("permits: {first} {second} {third}\n")(
+    @first first, @second second, @third third);
+  RETURN 0;
+}

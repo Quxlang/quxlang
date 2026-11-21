@@ -1,0 +1,16 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR hasher std::default_hasher;
+  VAR first std::string := "north";
+  VAR second std::string := "north";
+  VAR third std::string := "south";
+  std::printf#("equal keys match: {same}\n")(
+    @same hasher.hash(first) == hasher.hash(second));
+  std::printf#("distinct keys match: {different}\n")(
+    @different hasher.hash(first) == hasher.hash(third));
+  RETURN 0;
+}

@@ -1,0 +1,52 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::print_values FUNCTION(@label STRING_CONSTANT, @first CONST=>>I32, @last CONST=>>I32)
+{
+  std::print(label);
+  LOOP WHILE (first != last) DO
+  {
+    std::printf#(" {value}")(@value first->);
+    first++;
+  }
+  std::print("\n");
+}
+
+::main FUNCTION(): I32
+{
+  VAR source [8]I32 :[3, 3, 5, 0, 0, 8, 5, 5];
+  VAR working [8]I32;
+
+  AUTO copied := std::copy(@range source, @output working.BEGIN());
+  std::printf#("copied {count} elements\n")(@count copied.out - working.BEGIN());
+
+  AUTO unique_end := std::unique(@range working);
+  print_values(@label "unique:", @first working.BEGIN(), @last unique_end);
+
+  AUTO retained := std::subrange(@first working.BEGIN(), @last unique_end);
+  AUTO removed_end := std::remove(@range retained, @value 0);
+  print_values(@label "without zero:", @first working.BEGIN(), @last removed_end);
+
+  retained := std::subrange(@first working.BEGIN(), @last removed_end);
+  std::reverse(@range retained);
+  AUTO rotated := std::rotate(@range retained, @middle working[&1]);
+  print_values(@label "reversed and rotated:", @first working.BEGIN(), @last removed_end);
+  std::printf#("original first element moved to index {index}\n")(@index rotated - working.BEGIN());
+
+  VAR doubled std::dynarr#I32;
+  std::transform(@range source, @output std::back_inserter(doubled),
+    @operation -< (@ARG:value I32): I32 = value * 2);
+  std::replace(@range doubled, @old_value 0, @new_value 1);
+  std::printf#("transformed {size} elements, element 3 is {element}\n")(
+    @size doubled.size(), @element doubled[3]);
+
+  VAR even_values [8]I32;
+  VAR odd_values [8]I32;
+  AUTO separated := std::partition_copy(@range source,
+    @predicate -< (@ARG:value I32): BOOL = value % 2 == 0,
+    @output_true even_values.BEGIN(), @output_false odd_values.BEGIN());
+  print_values(@label "even:", @first even_values.BEGIN(), @last separated.out_true);
+  print_values(@label "odd:", @first odd_values.BEGIN(), @last separated.out_false);
+  RETURN 0;
+}

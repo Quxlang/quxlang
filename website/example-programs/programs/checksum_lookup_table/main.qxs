@@ -1,0 +1,78 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::polynomial STATIC U8 := 7;
+::use_lookup_table STATIC BOOL := TRUE;
+
+::table_entry FUNCTION(@ARG:index U8): U8
+{
+  VAR remainder U8 := index;
+  LOOP VALUE(bit I32) FROM(0) UNTIL(8) DO
+  {
+    IF ((remainder #&& 128) != 0)
+    {
+      remainder := (remainder #++ 1) #^^ polynomial;
+    }
+    ELSE
+    {
+      remainder := remainder #++ 1;
+    }
+  }
+  RETURN remainder;
+}
+
+::build_table FUNCTION(): [256]U8
+{
+  VAR table [256]U8;
+  LOOP INDEX(index) IN(table) DO
+  {
+    table[index] := table_entry(index AS CHECKED U8);
+  }
+  RETURN table;
+}
+
+::checksum_table STATIC [256]U8 := build_table();
+
+::checksum TEMPLATE(@count:byte_count VALUE SZ)
+  FUNCTION(@ARG:data CONST& [byte_count]U8): U8
+{
+  VAR remainder U8 := 0;
+  LOOP ITEM(byte) IN(data) DO
+  {
+    STATIC_IF(use_lookup_table)
+    {
+      remainder := checksum_table[(remainder #^^ byte) AS SZ];
+    }
+    STATIC_ELSE
+    {
+      remainder := table_entry(remainder #^^ byte);
+    }
+  }
+  RETURN remainder;
+}
+
+::decimal_digits FUNCTION(): [9]U8
+{
+  RETURN [9]U8(% [49, 50, 51, 52, 53, 54, 55, 56, 57]);
+}
+
+::standard_check_value STATIC_TEST
+{
+  TEST_ASSERT(checksum#(@count 9)(decimal_digits()) == 244);
+}
+
+::main FUNCTION(): I32
+{
+  STATIC expected U8 := checksum#(@count 9)(decimal_digits());
+  VAR message [9]U8 := decimal_digits();
+  VAR computed U8 := checksum#(@count 9)(message);
+  std::printf#("table entries: {first:x} {second:x} {last:x}\n")(
+    @first checksum_table[1], @second checksum_table[2], @last checksum_table[255]);
+  std::printf#("expected {expected:x}, computed {computed:x}\n")(
+    @expected expected, @computed computed);
+  message[4] := 48;
+  std::printf#("corrupted message detected: {detected}\n")(
+    @detected checksum#(@count 9)(message) != expected);
+  RETURN 0;
+}

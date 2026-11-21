@@ -1,0 +1,5 @@
+newest version 2.11
+volume 100
+ratio 1.00
+water marks 250 to 900
+largest sample 1024

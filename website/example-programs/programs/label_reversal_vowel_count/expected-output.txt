@@ -1,0 +1,3 @@
+level-two!: 10 bytes, 3 vowels
+level reversed is level, palindrome: true
+level-two! reversed is !owt-level, palindrome: false

@@ -1,0 +1,45 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT std;
+
+DOC <$ Stores the result of one completed transfer in caller-owned storage. $>
+::record_transfer STRUCT
+{
+  .destination VAR MUT->io::transfer_result;
+
+  .OPERATOR() FUNCTION(@result io::transfer_result)
+  {
+    .destination-> := result;
+  }
+}
+
+::main FUNCTION(): I32
+{
+  VAR context io::async_context :(@entries 8);
+  VAR path std::string := "/dev/zero";
+  VAR opened io::file := io::open_read(@path path);
+
+  // The asynchronous file takes over the closing obligation of the released reference.
+  VAR source io::async_file :(@context context, @native_ref opened.release());
+  std::printf#("open: {open}\n")(@open source.is_open(@context context));
+
+  VAR bytes [4]BYTE;
+  bytes[0] := 7;
+  VAR buffer io::buffer_ref :(@data bytes[&0], @size 4);
+  VAR result io::transfer_result;
+  VAR callback record_transfer;
+  callback.destination := result<-;
+  source.read(@context context, @buffer buffer, @offset 0, @callback callback);
+  std::printf#("pending after submission: {count}\n")(@count source.pending(@context context));
+
+  LOOP WHILE (source.pending(@context context) != 0) DO
+  {
+    context.wait_one();
+  }
+  std::printf#("succeeded: {succeeded}, size: {size}, first byte: {byte}\n")(
+    @succeeded result.succeeded, @size result.size, @byte bytes[0] AS U8);
+  std::printf#("closed: {closed}\n")(@closed source.close(@context context));
+  std::printf#("open: {open}\n")(@open source.is_open(@context context));
+  RETURN 0;
+}

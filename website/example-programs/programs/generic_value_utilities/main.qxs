@@ -1,0 +1,79 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::maximum FUNCTION(@left AUTO(value_type), @right AUTO(value_type)): value_type
+{
+  IF (left < right)
+  {
+    RETURN right;
+  }
+  RETURN left;
+}
+
+::clamp FUNCTION(@value AUTO(value_type), @minimum AUTO(value_type),
+                 @maximum AUTO(value_type)): value_type
+{
+  IF (value < minimum)
+  {
+    RETURN minimum;
+  }
+  IF (value > maximum)
+  {
+    RETURN maximum;
+  }
+  RETURN value;
+}
+
+::exchange FUNCTION(@left MUT& AUTO(value_type), @right MUT& AUTO(value_type))
+{
+  left <-> right;
+}
+
+::largest_element TEMPLATE(@T CLASS, @count:element_count VALUE SZ)
+  FUNCTION(@ARG:values CONST& [element_count]T): T
+{
+  VAR result T := values[0];
+  LOOP ITEM(item) IN(values) DO
+  {
+    result := maximum(@left result, @right item);
+  }
+  RETURN result;
+}
+
+::version STRUCT
+{
+  .major VAR I32;
+  .minor VAR I32;
+}
+
+::main FUNCTION(): I32
+{
+  VAR installed version;
+  installed.major := 2;
+  installed.minor := 7;
+  VAR available version;
+  available.major := 2;
+  available.minor := 11;
+  VAR newest version := maximum(@left installed, @right available);
+  std::printf#("newest version {major}.{minor}\n")(@major newest.major, @minor newest.minor);
+
+  VAR requested_volume I32 := 140;
+  std::printf#("volume {volume}\n")(
+    @volume clamp(@value requested_volume, @minimum 0 AS I32, @maximum 100 AS I32));
+  std::printf#("ratio {ratio:.2f}\n")(
+    @ratio clamp(@value 1.75 AS F64, @minimum 0.0 AS F64, @maximum 1.0 AS F64));
+
+  VAR low_water_mark I64 := 900;
+  VAR high_water_mark I64 := 250;
+  IF (low_water_mark > high_water_mark)
+  {
+    exchange(@left low_water_mark, @right high_water_mark);
+  }
+  std::printf#("water marks {low} to {high}\n")(@low low_water_mark, @high high_water_mark);
+
+  VAR samples [5]I64 :[412, 97, 1024, 733, 5];
+  std::printf#("largest sample {largest}\n")(
+    @largest largest_element#(@T I64, @count 5)(samples));
+  RETURN 0;
+}

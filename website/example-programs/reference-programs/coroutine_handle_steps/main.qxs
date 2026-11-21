@@ -1,0 +1,65 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::step_awaiter STRUCT
+{
+  .ready VAR BOOL;
+  .AWAIT_READY FUNCTION(): BOOL { RETURN .ready; }
+  .AWAIT_SUSPEND FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO): BOOL { RETURN TRUE; }
+  .AWAIT_RESUME FUNCTION() {}
+}
+
+::step_controller STRUCT
+{
+  .result VAR I32;
+  .CO_AWAIT FUNCTION(@ARG BOOL): step_awaiter
+  {
+    VAR result step_awaiter;
+    result.ready := ARG;
+    RETURN result;
+  }
+  .CO_RETURN FUNCTION(@ARG I32) MUT: BOOL { .result := ARG; RETURN TRUE; }
+  .CO_EXCEPTION FUNCTION(@ARG CONST& EXCEPTION_PTR): BOOL { THROW_EXCEPTION_PTR(ARG); }
+}
+
+::accumulate COROUTINE(@limit I32): I32
+{
+  VAR total I32 := 0;
+  VAR index I32 := 1;
+  LOOP WHILE (index <= limit) DO
+  {
+    total += index;
+    AWAIT(FALSE);
+    index++;
+  }
+  RETURN total;
+}
+
+::accumulate_descriptor ALIAS accumulate#(@limit I32, @CONTROLLER step_controller);
+
+::main FUNCTION(): I32
+{
+  VAR controller step_controller;
+  VAR handle std::coroutine_handle#accumulate_descriptor;
+  handle.INITIALIZE(@limit 3);
+  VAR suspensions I32 := 0;
+  LOOP WHILE (handle.RESUME(@CONTROLLER controller) == FALSE) DO
+  {
+    suspensions++;
+  }
+  std::printf#("suspensions: {suspensions}, result: {result}\n")(
+    @suspensions suspensions, @result controller.result);
+
+  VAR moved std::coroutine_handle#accumulate_descriptor := MOVE(handle);
+  std::printf#("source owns frame: {source}, destination owns frame: {destination}\n")(
+    @source handle.has_value(), @destination moved.has_value());
+
+  VAR view std::coroutine_view#accumulate_descriptor :(@frame moved.get());
+  view.INITIALIZE(@limit 4);
+  LOOP WHILE (view.RESUME(@CONTROLLER controller) == FALSE) DO
+  {
+  }
+  std::printf#("result through view: {result}\n")(@result controller.result);
+  RETURN 0;
+}

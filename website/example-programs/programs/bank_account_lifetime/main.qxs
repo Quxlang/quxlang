@@ -1,0 +1,69 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::account STRUCT
+{
+  .number VAR I32;
+  .balance VAR I64;
+
+  .CONSTRUCTOR FUNCTION(@number I32, @opening_balance I64)
+  {
+    .number := number;
+    .balance := opening_balance;
+    std::printf#("open account {number} with balance {balance}\n")(
+      @number .number, @balance .balance);
+  }
+
+  .DESTRUCTOR FUNCTION()
+  {
+    std::printf#("close account {number} with balance {balance}\n")(
+      @number .number, @balance .balance);
+  }
+
+  .deposit FUNCTION(@ARG:amount I64) MUT
+  {
+    .balance += amount;
+  }
+
+  .withdraw FUNCTION(@ARG:amount I64) MUT: BOOL
+  {
+    UNLESS (.can_cover(amount))
+    {
+      RETURN FALSE;
+    }
+    .balance -= amount;
+    RETURN TRUE;
+  }
+
+  .can_cover FUNCTION(@ARG:amount I64) CONST: BOOL
+  {
+    RETURN amount <= .balance;
+  }
+}
+
+::transfer FUNCTION(@source MUT& account, @destination MUT& account, @amount I64): BOOL
+{
+  UNLESS (source.withdraw(amount))
+  {
+    RETURN FALSE;
+  }
+  destination.deposit(amount);
+  RETURN TRUE;
+}
+
+::main FUNCTION(): I32
+{
+  VAR checking account :(@number 1001, @opening_balance 250);
+  VAR savings account :(@number 2002, @opening_balance 4000);
+  checking.deposit(125);
+  VAR accepted BOOL := transfer(@source checking, @destination savings, @amount 900);
+  std::printf#("transfer of 900 accepted: {accepted}\n")(@accepted accepted);
+  {
+    VAR escrow account :(@number 3003, @opening_balance 0);
+    accepted := transfer(@source savings, @destination escrow, @amount 1500);
+    std::printf#("transfer of 1500 accepted: {accepted}\n")(@accepted accepted);
+  }
+  std::print("end of main\n");
+  RETURN 0;
+}

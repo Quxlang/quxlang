@@ -1,0 +1,89 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::employee STRUCT POLYMORPHIC
+{
+  .identifier VAR I32;
+
+  .CONSTRUCTOR FUNCTION(@identifier I32)
+  {
+    .identifier := identifier;
+  }
+
+  .DESTRUCTOR FUNCTION()
+  {
+    std::printf#("release employee record {identifier}\n")(@identifier .identifier);
+  }
+
+  .role FUNCTION() CONST VIRTUAL: STRING_CONSTANT
+  {
+    RETURN "employee";
+  }
+
+  .monthly_pay FUNCTION() CONST VIRTUAL(PURE): I64;
+}
+
+::salaried_employee STRUCT POLYMORPHIC
+{
+  .employee_part BASE employee;
+  .annual_salary VAR I64;
+
+  .CONSTRUCTOR FUNCTION(@identifier I32, @annual_salary I64)
+    :> .employee_part:(@identifier identifier)
+  {
+    .annual_salary := annual_salary;
+  }
+
+  .monthly_pay FUNCTION() CONST VIRTUAL(OVERRIDE): I64
+  {
+    RETURN .annual_salary / 12;
+  }
+}
+
+::hourly_employee STRUCT POLYMORPHIC
+{
+  .employee_part BASE employee;
+  .hourly_rate VAR I64;
+  .hours_worked VAR I64;
+
+  .CONSTRUCTOR FUNCTION(@identifier I32, @hourly_rate I64, @hours_worked I64)
+    :> .employee_part:(@identifier identifier)
+  {
+    .hourly_rate := hourly_rate;
+    .hours_worked := hours_worked;
+  }
+
+  .DESTRUCTOR FUNCTION()
+  {
+    std::printf#("archive timesheet of {hours} hours\n")(@hours .hours_worked);
+  }
+
+  .role FUNCTION() CONST VIRTUAL(OVERRIDE): STRING_CONSTANT
+  {
+    RETURN "contractor";
+  }
+
+  .monthly_pay FUNCTION() CONST VIRTUAL(OVERRIDE): I64
+  {
+    RETURN .hourly_rate * .hours_worked;
+  }
+}
+
+::print_pay FUNCTION(@ARG:member CONST& employee)
+{
+  std::printf#("{role} {identifier} earns {pay}\n")(
+    @role member.role(), @identifier member.identifier, @pay member.monthly_pay());
+}
+
+::main FUNCTION(): I32
+{
+  VAR manager salaried_employee :(@identifier 7, @annual_salary 96000);
+  print_pay(manager);
+  VAR contractor MUT->employee :=
+    NEW hourly_employee :(@identifier 31, @hourly_rate 45, @hours_worked 120);
+  print_pay(contractor->);
+  DELETE contractor;
+  std::print("end of main\n");
+  RETURN 0;
+}

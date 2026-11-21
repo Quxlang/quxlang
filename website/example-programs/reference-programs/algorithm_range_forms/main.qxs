@@ -1,0 +1,34 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR fixed [5]I32 :[5, 1, 4, 1, 3];
+  VAR dynamic std::dynarr#I32;
+  VAR linked std::list#I32;
+
+  std::copy(@range fixed, @output std::back_inserter(dynamic));
+  std::copy(@range fixed, @output std::back_inserter(linked));
+
+  std::sort(@range dynamic);
+  std::reverse(@range linked);
+  std::printf#("sorted first {sorted}, reversed first {reversed}\n")(
+    @sorted dynamic[0], @reversed linked.BEGIN()->);
+
+  VAR constant CONST& [5]I32 := fixed;
+  std::printf#("ones in array {array_count}, ones in list {list_count}\n")(
+    @array_count std::count(@range constant, @value 1),
+    @list_count std::count(@range linked, @value 1));
+
+  AUTO tail := std::subrange(@first fixed[&2], @last fixed.END());
+  std::printf#("tail maximum {maximum}, tail is a permutation of the list: {permutation}\n")(
+    @maximum std::max_element(@range tail)->,
+    @permutation std::is_permutation(@range1 tail, @range2 linked));
+
+  std::printf#("array and list hold the same multiset: {permutation}\n")(
+    @permutation std::is_permutation(@range1 fixed, @range2 linked));
+  std::printf#("iterator form agrees: {same}\n")(
+    @same std::count(@first fixed.BEGIN(), @last fixed.END(), @value 1) == std::count(@range fixed, @value 1));
+  RETURN 0;
+}

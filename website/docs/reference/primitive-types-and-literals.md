@@ -98,6 +98,21 @@ matching are:
 The `*_ANY(name)` forms are template-matching patterns rather than runtime
 container types.
 
+### Exact floating-point literals
+
+A numeric literal that initializes or converts to a floating-point type must
+be exactly representable in that type. An inexact literal is ill-formed unless
+the conversion uses the `APPROXIMATE` mode:
+
+```quxlang
+VAR half F64 := 0.5;
+VAR tenth F64 := 0.1 AS APPROXIMATE F64;
+```
+
+The declaration `VAR tenth F64 := 0.1;` is rejected with the diagnostic
+`Floating-point literal is not exactly representable as F64`. See
+[Conversions](conversions.md) for the conversion modes.
+
 ## Read-only constant categories
 
 `STRING_CONSTANT` and `NUMERIC_CONSTANT` preserve computed compile-time data in

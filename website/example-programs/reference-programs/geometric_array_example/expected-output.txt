@@ -1,0 +1,2 @@
+size 10, capacity 15, front 50, back 14
+size 3, capacity 3

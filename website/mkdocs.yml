@@ -9,14 +9,26 @@ theme:
   logo: assets/quxlang-q-green.svg
   favicon: assets/quxlang-q-green.svg
   features:
-    - navigation.sections
     - navigation.tabs
+    - navigation.indexes
+    - navigation.top
+    - toc.follow
+    - content.code.copy
 
 plugins:
   - search
 
 extra:
   generator: false
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+not_in_nav: |
+  /philosophy/stability.md
 
 extra_css:
   - stylesheets/theme.css
@@ -34,90 +46,319 @@ markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
-  - pymdownx.snippets
+  - pymdownx.snippets:
+      base_path: !relative $config_dir
+      check_paths: true
   - pymdownx.superfences
   - pymdownx.tabbed:
       alternate_style: true
 
 nav:
+  - Home: index.md
   - Overview:
-      - Overview: overview/index.md
-      - Getting Started: overview/getting-started.md
-      - First Program: overview/first-program.md
-      - Source Bundles and Targets: overview/source-bundles.md
-      - qxcbuild.yml File: overview/qxcbuild-file.md
-      - Syntax at a Glance: overview/syntax-examples.md
-      - Lexical Structure: overview/lexical-structure.md
-      - Source Files and Imports: overview/source-files-and-imports.md
-      - Namespaces: overview/namespaces.md
-      - Declaration Documentation: overview/declaration-documentation.md
-      - Variables: overview/variables.md
-      - STATIC Constants: overview/static-compile-time-constants.md
-      - Primitive Types: overview/primitive-types-and-literals.md
-      - Arrays: overview/arrays.md
-      - Composites: overview/composites.md
-      - References: overview/references.md
-      - Pointers: overview/pointers.md
-      - Optional and Owning Values: overview/optional-and-owning-values.md
-      - Type Queries: overview/type-queries-and-deduction.md
-      - Functions: overview/functions-and-parameters.md
-      - RETURN Statements: overview/return-statements.md
-      - Call Arguments: overview/call-arguments.md
-      - Default Arguments: overview/default-arguments.md
-      - Overload Resolution: overview/overload-resolution.md
-      - Procedure Pointers and Function Values: overview/procedure-pointers-and-function-values.md
-      - Templates: overview/templates-and-value-parameters.md
-      - Variadic Packs: overview/variadic-packs.md
-      - Lambdas: overview/lambdas.md
-      - Operator Precedence: overview/operator-precedence.md
-      - Assignment Operators: overview/assignment-operators.md
-      - Increment and Decrement: overview/increment-and-decrement.md
-      - Swap Operator: overview/swap-operator.md
-      - Move Semantics: overview/move-semantics.md
-      - Arithmetic Operators: overview/arithmetic-operators.md
-      - Comparison Operators: overview/comparison-operators.md
-      - Floating-Point Ordering: overview/floating-point-ordering.md
-      - Logical Operators: overview/logical-operators.md
-      - Bitwise Operators: overview/bitwise-operators.md
-      - Conversions: overview/conversions.md
-      - Conditional Statements: overview/conditional-statements.md
-      - LOOP WHILE Loops: overview/while-loops.md
-      - LOOP Statements: overview/loop-statements.md
-      - Labels and GOTO: overview/labels-and-goto.md
-      - Exception Handling: overview/exceptions.md
-      - Compile-Time Evaluation: overview/compile-time-evaluation.md
-      - Runtime Selection: overview/runtime-selection.md
-      - Structures: overview/structs-and-members.md
-      - Public Field Reflection: overview/public-field-reflection.md
-      - Inheritance: overview/inheritance.md
-      - Constructors and Destructors: overview/constructors-and-destructors.md
-      - User-Defined Operators: overview/user-defined-operators.md
-      - Object Storage and Lifetime: overview/typed-storage-and-lifetime.md
-      - Compile-Time Allocation: overview/constexpr-allocation.md
-      - NEW and DELETE: overview/new-and-delete.md
-      - Enums: overview/enums.md
-      - Flagsets: overview/flagsets.md
-      - Unions: overview/unions.md
-      - Variants: overview/variants.md
-      - VISIT: overview/visit.md
-      - MATCH: overview/match.md
-      - Interfaces: overview/interfaces-and-implementations.md
-      - Generics: overview/generics.md
-      - Target Availability: overview/availability-and-targets.md
-      - Privacy: overview/privacy.md
-      - Build Options: overview/build-options.md
-      - Serialization: overview/serialization.md
-      - Stringlike Types: overview/stringlike-types.md
-      - Integer Serialization: overview/integer-serialization.md
-      - External Types: overview/external-types.md
-      - External Memory: overview/external-memory.md
-      - External Procedures: overview/external-procedures.md
-      - Assembly Procedures: overview/assembly-procedures.md
-      - Atomics: overview/atomics.md
-      - Thread-Local Variables: overview/thread-local-variables.md
-      - Tests: overview/tests.md
-      - Failure Statements: overview/diagnostics-and-failure.md
-      - Compilation Policies: overview/compilation-policies.md
+      - overview/index.md
+      - Getting Started:
+          - Getting Started: overview/getting-started.md
+          - First Program: overview/first-program.md
+          - Source Bundles and Targets: overview/source-bundles.md
+          - qxcbuild.yml File: overview/qxcbuild-file.md
+          - Syntax at a Glance: overview/syntax-examples.md
+      - Source Organization:
+          - Lexical Structure: overview/lexical-structure.md
+          - Source Files and Imports: overview/source-files-and-imports.md
+          - Namespaces: overview/namespaces.md
+          - Privacy: overview/privacy.md
+          - Declaration Documentation: overview/declaration-documentation.md
+      - Values and Types:
+          - Variables: overview/variables.md
+          - STATIC Constants: overview/static-compile-time-constants.md
+          - Primitive Types: overview/primitive-types-and-literals.md
+          - Arrays: overview/arrays.md
+          - Composites: overview/composites.md
+          - References: overview/references.md
+          - Pointers: overview/pointers.md
+          - Optional and Owning Values: overview/optional-and-owning-values.md
+          - Conversions: overview/conversions.md
+          - Type Queries: overview/type-queries-and-deduction.md
+          - Stringlike Types: overview/stringlike-types.md
+      - Functions:
+          - Functions: overview/functions-and-parameters.md
+          - RETURN Statements: overview/return-statements.md
+          - Call Arguments: overview/call-arguments.md
+          - Default Arguments: overview/default-arguments.md
+          - Overload Resolution: overview/overload-resolution.md
+          - Procedure Pointers and Function Values: overview/procedure-pointers-and-function-values.md
+          - Lambdas: overview/lambdas.md
+      - Operators:
+          - Operator Precedence: overview/operator-precedence.md
+          - Assignment Operators: overview/assignment-operators.md
+          - Increment and Decrement: overview/increment-and-decrement.md
+          - Swap Operator: overview/swap-operator.md
+          - Move Semantics: overview/move-semantics.md
+          - Arithmetic Operators: overview/arithmetic-operators.md
+          - Comparison Operators: overview/comparison-operators.md
+          - Floating-Point Ordering: overview/floating-point-ordering.md
+          - Logical Operators: overview/logical-operators.md
+          - Bitwise Operators: overview/bitwise-operators.md
+          - User-Defined Operators: overview/user-defined-operators.md
+      - Control Flow:
+          - Conditional Statements: overview/conditional-statements.md
+          - LOOP WHILE Loops: overview/while-loops.md
+          - LOOP Statements: overview/loop-statements.md
+          - Labels and GOTO: overview/labels-and-goto.md
+          - Exception Handling: overview/exceptions.md
+          - Failure Statements: overview/diagnostics-and-failure.md
+      - User-Defined Types:
+          - Structures: overview/structs-and-members.md
+          - Constructors and Destructors: overview/constructors-and-destructors.md
+          - Inheritance: overview/inheritance.md
+          - Public Field Reflection: overview/public-field-reflection.md
+          - Enums: overview/enums.md
+          - Flagsets: overview/flagsets.md
+          - Unions: overview/unions.md
+          - Variants: overview/variants.md
+          - VISIT: overview/visit.md
+          - MATCH: overview/match.md
+      - Generic Programming:
+          - Templates: overview/templates-and-value-parameters.md
+          - Variadic Packs: overview/variadic-packs.md
+          - Packs: overview/packs.md
+          - Interfaces: overview/interfaces-and-implementations.md
+          - Generics: overview/generics.md
+      - Storage and Lifetime:
+          - Object Storage and Lifetime: overview/typed-storage-and-lifetime.md
+          - NEW and DELETE: overview/new-and-delete.md
+          - Compile-Time Allocation: overview/constexpr-allocation.md
+      - Compile-Time Evaluation and Configuration:
+          - Compile-Time Evaluation: overview/compile-time-evaluation.md
+          - Runtime Selection: overview/runtime-selection.md
+          - Target Availability: overview/availability-and-targets.md
+          - Build Options: overview/build-options.md
+          - Compilation Policies: overview/compilation-policies.md
+      - Interoperation:
+          - Serialization: overview/serialization.md
+          - Integer Serialization: overview/integer-serialization.md
+          - External Types: overview/external-types.md
+          - External Memory: overview/external-memory.md
+          - External Procedures: overview/external-procedures.md
+          - Assembly Procedures: overview/assembly-procedures.md
+      - Concurrency:
+          - Atomics: overview/atomics.md
+          - Thread-Local Variables: overview/thread-local-variables.md
+          - Coroutines: overview/coroutines.md
+      - Testing:
+          - Tests: overview/tests.md
+  - Language Reference:
+      - reference/index.md
+      - Reference Conventions: reference/conventions.md
+      - Source Organization:
+          - Lexical Structure: reference/lexical-structure.md
+          - Source Files and Imports: reference/source-files-and-imports.md
+          - Namespaces: reference/namespaces.md
+          - Privacy: reference/privacy.md
+          - Declaration Documentation: reference/declaration-documentation.md
+      - Values and Types:
+          - Variables: reference/variables.md
+          - STATIC Constants: reference/static-compile-time-constants.md
+          - Primitive Types and Literals: reference/primitive-types-and-literals.md
+          - Arrays: reference/arrays.md
+          - Composites: reference/composites.md
+          - References: reference/references.md
+          - Pointers: reference/pointers.md
+          - Optional and Owning Values: reference/optional-and-owning-values.md
+          - Conversions: reference/conversions.md
+          - Type Queries and Deduction: reference/type-queries-and-deduction.md
+          - Stringlike Types: reference/stringlike-types.md
+      - Functions:
+          - Functions: reference/functions-and-parameters.md
+          - RETURN Statements: reference/return-statements.md
+          - Call Arguments: reference/call-arguments.md
+          - Default Arguments: reference/default-arguments.md
+          - Overload Resolution: reference/overload-resolution.md
+          - Procedure Pointers and Function Values: reference/procedure-pointers-and-function-values.md
+          - Lambdas: reference/lambdas.md
+      - Operators:
+          - Operator Precedence: reference/operator-precedence.md
+          - Assignment Operators: reference/assignment-operators.md
+          - Increment and Decrement: reference/increment-and-decrement.md
+          - Swap Operator: reference/swap-operator.md
+          - Move Semantics: reference/move-semantics.md
+          - Arithmetic Operators: reference/arithmetic-operators.md
+          - Comparison Operators: reference/comparison-operators.md
+          - Floating-Point Ordering: reference/floating-point-ordering.md
+          - Logical Operators: reference/logical-operators.md
+          - Bitwise Operators: reference/bitwise-operators.md
+          - User-Defined Operators: reference/user-defined-operators.md
+      - Control Flow:
+          - Conditional Statements: reference/conditional-statements.md
+          - LOOP WHILE Loops: reference/while-loops.md
+          - LOOP Statements: reference/loop-statements.md
+          - Labels and GOTO: reference/labels-and-goto.md
+          - Exception Handling: reference/exceptions.md
+          - Failure Statements: reference/diagnostics-and-failure.md
+      - User-Defined Types:
+          - Structures: reference/structs-and-members.md
+          - Constructors and Destructors: reference/constructors-and-destructors.md
+          - Inheritance: reference/inheritance.md
+          - Public Field Reflection: reference/public-field-reflection.md
+          - Enums: reference/enums.md
+          - Flagsets: reference/flagsets.md
+          - Unions: reference/unions.md
+          - Variants: reference/variants.md
+          - VISIT: reference/visit.md
+          - MATCH: reference/match.md
+      - Generic Programming:
+          - Templates: reference/templates-and-value-parameters.md
+          - Variadic Packs: reference/variadic-packs.md
+          - Packs: reference/packs.md
+          - Interfaces and Implementations: reference/interfaces-and-implementations.md
+          - Generics: reference/generics.md
+      - Storage and Lifetime:
+          - Object Storage and Lifetime: reference/typed-storage-and-lifetime.md
+          - NEW and DELETE: reference/new-and-delete.md
+          - Compile-Time Allocation: reference/constexpr-allocation.md
+      - Compile-Time Evaluation and Configuration:
+          - Compile-Time Evaluation: reference/compile-time-evaluation.md
+          - Runtime Selection: reference/runtime-selection.md
+          - Target Availability: reference/availability-and-targets.md
+          - Build Options: reference/build-options.md
+          - Compilation Policies: reference/compilation-policies.md
+      - Interoperation:
+          - Serialization: reference/serialization.md
+          - Variable-Length Integer Serialization: reference/integer-serialization.md
+          - External Types: reference/external-types.md
+          - External Memory: reference/external-memory.md
+          - External Procedures: reference/external-procedures.md
+          - Assembly Procedures: reference/assembly-procedures.md
+      - Concurrency:
+          - Atomics: reference/atomics.md
+          - Thread-Local Variables: reference/thread-local-variables.md
+          - C++-style Coroutines: reference/cpp-style-coroutines.md
+          - Thread-pool Coroutines: reference/thread-pool-coroutines.md
+      - Testing:
+          - Tests: reference/tests.md
+      - Toolchain and Output:
+          - Toolchain: reference/toolchain.md
+          - qxc Command Line: reference/compiler-output.md
+          - qxcbuild.yml File: reference/qxcbuild-file.md
+          - CPU Capabilities and Steppings: reference/cpu-capabilities-and-steppings.md
+          - Program Startup and Runtime Hooks: reference/program-startup-and-runtime-hooks.md
+          - Runtime Module Contracts: reference/runtime-module-contracts.md
+          - Backends and Layout: reference/backends-and-layout.md
+  - Standard Modules Reference:
+      - standard-modules/index.md
+      - Module std:
+          - standard-modules/std/index.md
+          - Containers:
+              - "std::dynarr": standard-modules/std/dynarr.md
+              - "std::geometric_array": standard-modules/std/geometric-array.md
+              - "std::list": standard-modules/std/list.md
+              - "std::set": standard-modules/std/set.md
+              - "std::map": standard-modules/std/map.md
+              - "std::hadix_map": standard-modules/std/hadix-map.md
+              - "std::default_hasher": standard-modules/std/default-hasher.md
+              - "std::avl_tree": standard-modules/std/avl-tree.md
+              - "std::container_error": standard-modules/std/container-error.md
+          - Text and Formatting:
+              - "std::string": standard-modules/std/string.md
+              - "std::cord": standard-modules/std/cord.md
+              - "Formatting and Printing": standard-modules/std/format.md
+              - "std::byte_regex": standard-modules/std/byte-regex.md
+              - "Buffered I/O and Standard Streams": standard-modules/std/buffered-io.md
+          - Ownership and Optional Values:
+              - "std::unique_ptr": standard-modules/std/unique-ptr.md
+              - "Shared Ownership Pointers": standard-modules/std/shared-ptr.md
+              - "std::optional": standard-modules/std/optional.md
+          - Numerics and Process State:
+              - "std::sqrt": standard-modules/std/math.md
+              - "std::big_integer": standard-modules/std/big-integer.md
+              - "std::args and std::env": standard-modules/std/process-arguments.md
+          - Algorithms:
+              - "Algorithms": standard-modules/std/algorithms.md
+              - "Iterator Utilities": standard-modules/std/algorithms-iterators.md
+              - "Search, Comparison, and Fold": standard-modules/std/algorithms-search.md
+              - "Transfer and Modification": standard-modules/std/algorithms-transfer.md
+              - "Ordering": standard-modules/std/algorithms-ordering.md
+              - "Buffered Algorithms": standard-modules/std/algorithms-buffered.md
+              - "Range Forms": standard-modules/std/algorithms-ranges.md
+          - Threads and Synchronization:
+              - "std::thread": standard-modules/std/thread.md
+              - "Synchronization Primitives": standard-modules/std/synchronization.md
+              - "Mutexes": standard-modules/std/mutexes.md
+              - "std::condition_variable": standard-modules/std/condition-variable.md
+              - "std::semaphore": standard-modules/std/semaphore.md
+              - "std::synchronized_pointer_queue": standard-modules/std/synchronized-pointer-queue.md
+          - Futures and Coroutines:
+              - "Futures, Promises, and Tasks": standard-modules/std/future.md
+              - "Coroutine Frame Adapters": standard-modules/std/coroutine.md
+              - "C++-style Coroutine Support": standard-modules/std/cpp-coroutine.md
+              - "Thread-pool Coroutine Runtime": standard-modules/std/thread-pool-coroutine.md
+      - Module io:
+          - standard-modules/io/index.md
+          - Files and Buffers:
+              - "io::buffer_ref and io::transfer_result": standard-modules/io/buffer-ref.md
+              - "io::io_descriptor_ref": standard-modules/io/io-descriptor-ref.md
+              - "io::file_ref": standard-modules/io/file-ref.md
+              - "io::file": standard-modules/io/file.md
+              - "Path-based File Opening": standard-modules/io/filesystem.md
+          - Completion Queue:
+              - "io::async_context": standard-modules/io/async-context.md
+              - "io::async_file": standard-modules/io/async-file.md
+              - "io::thread_pool": standard-modules/io/thread-pool.md
+          - Asynchronous Runtime:
+              - "io::async_runtime": standard-modules/io/async-runtime.md
+              - "io::async_controller": standard-modules/io/async-controller.md
+              - "Native Operations": standard-modules/io/native-operation.md
+              - "io::io_uring_processor": standard-modules/io/io-uring-processor.md
+      - Module net:
+          - standard-modules/net/index.md
+          - "Addresses and Endpoints": standard-modules/net/address.md
+          - "net::error": standard-modules/net/error.md
+          - "Socket Owner Types": standard-modules/net/socket-owners.md
+          - "Socket Reference Types": standard-modules/net/socket-references.md
+          - "TCP Connections": standard-modules/net/tcp-connection.md
+          - "TCP Listeners": standard-modules/net/tcp-listener.md
+          - "UDP Sessions": standard-modules/net/udp-session.md
+          - "Socket Operations": standard-modules/net/socket-operations.md
+  - Example Programs:
+      - examples/index.md
+      - Language Features:
+          - Prime Sieve: examples/prime-sieve.md
+          - Order State Machine: examples/order-state-machine.md
+          - Bank Account Lifetime: examples/bank-account-lifetime.md
+          - Reading Calibration Callbacks: examples/reading-calibration-callbacks.md
+          - Fraction Arithmetic: examples/fraction-arithmetic.md
+          - Shape Areas with Variants: examples/shape-area-variant.md
+          - Payroll through Virtual Dispatch: examples/employee-payroll-dispatch.md
+          - Sensor Polling through Generics: examples/sensor-polling-generic.md
+          - Generic Value Utilities: examples/generic-value-utilities.md
+          - Port Number Validation: examples/validated-port-parser.md
+          - Compile-Time Checksum Table: examples/checksum-lookup-table.md
+          - Square Generator Coroutine: examples/square-generator-coroutine.md
+          - Thread-pool Coroutine Sum: examples/thread-pool-coroutine-sum.md
+      - Standard Modules:
+          - Formatted Inventory Report: examples/formatted-inventory-report.md
+          - Label Reversal and Vowel Count: examples/label-reversal-vowel-count.md
+          - Log Number Redaction: examples/log-number-redaction.md
+          - First Matching Record: examples/first-matching-record.md
+          - Station Code Deduplication: examples/deduplicate-stations.md
+          - Status Code Frequency Table: examples/status-code-frequency.md
+          - Priority Job Dispatch: examples/dispatch-jobs.md
+          - Stable Telemetry References: examples/stable-telemetry.md
+          - Reading Filter and Transform: examples/reading-filter-transform.md
+          - Search in Sorted Readings: examples/sorted-reading-search.md
+          - Sensor Ownership Transfer: examples/sensor-ownership-transfer.md
+          - Shared Configuration Lifetime: examples/shared-configuration-lifetime.md
+          - Large Byte-Rate Quotient: examples/average-byte-rate.md
+          - Parallel Event Total: examples/parallel-event-total.md
+          - Buffered Measurement Report: examples/buffered-measurement-report.md
+  - Implementation Status:
+      - status/index.md
+      - Targets: status/targets.md
+      - Backends: status/backends.md
+      - Language Features: status/language-features.md
+      - Standard Modules: status/standard-modules.md
+      - Known Issues: status/known-issues.md
   - Philosophy:
       - Design Philosophy: philosophy/index.md
       - Determinism: philosophy/determinism.md
@@ -127,96 +368,3 @@ nav:
       - Control Flow Philosophy: philosophy/control-flow.md
   - Evolution:
       - Evolution from C++: evolution/index.md
-  - Reference:
-      - Reference: reference/index.md
-      - Reference Conventions: reference/conventions.md
-      - Lexical Structure: reference/lexical-structure.md
-      - Source Files and Imports: reference/source-files-and-imports.md
-      - Namespaces: reference/namespaces.md
-      - Declaration Documentation: reference/declaration-documentation.md
-      - Variables: reference/variables.md
-      - STATIC Constants: reference/static-compile-time-constants.md
-      - Primitive Types and Literals: reference/primitive-types-and-literals.md
-      - Arrays: reference/arrays.md
-      - Composites: reference/composites.md
-      - References: reference/references.md
-      - Pointers: reference/pointers.md
-      - Optional and Owning Values: reference/optional-and-owning-values.md
-      - Type Queries and Deduction: reference/type-queries-and-deduction.md
-      - Functions: reference/functions-and-parameters.md
-      - C++-style Coroutines: reference/cpp-style-coroutines.md
-      - Thread-pool Coroutines: reference/thread-pool-coroutines.md
-      - RETURN Statements: reference/return-statements.md
-      - Call Arguments: reference/call-arguments.md
-      - Default Arguments: reference/default-arguments.md
-      - Overload Resolution: reference/overload-resolution.md
-      - Procedure Pointers and Function Values: reference/procedure-pointers-and-function-values.md
-      - Templates: reference/templates-and-value-parameters.md
-      - Variadic Packs: reference/variadic-packs.md
-      - Lambdas: reference/lambdas.md
-      - Operator Precedence: reference/operator-precedence.md
-      - Assignment Operators: reference/assignment-operators.md
-      - Increment and Decrement: reference/increment-and-decrement.md
-      - Swap Operator: reference/swap-operator.md
-      - Move Semantics: reference/move-semantics.md
-      - Arithmetic Operators: reference/arithmetic-operators.md
-      - Comparison Operators: reference/comparison-operators.md
-      - Floating-Point Ordering: reference/floating-point-ordering.md
-      - Logical Operators: reference/logical-operators.md
-      - Bitwise Operators: reference/bitwise-operators.md
-      - Conversions: reference/conversions.md
-      - Conditional Statements: reference/conditional-statements.md
-      - LOOP WHILE Loops: reference/while-loops.md
-      - LOOP Statements: reference/loop-statements.md
-      - Labels and GOTO: reference/labels-and-goto.md
-      - Exception Handling: reference/exceptions.md
-      - Compile-Time Evaluation: reference/compile-time-evaluation.md
-      - Runtime Selection: reference/runtime-selection.md
-      - Structures: reference/structs-and-members.md
-      - Public Field Reflection: reference/public-field-reflection.md
-      - Inheritance: reference/inheritance.md
-      - Constructors and Destructors: reference/constructors-and-destructors.md
-      - User-Defined Operators: reference/user-defined-operators.md
-      - Object Storage and Lifetime: reference/typed-storage-and-lifetime.md
-      - Compile-Time Allocation: reference/constexpr-allocation.md
-      - NEW and DELETE: reference/new-and-delete.md
-      - Enums: reference/enums.md
-      - Flagsets: reference/flagsets.md
-      - Unions: reference/unions.md
-      - Variants: reference/variants.md
-      - VISIT: reference/visit.md
-      - MATCH: reference/match.md
-      - Interfaces and Implementations: reference/interfaces-and-implementations.md
-      - Generics: reference/generics.md
-      - Target Availability: reference/availability-and-targets.md
-      - Privacy: reference/privacy.md
-      - Build Options: reference/build-options.md
-      - Serialization: reference/serialization.md
-      - Stringlike Types: reference/stringlike-types.md
-      - Variable-Length Integer Serialization: reference/integer-serialization.md
-      - External Types: reference/external-types.md
-      - External Memory: reference/external-memory.md
-      - External Procedures: reference/external-procedures.md
-      - Assembly Procedures: reference/assembly-procedures.md
-      - Atomics: reference/atomics.md
-      - Thread-Local Variables: reference/thread-local-variables.md
-      - Tests: reference/tests.md
-      - Failure Statements: reference/diagnostics-and-failure.md
-      - Compilation Policies: reference/compilation-policies.md
-      - Toolchain: reference/toolchain.md
-      - qxcbuild.yml File: reference/qxcbuild-file.md
-      - CPU Capabilities and Steppings: reference/cpu-capabilities-and-steppings.md
-      - Program Startup and Runtime Hooks: reference/program-startup-and-runtime-hooks.md
-      - Runtime Module Contracts: reference/runtime-module-contracts.md
-      - Backends and Layout: reference/backends-and-layout.md
-      - Compiler Output: reference/compiler-output.md
-  - Standard Modules:
-      - Numeric Utilities: standard-modules/std-math.md
-      - Sequences: standard-modules/std-sequences.md
-      - Sets: standard-modules/std-associative.md
-  - Examples:
-      - Examples: examples/index.md
-      - Compute a large byte-rate quotient: examples/average-byte-rate.md
-      - Deduplicate station codes: examples/deduplicate-stations.md
-      - Dispatch jobs in priority order: examples/dispatch-jobs.md
-      - Keep a reference while telemetry grows: examples/stable-telemetry.md

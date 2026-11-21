@@ -1,0 +1,31 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR queue std::synchronized_pointer_queue#(@T I32, @capacity 2);
+  VAR values [4]I32;
+  values[0] := 10;
+  values[1] := 20;
+  values[2] := 30;
+  values[3] := 40;
+  AUTO produce := -< [queue, values]
+  {
+    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(4 AS SZ) DO
+    {
+      queue.push(values[index]<-);
+    }
+    queue.push(NULL);
+  };
+  VAR producer std::thread := std::thread(produce);
+
+  LOOP DO
+  {
+    VAR value MUT->I32 := queue.pop();
+    IF (value == NULL) { BREAK; }
+    std::printf#("received {value}\n")(@value value->);
+  }
+  producer.join();
+  RETURN 0;
+}

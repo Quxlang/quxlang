@@ -1,0 +1,8 @@
+status 200: 4
+status 301: 1
+status 404: 2
+status 500: 2
+distinct status codes: 4
+successful responses: 4
+status 503 observed: false
+status 503 has no entry

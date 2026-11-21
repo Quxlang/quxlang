@@ -1,0 +1,15 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR empty io::io_descriptor_ref;
+  VAR standard_output io::io_descriptor_ref :(@native_handle 1);
+  VAR copy io::io_descriptor_ref := standard_output;
+  std::printf#("empty reference valid: {valid}\n")(@valid empty.is_valid());
+  std::printf#("copied reference valid: {valid}\n")(@valid copy.is_valid());
+  std::printf#("copied native handle: {handle}\n")(@handle copy.native_handle());
+  RETURN 0;
+}

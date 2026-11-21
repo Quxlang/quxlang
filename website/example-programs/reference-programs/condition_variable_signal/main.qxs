@@ -1,0 +1,30 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR mutex std::ordering_mutex;
+  VAR condition std::condition_variable;
+  VAR ready BOOL := FALSE;
+  VAR published I32 := 0;
+  VAR observed I32 := 0;
+  AUTO consume := -< [mutex, condition, ready, published, observed]
+  {
+    mutex.lock();
+    LOOP WHILE (ready == FALSE) DO { condition.wait(@locked_mutex mutex); }
+    observed := published;
+    mutex.unlock();
+  };
+  VAR worker std::thread := std::thread(consume);
+
+  mutex.lock();
+  published := 42;
+  ready := TRUE;
+  mutex.unlock();
+  condition.notify_one();
+
+  worker.join();
+  std::printf#("observed: {observed}\n")(@observed observed);
+  RETURN 0;
+}

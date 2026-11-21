@@ -1,0 +1,8 @@
+copied 8 elements
+unique: 3 5 0 8 5
+without zero: 3 5 8 5
+reversed and rotated: 8 5 3 5
+original first element moved to index 3
+transformed 8 elements, element 3 is 1
+even: 0 0 8
+odd: 3 3 5 5 5

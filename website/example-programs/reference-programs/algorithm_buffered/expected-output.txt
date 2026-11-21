@@ -1,0 +1,5 @@
+input: 2/0 1/1 0/2 2/3 1/4 0/5
+stable sort: 0/2 0/5 1/1 1/4 2/0 2/3
+stable partition: 0/2 0/5 2/0 2/3 1/1 1/4
+partition boundary index 4
+merged halves sorted: true

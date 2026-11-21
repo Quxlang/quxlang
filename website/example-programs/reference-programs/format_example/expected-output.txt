@@ -1,0 +1,7 @@
+plain text
+2 + 3 = 5
+second follows first
+sensor: 42 items, {literal braces}
+255 11111111 377 ff FF
+12.500000 12.50 1.250000e+01 1.250E+01
+true/false

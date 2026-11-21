@@ -1,0 +1,9 @@
+open account 1001 with balance 250
+open account 2002 with balance 4000
+transfer of 900 accepted: false
+open account 3003 with balance 0
+transfer of 1500 accepted: true
+close account 3003 with balance 1500
+end of main
+close account 2002 with balance 2500
+close account 1001 with balance 375

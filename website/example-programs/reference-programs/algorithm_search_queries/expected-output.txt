@@ -1,0 +1,6 @@
+all positive true, nines 4, above five 5
+pattern begins at 1 and at 4
+minimum 2 at 3, maximum 9 at 1
+total 48
+level 9 was reported by station 14
+first difference at 2, prefix orders first true

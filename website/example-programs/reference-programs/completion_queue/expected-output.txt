@@ -1,0 +1,4 @@
+valid: true
+outstanding after submission: 1
+outstanding after completion: 0
+succeeded: true, size: 4, first byte: 0

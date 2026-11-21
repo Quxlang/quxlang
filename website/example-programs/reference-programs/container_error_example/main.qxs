@@ -1,0 +1,32 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR limits std::map#[I32:I32];
+  TRY
+  {
+    limits.at(@key 7);
+  }
+  CATCH error CONST& std::container_error
+  {
+    IF (error == std::container_error::missing_key)
+    {
+      std::print("missing_key\n");
+    }
+  }
+  VAR values std::geometric_array#I32;
+  TRY
+  {
+    values.reserve((0 AS SZ) #!!);
+  }
+  CATCH error CONST& std::container_error
+  {
+    IF (error == std::container_error::size_overflow)
+    {
+      std::print("size_overflow\n");
+    }
+  }
+  RETURN 0;
+}

@@ -1,0 +1,32 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT net;
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR address net::ipv4_address;
+  address.data[0] := 127;
+  address.data[3] := 1;
+  VAR local net::endpoint;
+  local.address := net::ip_address(@OTHER address);
+
+  VAR closed net::udp_session;
+  std::printf#("default owner open: {open}\n")(@open closed.is_open());
+
+  VAR session net::udp_session :(@address local.address);
+  session.bind(@endpoint local);
+  std::printf#("ephemeral port assigned: {assigned}\n")(@assigned session.local_endpoint().port != 0);
+
+  VAR moved net::udp_session := MOVE(session);
+  std::printf#("source open after move: {open}\n")(@open session.is_open());
+
+  VAR reference net::udp_session_ref := moved.release();
+  std::printf#("owner open after release: {open}\n")(@open moved.is_open());
+  std::printf#("released reference valid: {valid}\n")(@valid reference.is_valid());
+
+  VAR adopted net::udp_session :(@reference reference);
+  std::printf#("first close: {result}\n")(@result adopted.close());
+  std::printf#("second close: {result}\n")(@result adopted.close());
+  RETURN 0;
+}

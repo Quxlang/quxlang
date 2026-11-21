@@ -1,0 +1,33 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::increment FUNCTION(@ARG:value I32): I32 { RETURN value + 1; }
+
+::sum COROUTINE(@ARG:depth I32): I32
+{
+  IF (depth == 0) { RETURN 1; }
+  VAR independent := GO increment(depth);
+  VAR recursive I32 := sum(depth - 1);
+  RETURN recursive + AWAIT(independent);
+}
+
+::count_twice COROUTINE(@ARG:counter MUT& I32)
+{
+  counter += 1;
+  AWAIT(std::cort_yield());
+  counter += 1;
+}
+
+::main FUNCTION(): I32
+{
+  VAR runtime std::thread_pool_cort_runtime:(@workers 2);
+  VAR result := ON(runtime) RUN sum(4);
+  std::printf#("sum: {sum}\n")(@sum result.get());
+
+  VAR counter I32 := 0;
+  ON(runtime) RUN count_twice(counter);
+  runtime.drain();
+  std::printf#("counter: {counter}\n")(@counter counter);
+  RETURN 0;
+}

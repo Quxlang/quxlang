@@ -14,7 +14,7 @@ makes `I32` the alternative selected by the no-argument constructor.
 
 ## Variant construction
 
-Initialize a variant from a value of one of its alternatives:
+A variant is initialized from a value of one of its alternatives:
 
 ```quxlang
 VAR number number_or_void := 7 AS I32;

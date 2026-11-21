@@ -1,0 +1,44 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR bytes [1]BYTE;
+  VAR buffer io::buffer_ref :(@data bytes[&0], @size 1);
+  VAR transfer io::transfer_result;
+
+  VAR path std::string := "/dev/null";
+  VAR writable io::file := io::open_read_write(@path path);
+  writable.write(@buffer buffer, @result transfer);
+  std::printf#("read-write open, write: {succeeded} {size}\n")(@succeeded transfer.succeeded, @size transfer.size);
+
+  VAR readable io::file := io::open_read(@path path);
+  readable.read(@buffer buffer, @result transfer);
+  std::printf#("read-only open, read: {succeeded} {size}\n")(@succeeded transfer.succeeded, @size transfer.size);
+  readable.write(@buffer buffer, @result transfer);
+  std::printf#("read-only open, write: {succeeded} {size}\n")(@succeeded transfer.succeeded, @size transfer.size);
+
+  VAR missing std::string := "/dev/null/missing";
+  TRY
+  {
+    VAR absent io::file := io::open_read(@path missing);
+  }
+  CATCH failure CONST& I32
+  {
+    std::printf#("open failure is negative: {negative}\n")(@negative failure < 0);
+  }
+
+  path.push_back(0);
+  path.push_back('x');
+  TRY
+  {
+    VAR rejected io::file := io::open_read(@path path);
+  }
+  CATCH failure CONST& I32
+  {
+    std::printf#("embedded null byte: {failure}\n")(@failure failure);
+  }
+  RETURN 0;
+}

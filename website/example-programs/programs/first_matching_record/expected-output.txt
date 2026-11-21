@@ -1,0 +1,3 @@
+above 25: station 12 at 27 degrees
+above 40: no station
+selection retained after reset: false

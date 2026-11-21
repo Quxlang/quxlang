@@ -1,0 +1,3 @@
+table entries: 7 e f3
+expected f4, computed f4
+corrupted message detected: true

@@ -1,0 +1,23 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR path std::string := "/dev/zero";
+  VAR source io::file := io::open_read(@path path);
+  VAR borrowed io::file_ref := source.reference();
+
+  VAR destination io::file := MOVE(source);
+  std::printf#("source open after move: {open}\n")(@open source.is_open());
+  std::printf#("destination open after move: {open}\n")(@open destination.is_open());
+  std::printf#("closing the closed source succeeds: {closed}\n")(@closed source.close());
+
+  VAR released io::file_ref := destination.release();
+  std::printf#("destination open after release: {open}\n")(@open destination.is_open());
+  std::printf#("released reference closes the descriptor: {closed}\n")(@closed released.close());
+  // The earlier copy does not observe the close and still stores the closed descriptor value.
+  std::printf#("stale copy reports valid: {valid}\n")(@valid borrowed.is_valid());
+  RETURN 0;
+}

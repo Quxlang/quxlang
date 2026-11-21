@@ -1,0 +1,5 @@
+temperature: 209
+door openings: 1
+[sensor] name="temperature" value=213
+[sensor] name="door openings" value=2
+original thermometer still reads 205

@@ -1,0 +1,3 @@
+hello
+valid: true, succeeded: true, size: 6
+valid: false, succeeded: false, size: 0

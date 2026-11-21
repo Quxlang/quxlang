@@ -1,0 +1,3 @@
+hypotenuse: 5.0
+square root of 2: 1.414213562373095
+square root of -1: nan

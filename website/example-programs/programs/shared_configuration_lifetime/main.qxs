@@ -1,0 +1,43 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::configuration STRUCT
+{
+  .revision VAR I32;
+
+  .CONSTRUCTOR FUNCTION(@revision I32)
+  {
+    .revision := revision;
+    std::printf#("configuration {revision} loaded\n")(@revision revision);
+  }
+
+  .DESTRUCTOR FUNCTION()
+  {
+    std::printf#("configuration {revision} released\n")(@revision .revision);
+  }
+}
+
+::describe FUNCTION(@ARG:reader std::shared_ptr#configuration)
+{
+  std::printf#("reader observes revision {revision} with {owners} owners\n")(
+    @revision reader->.revision, @owners reader.use_count());
+}
+
+::main FUNCTION(): I32
+{
+  VAR loader std::shared_ptr#configuration := std::make_shared#configuration(@revision 3);
+  std::printf#("owners after loading: {owners}\n")(@owners loader.use_count());
+
+  VAR service std::shared_ptr#configuration := loader;
+  describe(service);
+  std::printf#("owners after the reader returned: {owners}\n")(@owners loader.use_count());
+  std::printf#("loader and service share one object: {shared}\n")(@shared loader == service);
+
+  loader.reset();
+  std::printf#("loader released, service owners: {owners}\n")(@owners service.use_count());
+
+  service.reset();
+  std::print("service released\n");
+  RETURN 0;
+}

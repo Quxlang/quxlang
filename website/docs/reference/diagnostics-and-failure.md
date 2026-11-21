@@ -33,6 +33,29 @@ disabled, the entire assertion, including condition side effects, is omitted
 from the lowered path. Constant evaluation enables the policy. See
 [Compilation Policies](compilation-policies.md) for output defaults.
 
+## `INVARIANT`
+
+```quxlang
+INVARIANT(index < count);
+INVARIANT(index < count, "index is outside the sequence");
+```
+
+`INVARIANT` accepts the same condition and optional string-literal tag as
+`ASSERT`. The statement always evaluates its condition once. The
+`INVARIANT_CHECKED` policy selects the effect of the result:
+
+- When `INVARIANT_CHECKED` is enabled, a false condition takes the same
+  failure path as a false `ASSERT`.
+- When `INVARIANT_CHECKED` is disabled, the condition is an optimization
+  assumption. A false condition is undefined behavior, and the optimizer can
+  remove code that the assumption makes unreachable.
+
+`INVARIANT` therefore states a requirement that holds in every correct
+program, such as an index bound of a container. `ASSERT` states a diagnostic
+check whose removal leaves program behavior defined. Constant evaluation
+enables the policy. See [Compilation Policies](compilation-policies.md) for
+output defaults.
+
 ## `TEST_ASSERT` and `TEST_EXPECT`
 
 Both statements accept the same condition and optional string-literal tag as

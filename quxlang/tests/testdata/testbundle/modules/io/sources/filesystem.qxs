@@ -424,7 +424,9 @@ DOC <$
     $>
   .close FUNCTION(): BOOL
   {
-    RETURN syscall::windows::close_handle(@handle .descriptor.native_handle()) != 0;
+    VAR handle ADDRESS := .descriptor.native_handle();
+    RETURN close_windows_async_handle(@handle handle,
+      @close -< [=handle]: BOOL = syscall::windows::close_handle(@handle handle) != 0);
   }
   DOC <$ Submits a positioned read through the selected async runtime and suspends until completion. The descriptor and buffer remain valid through resumption. $>
   .read COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)

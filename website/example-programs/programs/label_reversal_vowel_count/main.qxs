@@ -1,0 +1,46 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::is_vowel FUNCTION(@ARG:letter BYTE): BOOL
+{
+  RETURN letter == 'a' || letter == 'e' || letter == 'i' || letter == 'o' || letter == 'u';
+}
+
+::reversed_copy FUNCTION(@ARG:text CONST& std::string): std::string
+{
+  VAR result std::string;
+  result.reserve(text.size());
+  LOOP VALUE(index) FROM(0 AS SZ) UNTIL(text.size()) DO
+  {
+    result.push_back(text[text.size() - 1 - index]);
+  }
+  RETURN result;
+}
+
+::main FUNCTION(): I32
+{
+  VAR label std::string := "level";
+  VAR suffix std::string := "-two";
+  VAR extended std::string := label + suffix;
+  extended.push_back('!');
+
+  VAR vowel_count SZ := 0;
+  LOOP VALUE(index) FROM(0 AS SZ) UNTIL(extended.size()) DO
+  {
+    IF (is_vowel(extended[index]))
+    {
+      vowel_count++;
+    }
+  }
+
+  VAR reversed_label std::string := reversed_copy(label);
+  VAR reversed_extended std::string := reversed_copy(extended);
+  std::printf#("{text}: {size} bytes, {vowels} vowels\n")(
+    @text extended, @size extended.size(), @vowels vowel_count);
+  std::printf#("{text} reversed is {reversed}, palindrome: {same}\n")(
+    @text label, @reversed reversed_label, @same label == reversed_label);
+  std::printf#("{text} reversed is {reversed}, palindrome: {same}\n")(
+    @text extended, @reversed reversed_extended, @same extended == reversed_extended);
+  RETURN 0;
+}

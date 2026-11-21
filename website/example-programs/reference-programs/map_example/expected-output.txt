@@ -1,0 +1,4 @@
+item 10: 9
+item 20: 2
+item 30 is absent
+inserted: false, size: 2

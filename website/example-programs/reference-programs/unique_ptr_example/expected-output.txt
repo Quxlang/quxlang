@@ -1,0 +1,6 @@
+first has value: false, second owns resource 1
+destroy resource 1
+second has value after release: false
+destroy resource 2
+end of main
+destroy resource 3

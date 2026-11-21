@@ -1,0 +1,20 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR bytes std::big_integer := 70000000000000000000;
+  VAR seconds std::big_integer := 3;
+  TRY
+  {
+    VAR rate std::big_integer := bytes.quotient(seconds);
+    std::printf#("{rate} bytes/s\n")(@rate rate.to_string());
+  }
+  CATCH error CONST& std::big_integer_error
+  {
+    std::print("rate unavailable\n");
+    RETURN 1;
+  }
+  RETURN 0;
+}

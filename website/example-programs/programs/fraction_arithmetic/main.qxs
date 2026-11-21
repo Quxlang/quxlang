@@ -1,0 +1,84 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::greatest_common_divisor FUNCTION(@left I64, @right I64): I64
+{
+  LOOP WHILE (right != 0) DO
+  {
+    VAR remainder I64 := left % right;
+    left := right;
+    right := remainder;
+  }
+  RETURN left;
+}
+
+::fraction STRUCT
+{
+  .numerator VAR I64;
+  .denominator VAR I64;
+
+  .CONSTRUCTOR FUNCTION(@numerator I64, @denominator I64)
+  {
+    VAR divisor I64 := greatest_common_divisor(@left numerator, @right denominator);
+    IF ((divisor < 0) != (denominator < 0))
+    {
+      divisor := 0 - divisor;
+    }
+    .numerator := numerator / divisor;
+    .denominator := denominator / divisor;
+  }
+
+  .OPERATOR+ FUNCTION(@OTHER CONST& fraction) CONST: fraction
+  {
+    RETURN fraction(@numerator .numerator * OTHER.denominator + OTHER.numerator * .denominator,
+                    @denominator .denominator * OTHER.denominator);
+  }
+
+  .OPERATOR- FUNCTION(@OTHER CONST& fraction) CONST: fraction
+  {
+    RETURN fraction(@numerator .numerator * OTHER.denominator - OTHER.numerator * .denominator,
+                    @denominator .denominator * OTHER.denominator);
+  }
+
+  .OPERATOR* FUNCTION(@OTHER CONST& fraction) CONST: fraction
+  {
+    RETURN fraction(@numerator .numerator * OTHER.numerator,
+                    @denominator .denominator * OTHER.denominator);
+  }
+
+  .OPERATOR* RHS FUNCTION(@OTHER I64) CONST: fraction
+  {
+    RETURN fraction(@numerator OTHER * .numerator, @denominator .denominator);
+  }
+
+  .OPERATOR== FUNCTION(@OTHER CONST& fraction) CONST: BOOL
+  {
+    RETURN .numerator == OTHER.numerator && .denominator == OTHER.denominator;
+  }
+
+  .OPERATOR<=> FUNCTION(@OTHER CONST& fraction) CONST: ORDER
+  {
+    RETURN (.numerator * OTHER.denominator) <=> (OTHER.numerator * .denominator);
+  }
+}
+
+::show FUNCTION(@label STRING_CONSTANT, @value CONST& fraction)
+{
+  std::printf#("{label} = {numerator}/{denominator}\n")(
+    @label label, @numerator value.numerator, @denominator value.denominator);
+}
+
+::main FUNCTION(): I32
+{
+  VAR half fraction :(@numerator 1, @denominator 2);
+  VAR third fraction :(@numerator 2, @denominator 6);
+  show(@label "1/2 + 1/3", @value half + third);
+  show(@label "1/3 - 1/2", @value third - half);
+  show(@label "1/2 * 1/3", @value half * third);
+  show(@label "3 * 1/2", @value 3 * half);
+  std::printf#("1/3 < 1/2: {less}\n")(@less third < half);
+  std::printf#("2/4 == 1/2: {equal}\n")(@equal fraction(@numerator 2, @denominator 4) == half);
+  std::printf#("1/2 >= 5/6: {ordered}\n")(@ordered half >= half + third);
+  RETURN 0;
+}

@@ -1,0 +1,61 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::reading STRUCT
+{
+  .station VAR I32;
+  .temperature VAR I32;
+}
+
+::first_reading_above FUNCTION(
+    @readings CONST& std::dynarr#reading,
+    @threshold I32
+  ): std::optional#reading
+{
+  LOOP VALUE(candidate) IN(readings) DO
+  {
+    IF (candidate.temperature > threshold)
+    {
+      RETURN candidate;
+    }
+  }
+  RETURN NULL;
+}
+
+::report FUNCTION(@readings CONST& std::dynarr#reading, @threshold I32)
+{
+  VAR match std::optional#reading := first_reading_above(@readings readings, @threshold threshold);
+  IF (match.has_value())
+  {
+    std::printf#("above {threshold}: station {station} at {temperature} degrees\n")(
+      @threshold threshold, @station match->.station, @temperature match->.temperature);
+  }
+  ELSE
+  {
+    std::printf#("above {threshold}: no station\n")(@threshold threshold);
+  }
+}
+
+::main FUNCTION(): I32
+{
+  VAR readings std::dynarr#reading;
+  VAR entry reading;
+  entry.station := 11;
+  entry.temperature := 18;
+  readings.push_back(entry);
+  entry.station := 12;
+  entry.temperature := 27;
+  readings.push_back(entry);
+  entry.station := 13;
+  entry.temperature := 31;
+  readings.push_back(entry);
+
+  report(@readings readings, @threshold 25);
+  report(@readings readings, @threshold 40);
+
+  VAR selection std::optional#reading := first_reading_above(@readings readings, @threshold 30);
+  selection.reset();
+  std::printf#("selection retained after reset: {retained}\n")(@retained selection.has_value());
+  RETURN 0;
+}

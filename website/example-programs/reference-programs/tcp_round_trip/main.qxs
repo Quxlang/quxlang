@@ -1,0 +1,48 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT net;
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR address net::ipv4_address;
+  address.data[0] := 127;
+  address.data[3] := 1;
+  VAR endpoint net::endpoint;
+  endpoint.address := net::ip_address(@OTHER address);
+
+  VAR listener net::tcp_listener :(@address endpoint.address);
+  listener.bind(@endpoint endpoint);
+  listener.listen();
+  endpoint := listener.local_endpoint();
+
+  VAR client net::tcp_connection :(@address endpoint.address);
+  client.connect(@endpoint endpoint);
+  VAR server net::tcp_connection := listener.accept();
+
+  VAR request [5]BYTE;
+  request[0] := 'h';
+  request[1] := 'e';
+  request[2] := 'l';
+  request[3] := 'l';
+  request[4] := 'o';
+  VAR output io::buffer_ref :(@data request[&0], @size 5);
+  std::printf#("written: {size}\n")(@size client.write(@buffer output));
+
+  // A read transfers a prefix of the requested size, so the loop continues until the request is complete.
+  VAR received [5]BYTE;
+  VAR count SZ;
+  LOOP WHILE (count < 5) DO
+  {
+    VAR input io::buffer_ref :(@data received[&count], @size 5 - count);
+    count += server.read(@buffer input);
+  }
+  std::printf#("received: {count}, equal: {equal}\n")(@count count, @equal received == request);
+
+  // Shutting down the sending direction delivers end of stream to the peer.
+  client.shutdown(@direction net::shutdown_direction::send);
+  VAR remaining io::buffer_ref :(@data received[&0], @size 5);
+  std::printf#("read after peer shutdown: {size}\n")(@size server.read(@buffer remaining));
+  RETURN 0;
+}

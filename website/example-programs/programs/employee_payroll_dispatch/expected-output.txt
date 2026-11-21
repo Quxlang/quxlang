@@ -1,0 +1,6 @@
+employee 7 earns 8000
+contractor 31 earns 5400
+archive timesheet of 120 hours
+release employee record 31
+end of main
+release employee record 7

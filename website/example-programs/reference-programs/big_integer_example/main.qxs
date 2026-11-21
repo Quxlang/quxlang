@@ -1,0 +1,31 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR factorial std::big_integer := 1;
+  LOOP VALUE(factor) FROM(1 AS U32) TO(30) DO { factorial.multiply(factor); }
+  std::printf#("30! = {value}\n")(@value factorial.to_string());
+
+  VAR divisor std::big_integer := 1000000000000000000000;
+  VAR quotient std::big_integer := factorial.quotient(divisor);
+  std::printf#("30! / 10^21 = {value}\n")(@value quotient.to_string());
+
+  VAR negative std::big_integer := -7;
+  VAR three std::big_integer := 3;
+  std::printf#("floor(-7 / 3) = {value}\n")(@value negative.quotient_as#I32(three));
+
+  TRY
+  {
+    factorial.quotient_as#U64(three);
+  }
+  CATCH error CONST& std::big_integer_error
+  {
+    IF (error == std::big_integer_error::quotient_out_of_range)
+    {
+      std::print("30! / 3 is outside the range of U64\n");
+    }
+  }
+  RETURN 0;
+}

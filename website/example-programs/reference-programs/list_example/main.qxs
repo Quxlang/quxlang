@@ -1,0 +1,24 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR stops std::list#I32;
+  stops.push_back(20);
+  stops.push_back(40);
+  stops.push_front(10);
+  VAR position std::list#(I32)::const_iterator := stops.BEGIN();
+  position++;
+  position++;
+  stops.insert(@position position, @value (30 AS I32));
+  VAR second std::list#(I32)::const_iterator := stops.BEGIN();
+  second++;
+  stops.erase(@position second);
+  LOOP VALUE(stop) IN(stops) DO
+  {
+    std::printf#("stop {stop}\n")(@stop stop);
+  };
+  std::printf#("{count} stops\n")(@count stops.size());
+  RETURN 0;
+}

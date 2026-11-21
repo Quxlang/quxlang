@@ -1,0 +1,29 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR bytes [6]BYTE;
+  bytes[0] := 'h';
+  bytes[1] := 'e';
+  bytes[2] := 'l';
+  bytes[3] := 'l';
+  bytes[4] := 'o';
+  bytes[5] := '\n';
+  VAR buffer io::buffer_ref :(@data bytes[&0], @size 6);
+
+  // Descriptor 1 is the standard output of a POSIX process. The reference does not own it.
+  VAR output io::file_ref :(@descriptor io::io_descriptor_ref(@native_handle 1));
+  VAR result io::transfer_result;
+  output.write(@buffer buffer, @result result);
+  std::printf#("valid: {valid}, succeeded: {succeeded}, size: {size}\n")(
+    @valid output.is_valid(), @succeeded result.succeeded, @size result.size);
+
+  VAR empty io::file_ref;
+  empty.write(@buffer buffer, @result result);
+  std::printf#("valid: {valid}, succeeded: {succeeded}, size: {size}\n")(
+    @valid empty.is_valid(), @succeeded result.succeeded, @size result.size);
+  RETURN 0;
+}

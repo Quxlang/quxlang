@@ -1,0 +1,46 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT std;
+
+DOC <$ Stores the result of one completed transfer in caller-owned storage. $>
+::record_transfer STRUCT
+{
+  .destination VAR MUT->io::transfer_result;
+
+  .OPERATOR() FUNCTION(@result io::transfer_result)
+  {
+    .destination-> := result;
+  }
+}
+
+::main FUNCTION(): I32
+{
+  VAR context io::async_context :(@entries 8);
+  VAR path std::string := "/dev/zero";
+  VAR source io::file := io::open_read(@path path);
+  VAR pool io::thread_pool :(@context context, @worker_count 2);
+
+  // Each request has its own buffer range and its own result slot, so the workers share no storage.
+  VAR bytes [12]BYTE;
+  VAR results [3]io::transfer_result;
+  LOOP VALUE(index) FROM(0 AS SZ) UNTIL(3) DO
+  {
+    VAR first_byte SZ := index * 4;
+    VAR buffer io::buffer_ref :(@data bytes[&first_byte], @size 4);
+    VAR callback record_transfer;
+    callback.destination := results[index]<-;
+    context.read(@descriptor source.reference().descriptor, @buffer buffer, @offset 0, @callback callback);
+  };
+
+  // The join function waits for every callback before the workers stop.
+  pool.join();
+  LOOP VALUE(index) FROM(0 AS SZ) UNTIL(3) DO
+  {
+    std::printf#("request {index}: succeeded {succeeded}, size {size}\n")(
+      @index index, @succeeded results[index].succeeded, @size results[index].size);
+  };
+  std::printf#("outstanding: {count}, joinable: {joinable}\n")(
+    @count context.outstanding(), @joinable pool.joinable());
+  RETURN 0;
+}

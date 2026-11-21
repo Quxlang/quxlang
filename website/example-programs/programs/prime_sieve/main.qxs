@@ -1,0 +1,62 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::limit STATIC SZ := 60;
+
+::main FUNCTION(): I32
+{
+  VAR is_composite [limit]BOOL;
+  is_composite[0] := TRUE;
+  is_composite[1] := TRUE;
+  LOOP VALUE(candidate SZ) FROM(2) UNTIL(limit) DO
+  {
+    IF (candidate * candidate >= limit)
+    {
+      BREAK;
+    }
+    IF (is_composite[candidate])
+    {
+      CONTINUE;
+    }
+    LOOP VALUE(multiple SZ) FROM(candidate * candidate) UNTIL(limit) BY(candidate) DO
+    {
+      is_composite[multiple] := TRUE;
+    }
+  }
+
+  VAR prime_count I32 := 0;
+  std::print("primes:");
+  LOOP INDEX(number) IN(is_composite) FILTER(is_composite[number] == FALSE) DO
+  {
+    std::printf#(" {number}")(@number number);
+    prime_count++;
+  }
+  std::printf#("\n{count} primes below {limit}\n")(@count prime_count, @limit limit);
+
+  VAR largest SZ := limit - 1;
+  LOOP WHILE (is_composite[largest]) DO
+  {
+    largest--;
+  }
+  std::printf#("largest prime below {limit}: {largest}\n")(@limit limit, @largest largest);
+
+  VAR target SZ := 56;
+  LOOP :search VALUE(first SZ) FROM(2) UNTIL(limit) DO
+  {
+    IF (is_composite[first])
+    {
+      CONTINUE :search;
+    }
+    LOOP VALUE(second SZ) FROM(first) UNTIL(limit) DO
+    {
+      IF (is_composite[second] == FALSE && first + second == target)
+      {
+        std::printf#("{target} = {first} + {second}\n")(
+          @target target, @first first, @second second);
+        BREAK :search;
+      }
+    }
+  }
+  RETURN 0;
+}

@@ -11,7 +11,7 @@ ownership transfer.
 ## Declarations and literals
 
 ```quxlang
-PACK named ...{ .first = I32(@OTHER 19), .second = I32(@OTHER 23) };
+PACK named ...{ .first = 19 AS I32, .second = 23 AS I32 };
 PACK positional ...[19, 23];
 PACK empty ...{};
 PACK nested ...{ .arguments = ...{ .value = 42 } };
@@ -81,7 +81,7 @@ ordinary value cannot bind to a named pack parameter.
 ## Calls and construction
 
 ```quxlang
-PACK arguments ...{ .value = I32(@OTHER 42) };
+PACK arguments ...{ .value = 42 AS I32 };
 consume(...arguments);
 FORWARD PACK(arguments) TO consume;
 ```

@@ -1,5 +1,6 @@
 LANGUAGE QUXLANG EN 0.0;
 
+IMPORT io;
 IMPORT std;
 IMPORT syscall;
 
@@ -145,11 +146,16 @@ PRIVATE(MODULE)
     STATIC_IF(OS_WINDOWS)
     {
       VAR code I64;
-      IF (syscall::windows::socket_close(@socket handle) != 0)
+      VAR close := -< [=handle, code]: BOOL
       {
+        IF (syscall::windows::socket_close(@socket handle) == 0) { RETURN TRUE; }
         code := syscall::windows::socket_last_error() AS I64;
+        RETURN FALSE;
+      };
+      IF (io::close_windows_async_handle(@handle (NULL AS ADDRESS) + (handle AS SZ), @close close))
+      {
+        syscall::windows::socket_cleanup();
       }
-      syscall::windows::socket_cleanup();
       RETURN code;
     }
     STATIC_ELSE STATIC_IF(OS_LINUX)

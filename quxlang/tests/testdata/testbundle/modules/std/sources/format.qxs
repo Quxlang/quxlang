@@ -45,11 +45,12 @@ PRIVATE(MODULE)
       VAR digits [BITS(integer_type)]BYTE;
       VAR begin SZ := BITS(integer_type);
       VAR remaining integer_type := value;
+      STATIC divisor integer_type := radix AS CHECKED integer_type;
       STATIC_IF(IS_SIGNED(integer_type))
       { IF (remaining < 0) { output.write_byte(45); } }
       LOOP DO
       {
-        VAR digit integer_type := remaining % (radix AS integer_type);
+        VAR digit integer_type := remaining % divisor;
         STATIC_IF(IS_SIGNED(integer_type))
         { IF (digit < 0) { digit := 0 - digit; } }
         begin--;
@@ -57,7 +58,7 @@ PRIVATE(MODULE)
         IF (code < 10) { code += 48; }
         ELSE { code += STATIC_CHOOSE(uppercase, 55 AS U8, 87 AS U8); }
         digits[begin] := code AS BYTE;
-        remaining /= radix AS integer_type;
+        remaining /= divisor;
         IF (remaining == 0) { BREAK; }
       }
       LOOP VALUE(index) FROM(begin) UNTIL(BITS(integer_type) AS SZ) DO

@@ -146,7 +146,7 @@ alternative. Swap exchanges alternatives and payloads, including valueless
 state, and self-swap preserves the object. Destruction destroys the active
 payload when one exists.
 
-## Inline and boxed representation
+## Generated comparison
 
 Generated `==` and `<=>` compare the active alternative and its payload when
 the alternatives support generated structural comparison. Equal `VOID`
@@ -155,11 +155,15 @@ valueless variant orders before an active variant. Different alternatives
 order by their declaration indexes. See
 [Comparison Operators](comparison-operators.md).
 
+## Inline and boxed representation
+
 `INLINE_VARIANT` requires enough inline layout for every alternative.
 `VARIANT` owns boxed payload storage and permits recursive alternatives that
 cannot be embedded directly. Representation does not change `ISA`, `UNWRAP`,
 construction, or `MATCH` syntax, but it is part of the declared type's layout
 and ABI.
+
+## See also
 
 See [Unions](unions.md) for name-selected alternatives and [`MATCH`](match.md)
 for guarded and exhaustive handling. See [`VISIT`](visit.md) to specialize one

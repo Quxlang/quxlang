@@ -1,37 +1,36 @@
-# Compute a large byte-rate quotient
+# Large byte-rate quotient
 
-This program computes a byte rate whose total and quotient both exceed the
-signed 64-bit integer range.
+The program divides a byte total that exceeds the range of every 64-bit integer type by a duration
+in seconds and prints the resulting rate. The program demonstrates
+[`std::big_integer`](../standard-modules/std/big-integer.md) construction from an integer literal,
+floor division, decimal formatting, and a typed [exception handler](../overview/exceptions.md).
 
 ```quxlang
-LANGUAGE QUXLANG EN 0.0;
-
-IMPORT std;
-
-::main FUNCTION(): I32
-{
-  VAR bytes std::big_integer := 70000000000000000000;
-  VAR seconds std::big_integer := 3;
-  TRY
-  {
-    VAR rate std::big_integer := bytes.quotient(seconds);
-    std::printf#("{rate} bytes/s\n")(@rate rate.to_string());
-  }
-  CATCH error CONST& std::big_integer_error
-  {
-    std::print("rate unavailable\n");
-    RETURN 1;
-  }
-  RETURN 0;
-}
+--8<-- "example-programs/programs/average_byte_rate/main.qxs"
 ```
 
-Using the [example bundle](index.md#example-bundle), `./out/output/app` prints the following output.
+The program prints the following output.
 
 ```text
-23333333333333333333 bytes/s
+--8<-- "example-programs/programs/average_byte_rate/expected-output.txt"
 ```
 
-`quotient` rounds toward negative infinity and returns a `std::big_integer`.
-`to_string()` formats every digit of the result. The catch handles a zero
-divisor.
+## Explanation
+
+The declarations of `bytes` and `seconds` initialize two `std::big_integer` objects from decimal
+integer literals. The [literal constructor](../standard-modules/std/big-integer.md#constructor)
+derives the value from the decimal spelling of the literal, so the value `70000000000000000000`,
+which exceeds the range of `U64`, is stored exactly.
+
+[`quotient`](../standard-modules/std/big-integer.md#quotient) divides the receiver by its argument,
+rounds the exact quotient toward negative infinity, and returns a new `std::big_integer`.
+[`to_string`](../standard-modules/std/big-integer.md#to_string) returns a
+[`std::string`](../standard-modules/std/string.md) that contains every decimal digit of the result,
+and [`std::printf`](../standard-modules/std/format.md#printf) substitutes that string for the
+`{rate}` field.
+
+A zero divisor causes `quotient` to throw `std::big_integer_error::division_by_zero`. The [`TRY`
+statement](../reference/exceptions.md) encloses the division, and its `CATCH` clause binds a
+constant reference to a thrown `std::big_integer_error` value. The handler prints a replacement
+message and returns a nonzero exit status. The divisor in this program is 3, so the handler does not
+execute.

@@ -1,0 +1,41 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::sensor STRUCT MOVE_ONLY
+{
+  .identifier VAR I32;
+
+  .CONSTRUCTOR FUNCTION(@identifier I32)
+  {
+    .identifier := identifier;
+    std::printf#("sensor {identifier} opened\n")(@identifier identifier);
+  }
+
+  .DESTRUCTOR FUNCTION()
+  {
+    std::printf#("sensor {identifier} closed\n")(@identifier .identifier);
+  }
+}
+
+::decommission FUNCTION(@ARG:retired std::unique_ptr#sensor)
+{
+  std::printf#("decommissioning sensor {identifier}\n")(@identifier retired->.identifier);
+}
+
+::main FUNCTION(): I32
+{
+  AUTO bench_sensor := std::make_unique#sensor(@identifier 7);
+  VAR installed_sensor std::unique_ptr#sensor := MOVE(bench_sensor);
+  std::printf#("bench owns a sensor: {bench}, installation owns a sensor: {installed}\n")(
+    @bench bench_sensor.has_value(), @installed installed_sensor.has_value());
+
+  AUTO replacement_sensor := std::make_unique#sensor(@identifier 8);
+  installed_sensor <-> replacement_sensor;
+  std::printf#("installation now holds sensor {identifier}\n")(
+    @identifier installed_sensor->.identifier);
+
+  decommission(MOVE(replacement_sensor));
+  std::print("leaving main\n");
+  RETURN 0;
+}

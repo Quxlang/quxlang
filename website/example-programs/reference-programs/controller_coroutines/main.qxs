@@ -1,0 +1,50 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT std;
+
+::count_zero_bytes FUNCTION(@buffer io::buffer_ref): SZ
+{
+  VAR count SZ;
+  LOOP VALUE(index) FROM(0 AS SZ) UNTIL(buffer.size) DO
+  {
+    IF (buffer.data[index] == 0) { count++; }
+  };
+  RETURN count;
+}
+
+::fill COROUTINE(@source io::file_ref, @buffer io::buffer_ref): SZ
+{
+  VAR result io::transfer_result;
+  source.read(@buffer buffer, @result result);
+  RETURN result.size;
+}
+
+::fill_both COROUTINE(@source io::file_ref, @first io::buffer_ref, @second io::buffer_ref): SZ
+{
+  // GO schedules the coroutine on the same I/O runtime and returns its future.
+  VAR concurrent := GO fill(@source source, @buffer second);
+  // A direct coroutine call suspends this coroutine until the callee completes.
+  VAR direct SZ := fill(@source source, @buffer first);
+  VAR transferred SZ := direct + AWAIT(concurrent);
+  // GO with an ordinary function schedules the function on the runtime's scheduler.
+  VAR zeros := GO count_zero_bytes(@buffer first);
+  RETURN transferred + AWAIT(zeros);
+}
+
+::main FUNCTION(): I32
+{
+  VAR path std::string := "/dev/zero";
+  VAR source io::file := io::open_read(@path path);
+  VAR first_bytes [4]BYTE;
+  VAR second_bytes [2]BYTE;
+  first_bytes[0] := 9;
+  VAR first io::buffer_ref :(@data first_bytes[&0], @size 4);
+  VAR second io::buffer_ref :(@data second_bytes[&0], @size 2);
+
+  VAR runtime io::async_runtime :(@workers 2);
+  VAR result := ON(runtime) RUN fill_both(@source source.reference(), @first first, @second second);
+  std::printf#("bytes read plus zero bytes counted: {total}\n")(@total result.get());
+  runtime.drain();
+  RETURN 0;
+}

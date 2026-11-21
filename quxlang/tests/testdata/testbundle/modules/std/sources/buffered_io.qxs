@@ -133,27 +133,38 @@ DOC <$ Buffers bytes for a borrowed file. Explicit flush reports write failures 
   DOC <$ Formats a finite value of magnitude below 2^64 with up to eighteen fractional digits, rounding halfway values away from zero. $>
   .write_fixed FUNCTION(@value F64, @precision SZ) MUT
   {
-    IF (precision > 18 || value != value) { THROW (1 AS I32); }
-    VAR remainder F64 := value;
-    IF (remainder < 0.0) { .write_byte(45); remainder := 0.0 - remainder; }
-    VAR rounding F64 := 0.5;
-    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(precision) DO { rounding /= 10.0; }
-    remainder += rounding;
-    IF (remainder >= 18446744073709551616.0) { THROW (1 AS I32); }
-    VAR whole U64 := 0;
-    LOOP INIT { VAR bit U64 := 9223372036854775808; } WHILE (bit != 0) STEP { bit /= 2; } DO
+    VAR magnitude U64 := binary64::encode(value) #&& 9223372036854775807;
+    // The binary64 encoding of 2^64 is below all infinity and NaN encodings.
+    IF (precision > 18 || magnitude >= 4895412794951729152) { THROW (1 AS I32); }
+    VAR encoded_exponent U64 := magnitude #-- 52;
+    VAR significand U64 := magnitude #&& 4503599627370495;
+    VAR exponent I32 := -1074;
+    IF (encoded_exponent != 0)
     {
-      VAR contribution F64 := bit AS APPROXIMATE F64;
-      IF (remainder >= contribution) { whole += bit; remainder -= contribution; }
+      significand := significand #|| 4503599627370496;
+      exponent := (encoded_exponent AS ASSUME I32) - 1075;
     }
-    .write_unsigned(whole);
-    IF (precision != 0) { .write_byte(46); }
+    VAR scale U64 := 1;
+    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(precision) DO { scale *= 10; }
+    // The scaled magnitude is below 2^64 * 10^18 and fits in U128.
+    VAR scaled U128 := (significand AS U128) * (scale AS U128);
+    IF (exponent >= 0) { scaled := scaled #++ (exponent AS ASSUME SZ); }
+    ELSE IF (exponent < -128) { scaled := 0; }
+    ELSE
+    {
+      // Keep the first discarded bit to round halfway values up in magnitude.
+      scaled := ((scaled #-- ((-1 - exponent) AS ASSUME SZ)) + 1) #-- 1;
+    }
+    IF (value < 0.0) { .write_byte(45); }
+    .write_unsigned((scaled / (scale AS U128)) AS ASSUME U64);
+    IF (precision == 0) { RETURN; }
+    .write_byte(46);
+    VAR fraction U64 := (scaled % (scale AS U128)) AS ASSUME U64;
     LOOP VALUE(index) FROM(0 AS SZ) UNTIL(precision) DO
     {
-      remainder *= 10.0;
-      VAR digit U8 := 0;
-      LOOP WHILE (remainder >= 1.0 && digit < 9) STEP { digit++; } DO { remainder -= 1.0; }
-      .write_byte((digit + 48) AS BYTE);
+      scale /= 10;
+      .write_byte(((fraction / scale) + 48) AS ASSUME U8 AS BYTE);
+      fraction %= scale;
     }
   }
 }

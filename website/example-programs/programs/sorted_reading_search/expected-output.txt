@@ -1,0 +1,6 @@
+sorted: 8 17 23 29 35 42 56
+sorted order confirmed: true
+23 recorded: true
+30 recorded: false
+first reading of at least 30: 35 at index 4
+minimum 8, median 29, maximum 56

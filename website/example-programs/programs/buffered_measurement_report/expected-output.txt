@@ -1,0 +1,5 @@
+measurements:
+sample 1: offset -40, scaled -5.000
+sample 2: offset 0, scaled 0.000
+sample 3: offset 125, scaled 15.625
+header bytes transferred directly: 14

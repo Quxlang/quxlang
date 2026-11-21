@@ -2,6 +2,36 @@ LANGUAGE QUXLANG EN 0.0;
 
 IMPORT std;
 
+DOC <$ Orders string keys by unsigned byte value, with a proper prefix sorting first. $>
+::string_ordering_and_keys DUAL_TEST
+{
+  VAR prefix std::string := "a";
+  VAR extended std::string := "a";
+  extended.push_back(0);
+  VAR low std::string;
+  low.push_back(127);
+  VAR high std::string;
+  high.push_back(128);
+  TEST_ASSERT((prefix <=> extended) == ORDER::LESS);
+  TEST_ASSERT((extended <=> prefix) == ORDER::GREATER);
+  TEST_ASSERT((low <=> high) == ORDER::LESS);
+  TEST_ASSERT((high <=> high) == ORDER::EQUAL);
+
+  VAR ordered std::map#(@INDEX std::string, @VALUE I32);
+  TEST_ASSERT(ordered.insert(@key extended, @value (2 AS I32)));
+  TEST_ASSERT(ordered.insert(@key prefix, @value (1 AS I32)));
+  TEST_ASSERT(ordered.at(@key prefix) == 1 && ordered.at(@key extended) == 2);
+  VAR unique std::set#std::string;
+  TEST_ASSERT(unique.insert(extended));
+  TEST_ASSERT(unique.insert(prefix));
+  TEST_ASSERT(unique.insert(prefix) == FALSE);
+  TEST_ASSERT(unique.BEGIN()-> == prefix);
+  VAR hashed std::hadix_map#(@INDEX std::string, @VALUE I32);
+  TEST_ASSERT(hashed.insert(@key high, @value (3 AS I32)));
+  TEST_ASSERT(hashed.insert(@key low, @value (4 AS I32)));
+  TEST_ASSERT(hashed.at(high) == 3 && hashed.at(low) == 4);
+}
+
 DOC <$
   Exercises destruction, copying, moving, and growth of empty string literals.
   $>

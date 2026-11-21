@@ -1,0 +1,23 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR head std::cord#BYTE := "seg";
+  VAR tail std::cord#BYTE := "ment";
+  head += MOVE(tail);
+  VAR prefix std::cord#BYTE := "one ";
+  VAR text std::cord#BYTE := MOVE(prefix) + MOVE(head);
+  std::printf#("{count} bytes, tail empty: {empty}\n")(
+    @count text.size(), @empty tail.empty());
+  VAR bytes std::dynarr#BYTE := MOVE(text).flatten();
+  VAR line std::string;
+  LOOP VALUE(byte) IN(bytes) DO
+  {
+    line.push_back(byte);
+  };
+  line.push_back(10);
+  std::print(line);
+  RETURN 0;
+}

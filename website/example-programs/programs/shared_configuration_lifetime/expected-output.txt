@@ -1,0 +1,8 @@
+configuration 3 loaded
+owners after loading: 1
+reader observes revision 3 with 3 owners
+owners after the reader returned: 2
+loader and service share one object: true
+loader released, service owners: 1
+configuration 3 released
+service released

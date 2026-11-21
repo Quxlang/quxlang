@@ -1,0 +1,8 @@
+42 x relay, in stock: true
+first before second, then first again
+relay: quantity 42, adjustment -3
+flags 172 = ac hex = AC HEX = 254 octal = 10101100 binary
+unit mass 12.500000 default, 12.50 fixed, 1.250000e+01 scientific, 1.3E+01 short
+doubled braces print {}; the literal 0.50 keeps its spelling
+summary has 17 bytes: 42 units of relay
+42 units of relay

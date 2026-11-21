@@ -1,0 +1,4 @@
+user 4821 paid 99 credits on day 7
+numbers found: 3
+user # paid # credits on day #
+grouping is rejected as an invalid pattern

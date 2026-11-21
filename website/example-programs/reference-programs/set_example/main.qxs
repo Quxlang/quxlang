@@ -1,0 +1,20 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR ports std::set#I32;
+  ports.insert(443);
+  ports.insert(22);
+  ports.insert(80);
+  VAR repeated BOOL := ports.insert(22);
+  ports.erase(@key 80);
+  LOOP ITEM(port) IN(ports) DO
+  {
+    std::printf#("port {port}\n")(@port port);
+  };
+  std::printf#("repeated insertion: {repeated}, contains 80: {present}\n")(
+    @repeated repeated, @present ports.contains(@key 80));
+  RETURN 0;
+}

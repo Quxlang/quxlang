@@ -1,33 +1,32 @@
-# Keep a reference while telemetry grows
+# Stable element references during telemetry growth
 
-A geometric array retains the address of its first reading while later readings are appended.
+The program stores a pointer to the first reading of a growing sequence, appends sixteen further
+readings, and then modifies the first reading through the stored pointer. The program demonstrates
+the address stability of [`std::geometric_array`](../standard-modules/std/geometric-array.md) and
+[instance pointers](../overview/pointers.md).
 
 ```quxlang
-LANGUAGE QUXLANG EN 0.0;
-
-IMPORT std;
-
-::main FUNCTION(): I32
-{
-  VAR readings std::geometric_array#I32;
-  readings.push_back(21);
-  VAR first MUT->I32 := readings[0]<-;
-  LOOP VALUE(index I32) FROM(0) UNTIL(16) DO
-  {
-    readings.push_back(index);
-  }
-  first-> := 22;
-  std::printf#("first {first}, readings {count}\n")(
-    @first readings[0], @count readings.size());
-  RETURN 0;
-}
+--8<-- "example-programs/programs/stable_telemetry/main.qxs"
 ```
 
-Using the [example bundle](index.md#example-bundle), `./out/output/app` prints the following output.
+The program prints the following output.
 
 ```text
-first 22, readings 17
+--8<-- "example-programs/programs/stable_telemetry/expected-output.txt"
 ```
 
-Growth allocates additional segments. The reference stays usable because the
-first element stays alive in its existing segment.
+## Explanation
+
+[`push_back`](../standard-modules/std/geometric-array.md#push_back) appends the first reading. The
+[index operator](../standard-modules/std/geometric-array.md#operator-index) returns a mutable
+reference to that element, and the postfix `<-` operator converts the reference to an [instance
+pointer](../reference/pointers.md#instance-pointers) of type `MUT->I32`.
+
+The [numeric sequence loop](../reference/loop-statements.md#numeric-sequence-loops) appends the
+values 0 through 15. A geometric array stores its elements in separately allocated segments whose
+capacities are successive powers of two. Growth allocates further segments and never relocates an
+existing element, so the pointer `first` continues to designate the first element.
+
+The assignment `first-> := 22` dereferences the pointer and replaces the first reading. The final
+statement reads the element through the array and prints the value 22 together with the element
+count 17.

@@ -1,0 +1,60 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT net;
+IMPORT std;
+
+::loopback FUNCTION(): net::endpoint
+{
+  VAR address net::ipv4_address;
+  address.data[0] := 127;
+  address.data[3] := 1;
+  VAR endpoint net::endpoint;
+  endpoint.address := net::ip_address(@OTHER address);
+  RETURN endpoint;
+}
+
+::main FUNCTION(): I32
+{
+  VAR bytes [1]BYTE;
+  VAR buffer io::buffer_ref :(@data bytes[&0], @size 1);
+
+  VAR invalid net::tcp_connection_ref;
+  TRY { invalid.read(@buffer buffer); }
+  CATCH failure CONST& net::error
+  {
+    std::printf#("read through an invalid reference: closed {matched}\n")(
+      @matched failure == net::error::closed);
+  }
+
+  VAR endpoint net::endpoint := loopback();
+  VAR listener net::tcp_listener :(@address endpoint.address);
+  listener.bind(@endpoint endpoint);
+  TRY { listener.listen(@backlog 0); }
+  CATCH failure CONST& net::error
+  {
+    std::printf#("zero backlog: invalid_argument {matched}\n")(
+      @matched failure == net::error::invalid_argument);
+  }
+
+  // The first listener occupies its endpoint, so a second socket cannot bind to it.
+  endpoint := listener.local_endpoint();
+  VAR second net::tcp_listener :(@address endpoint.address);
+  TRY { second.bind(@endpoint endpoint); }
+  CATCH failure CONST& net::error
+  {
+    std::printf#("bind to an occupied endpoint: address_in_use {matched}\n")(
+      @matched failure == net::error::address_in_use);
+  }
+
+  // Closing the listener frees the port, so the kernel refuses connections to it.
+  listener.close();
+  VAR client net::tcp_connection :(@address endpoint.address);
+  TRY { client.connect(@endpoint endpoint); }
+  CATCH failure CONST& net::error
+  {
+    std::printf#("connect to a port without a listener: connection_refused {matched}\n")(
+      @matched failure == net::error::connection_refused);
+  }
+  RETURN 0;
+}

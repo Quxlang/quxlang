@@ -1,0 +1,4 @@
+sent: 4
+size 4, truncated false, from sender true
+size 2, truncated true
+size 0, truncated false

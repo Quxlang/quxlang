@@ -1,0 +1,7 @@
+default reference valid: false
+closing an invalid reference: true
+borrowed reference valid: true
+same local port through owner and copy: true
+owner close: true
+owner open: false
+stale copy reports valid: true

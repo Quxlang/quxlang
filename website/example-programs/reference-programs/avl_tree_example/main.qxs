@@ -1,0 +1,24 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR scores std::avl_tree#I32;
+  LOOP VALUE(score I32) FROM(10) TO(50) BY(10) DO
+  {
+    scores.insert(@index scores.size(), @value score);
+  }
+  VAR rank SZ := scores.lower_bound(25 AS I32);
+  scores.insert(@index rank, @value (25 AS I32));
+  VAR suffix std::avl_tree#I32 := scores.split_off(4);
+  scores.erase(0);
+  scores.append(suffix);
+  LOOP VALUE(index SZ) FROM(0) UNTIL(scores.size()) DO
+  {
+    std::printf#("scores[{index}] = {score}\n")(@index index, @score scores[index]);
+  }
+  std::printf#("rank {rank}, height {height}, suffix size {remaining}\n")(
+    @rank rank, @height scores.height(), @remaining suffix.size());
+  RETURN 0;
+}

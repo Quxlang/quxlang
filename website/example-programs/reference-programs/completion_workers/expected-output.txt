@@ -1,0 +1,4 @@
+request 0: succeeded true, size 4
+request 1: succeeded true, size 4
+request 2: succeeded true, size 4
+outstanding: 0, joinable: false

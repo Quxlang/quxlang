@@ -1,35 +1,31 @@
-# Dispatch jobs in priority order
+# Priority job dispatch
 
-A list allows a dispatcher to add regular jobs at the back and an urgent job at the front.
+The program queues two regular jobs at the back of a list, places one urgent job at the front, and
+dispatches every job in list order. The program demonstrates
+[`std::list`](../standard-modules/std/list.md) insertion and removal at both ends and a [`LOOP
+WHILE` loop](../overview/while-loops.md).
 
 ```quxlang
-LANGUAGE QUXLANG EN 0.0;
-
-IMPORT std;
-
-::main FUNCTION(): I32
-{
-  VAR jobs std::list#I32;
-  jobs.push_back(100);
-  jobs.push_back(101);
-  jobs.push_front(99);
-  LOOP WHILE (jobs.empty() == FALSE) DO
-  {
-    VAR job I32 := jobs.front();
-    jobs.pop_front();
-    std::printf#("dispatch {job}\n")(@job job);
-  }
-  RETURN 0;
-}
+--8<-- "example-programs/programs/dispatch_jobs/main.qxs"
 ```
 
-Using the [example bundle](index.md#example-bundle), `./out/output/app` prints the following output.
+The program prints the following output.
 
 ```text
-dispatch 99
-dispatch 100
-dispatch 101
+--8<-- "example-programs/programs/dispatch_jobs/expected-output.txt"
 ```
 
-The loop copies the front value before popping its node. Removing the node
-ends the lifetime of the element it contained.
+## Explanation
+
+[`push_back`](../standard-modules/std/list.md#push_back) appends the jobs `100` and `101`, and
+[`push_front`](../standard-modules/std/list.md#push_front) places the job `99` before both of them.
+Each element occupies its own node, so neither operation moves an existing element.
+
+The [`LOOP WHILE` statement](../reference/while-loops.md) tests its condition before every iteration
+and ends when [`empty`](../standard-modules/std/list.md#empty) returns `TRUE`.
+
+In each iteration, [`front`](../standard-modules/std/list.md#front) returns a reference to the first
+element, and the declaration of `job` copies that element into a local variable.
+[`pop_front`](../standard-modules/std/list.md#pop_front) then unlinks the first node, destroys the
+element that the node contains, and releases the node. The copy is necessary because a reference to
+the removed element is invalid after `pop_front` returns.

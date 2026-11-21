@@ -614,6 +614,10 @@ LANGUAGE QUXLANG EN 0.0;
   ::temporary_range STATIC_TEST EXPECT_COMPILATION_FAILURE
   { std::find(@range temporary_values(), @value 3); }
 
+  DOC <$ Rejects two temporary ranges in a borrowed algorithm call. $>
+  ::two_temporary_ranges STATIC_TEST EXPECT_COMPILATION_FAILURE
+  { std::equal(@range1 temporary_values(), @range2 temporary_values()); }
+
   DOC <$ Rejects temporary range-view objects as specified by the borrowing contract. $>
   ::temporary_view STATIC_TEST EXPECT_COMPILATION_FAILURE
   { VAR values [2]I32; std::find(@range std::subrange(@first values.BEGIN(), @last values.END()), @value 3); }

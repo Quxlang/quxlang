@@ -1,0 +1,38 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::square_entry STRUCT
+{
+  .input VAR I32;
+  .output VAR MUT->I32;
+
+  .OPERATOR() FUNCTION()
+  {
+    .output-> := .input * .input;
+  }
+}
+
+::main FUNCTION(): I32
+{
+  VAR squares [2]I32;
+  VAR entry square_entry;
+  entry.input := 6;
+  entry.output := squares[0]<-;
+  VAR first std::thread := std::thread(entry);
+  entry.input := 7;
+  entry.output := squares[1]<-;
+  VAR second std::thread := std::thread(entry);
+  std::printf#("joinable before join: {state}\n")(@state first.joinable());
+  first.join();
+  second.join();
+  std::printf#("joinable after join: {state}\n")(@state first.joinable());
+  std::printf#("squares: {first} {second}\n")(@first squares[0], @second squares[1]);
+
+  VAR sum I32 := 0;
+  {
+    VAR adder std::thread := std::thread(-< [sum, squares] { sum := squares[0] + squares[1]; });
+  }
+  std::printf#("sum: {sum}\n")(@sum sum);
+  RETURN 0;
+}

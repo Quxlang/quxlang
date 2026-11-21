@@ -16,14 +16,15 @@ ELSE
 }
 ```
 
-`POLICY` accepts `ASSERT_ENABLED`, `CHECK_BOUNDS`, `CHECK_OVERFLOW`, or
-`UNIMPLEMENTED_PANICS`, followed by a block and an optional `ELSE` block.
+`POLICY` accepts `ASSERT_ENABLED`, `INVARIANT_CHECKED`, `CHECK_BOUNDS`,
+`CHECK_OVERFLOW`, or `UNIMPLEMENTED_PANICS`, followed by a block and an optional `ELSE` block.
 Both alternatives undergo source semantic analysis; lowering selects one.
 `STATIC_IF` discards the unselected source branch before semantic generation.
 
 | Policy | Enabled behavior |
 | --- | --- |
 | `ASSERT_ENABLED` | Evaluate `ASSERT` and diagnose a false condition. Disabled assertions omit condition evaluation. |
+| `INVARIANT_CHECKED` | Diagnose a false `INVARIANT` condition through the assertion failure path. When disabled, each `INVARIANT` condition is an optimization assumption. |
 | `CHECK_BOUNDS` | Check array indexing and array element-address bounds. Disabling checks leaves the validity requirement in force. |
 | `CHECK_OVERFLOW` | Check assumed-in-range arithmetic (`+!`, `-!`, `*!`, `/!` and corresponding shifts/rotations); violations panic. |
 | `UNIMPLEMENTED_PANICS` | A permitted `UNIMPLEMENTED` panics when reached. When disabled, a lowering-reachable statement fails compilation. |
@@ -47,6 +48,7 @@ outputs:
     build_type: Release
     policies:
       policy_assert_enabled: true
+      policy_invariant_checked: true
       policy_check_bounds: true
       policy_check_overflow: true
       policy_unimplemented_panics: false
@@ -55,7 +57,7 @@ outputs:
 The target `native` and module `tests` must be configured in the same bundle.
 Unknown or repeated policy names are rejected.
 
-| Effective build type | Assertions, bounds, overflow checks | Unimplemented panics |
+| Effective build type | Assertions, invariant checks, bounds, overflow checks | Unimplemented panics |
 | --- | --- | --- |
 | `Development`, `Debug`, `DebugOpt`, `DebugCompact`, `DebugCompactOpt` | Enabled | Enabled |
 | `Quick`, `Compact`, `CompactOpt` | Disabled | Enabled |
@@ -64,7 +66,7 @@ Unknown or repeated policy names are rejected.
 Build type names ignore ASCII case and underscores. The default target build
 type is `Development`. An output can override it; for LLVM, the effective LLVM
 `build_type` determines policy defaults. Explicit policy entries override these
-defaults. Constant evaluation enables all four policies independently of output
+defaults. Constant evaluation enables all five policies independently of output
 overrides.
 
 LLVM `Release` and `ReleaseDbgSym` outputs lower each procedure into an

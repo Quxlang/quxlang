@@ -1,0 +1,48 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::bytes_of FUNCTION(@ARG:text STRING_CONSTANT): std::dynarr#BYTE
+{
+  VAR owned_text std::string := text;
+  VAR result std::dynarr#BYTE;
+  LOOP VALUE(index) FROM(0 AS SZ) UNTIL(owned_text.size()) DO
+  {
+    result.push_back(owned_text[index]);
+  }
+  RETURN result;
+}
+
+::print_line FUNCTION(@ARG:bytes CONST& std::dynarr#BYTE)
+{
+  VAR line std::string;
+  LOOP VALUE(value) IN(bytes) DO
+  {
+    line.push_back(value);
+  }
+  line.push_back('\n');
+  std::print(line);
+}
+
+::main FUNCTION(): I32
+{
+  VAR number_pattern std::string := "[0-9]+";
+  VAR numbers std::byte_regex :(@EXPLICIT number_pattern);
+  VAR log_line std::dynarr#BYTE := bytes_of("user 4821 paid 99 credits on day 7");
+
+  print_line(log_line);
+  std::printf#("numbers found: {count}\n")(@count numbers.count(log_line));
+  print_line(numbers.replace(@input log_line, @replacement "#"));
+
+  VAR grouped_pattern std::string := "(user|admin) [0-9]+";
+  TRY
+  {
+    VAR grouped std::byte_regex :(@EXPLICIT grouped_pattern);
+    std::print("grouping accepted\n");
+  }
+  CATCH error CONST& std::byte_regex::error
+  {
+    std::print("grouping is rejected as an invalid pattern\n");
+  }
+  RETURN 0;
+}

@@ -1,0 +1,71 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::order_state ENUM BITS(8) [received DEFAULT, paid, packed, shipped, delivered, cancelled = 100]
+{
+  ::name FUNCTION(@ARG:state order_state): STRING_CONSTANT
+  {
+    IF (state == order_state::received) { RETURN "received"; }
+    ELSE IF (state == order_state::paid) { RETURN "paid"; }
+    ELSE IF (state == order_state::packed) { RETURN "packed"; }
+    ELSE IF (state == order_state::shipped) { RETURN "shipped"; }
+    ELSE IF (state == order_state::delivered) { RETURN "delivered"; }
+    RETURN "cancelled";
+  }
+}
+
+::order_event ENUM [payment, packing, dispatch, arrival, cancellation];
+
+::advance FUNCTION(@state order_state, @event order_event): order_state
+{
+  IF (event == order_event::cancellation)
+  {
+    IF (state < order_state::shipped)
+    {
+      RETURN order_state::cancelled;
+    }
+    RETURN state;
+  }
+  IF (state == order_state::received && event == order_event::payment)
+  {
+    RETURN order_state::paid;
+  }
+  IF (state == order_state::paid && event == order_event::packing)
+  {
+    RETURN order_state::packed;
+  }
+  IF (state == order_state::packed && event == order_event::dispatch)
+  {
+    RETURN order_state::shipped;
+  }
+  IF (state == order_state::shipped && event == order_event::arrival)
+  {
+    RETURN order_state::delivered;
+  }
+  RETURN state;
+}
+
+::main FUNCTION(): I32
+{
+  VAR events [6]order_event :[order_event::payment, order_event::dispatch, order_event::packing,
+    order_event::dispatch, order_event::cancellation, order_event::arrival];
+  VAR state order_state;
+  std::printf#("initial state {name}\n")(@name order_state::name(state));
+  LOOP ITEM(event) IN(events) DO
+  {
+    VAR next order_state := advance(@state state, @event event);
+    IF (next == state)
+    {
+      std::printf#("event ignored in state {name}\n")(@name order_state::name(state));
+    }
+    ELSE
+    {
+      std::printf#("{previous} -> {next}\n")(
+        @previous order_state::name(state), @next order_state::name(next));
+      state := next;
+    }
+  }
+  std::printf#("final state {name}\n")(@name order_state::name(state));
+  RETURN 0;
+}

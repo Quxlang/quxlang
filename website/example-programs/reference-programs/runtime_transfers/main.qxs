@@ -1,0 +1,42 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT std;
+
+::read_twice COROUTINE(@source io::file_ref, @buffer io::buffer_ref): SZ
+{
+  VAR first io::transfer_result;
+  source.read(@buffer buffer, @result first);
+  VAR second io::transfer_result;
+  source.read(@buffer buffer, @result second);
+  RETURN first.size + second.size;
+}
+
+::main FUNCTION(): I32
+{
+  VAR path std::string := "/dev/zero";
+  VAR source io::file := io::open_read(@path path);
+  VAR bytes [4]BYTE;
+  VAR buffer io::buffer_ref :(@data bytes[&0], @size 4);
+
+  VAR runtime io::async_runtime :(@workers 2, @completion_workers 1, @file_workers 1, @entries 16);
+
+  // An explicit submission returns a future for the transfer result.
+  VAR pending := runtime.read(@descriptor source.reference().descriptor, @buffer buffer);
+  VAR transfer io::transfer_result := pending.get();
+  std::printf#("cursor future: succeeded {succeeded}, size {size}\n")(
+    @succeeded transfer.succeeded, @size transfer.size);
+
+  // The overload with an offset submits a positioned transfer to the native completion queue.
+  VAR positioned := runtime.read(@descriptor source.reference().descriptor, @buffer buffer, @offset 128);
+  transfer := positioned.get();
+  std::printf#("positioned future: succeeded {succeeded}, size {size}\n")(
+    @succeeded transfer.succeeded, @size transfer.size);
+
+  // A coroutine launched on the runtime selects the suspending overloads of read.
+  VAR total := ON(runtime) RUN read_twice(@source source.reference(), @buffer buffer);
+  std::printf#("coroutine: total size {total}\n")(@total total.get());
+
+  runtime.drain();
+  RETURN 0;
+}

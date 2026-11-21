@@ -1,0 +1,35 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::account STRUCT
+{
+  .balance VAR I32;
+
+  .CONSTRUCTOR FUNCTION(@balance I32) { .balance := balance; }
+}
+
+::main FUNCTION(): I32
+{
+  VAR first std::shared_ptr#account := std::make_shared#account(@balance 100);
+  {
+    VAR second std::shared_ptr#account := first;
+    second->.balance += 25;
+    std::printf#("owners inside scope: {count}\n")(@count first.use_count());
+  }
+  std::printf#("owners after scope: {count}, balance {balance}\n")(
+    @count first.use_count(), @balance first->.balance);
+
+  VAR owner std::strong_ptr#I32 := std::make_strong_value#I32(7 AS I32);
+  VAR observer std::weak_ptr#I32 := std::weak_ptr#I32(@OTHER owner);
+  {
+    VAR locked std::strong_ptr#I32 := observer.lock();
+    std::printf#("locked value {value}, strong owners: {count}\n")(
+      @value locked->, @count observer.use_count());
+  }
+  owner.reset();
+  std::printf#("expired: {expired}\n")(@expired observer.expired());
+  VAR relocked std::strong_ptr#I32 := observer.lock();
+  std::printf#("lock after expiry has value: {value}\n")(@value relocked.has_value());
+  RETURN 0;
+}

@@ -1,60 +1,110 @@
 # First Program
 
-A Quxlang source file begins with a language declaration. Imports follow it,
-then module-level declarations begin with `::name`.
+This page builds and runs one complete program. The procedure requires a `qxc` compiler and a
+checkout of the Quxlang repository, as [Getting Started](getting-started.md) describes.
+
+## Source file
+
+A Quxlang source file begins with a language declaration. Import declarations follow, and each
+module-level declaration begins with `::name`.
 
 ```quxlang
-LANGUAGE QUXLANG EN 0.0;
-
-IMPORT std;
-
-::clamp FUNCTION(@value I32, @minimum I32, @maximum I32): I32
-{
-  IF (value < minimum)
-  {
-    RETURN minimum;
-  }
-  IF (value > maximum)
-  {
-    RETURN maximum;
-  }
-  RETURN value;
-}
-
-::main FUNCTION(): I32
-{
-  VAR volume I32 := clamp(@value 120, @minimum 0, @maximum 100);
-  ASSERT(volume == 100);
-  RETURN 0;
-}
+--8<-- "example-programs/programs/volume_clamp/main.qxs"
 ```
 
-This example establishes several rules used throughout the language:
+The example establishes several rules that apply throughout the language:
 
-- Keywords are uppercase and user identifiers are lowercase.
+- Keywords are uppercase, and user identifiers are lowercase.
 - `::clamp` and `::main` are declarations in the current module.
-- `@value`, `@minimum`, and `@maximum` are named parameters. Their names make
-  the roles of three same-typed arguments explicit at the call site.
-- Quxlang also supports explicit positional argument groups for APIs where
-  position is meaningful; the [Call arguments](../reference/call-arguments.md)
-  page introduces those after named arguments.
+- `@value`, `@minimum`, and `@maximum` are named parameters. The names state the role of each of
+  the three same-typed arguments at the call site.
 - `: I32` declares the return type.
-- `VAR volume I32 := ...;` declares and initializes a mutable local object.
-- `:=` initializes or assigns; `==` compares.
+- `VAR volume I32 := ...;` declares and initializes a local variable.
+- `:=` initializes or assigns, and `==` compares.
+- `IMPORT std;` makes the standard module available. `std::printf` validates its format string
+  during compilation and receives each value as a named argument.
 
-The compiler operates on the enclosing source bundle. Given a bundle directory,
-a direct compiler invocation has this shape:
+Quxlang also provides positional argument groups for interfaces in which position carries the
+meaning. [Call Arguments](call-arguments.md) introduces both forms.
+
+## Bundle layout
+
+The compiler operates on a source bundle. The bundle for this program has the following layout.
+
+```text
+first-bundle/
+├── qxcbuild.yml
+└── modules/
+    ├── app/
+    │   └── sources/
+    │       └── main.qxs
+    ├── runtime/
+    ├── syscall/
+    ├── posix/
+    ├── std/
+    ├── io/
+    └── net/
+```
+
+The source file above is stored as `modules/app/sources/main.qxs`. The remaining six directories
+are the standard modules, which a bundle contains as source. The following commands, run from
+the root of the repository checkout, create the bundle.
+
+```sh
+mkdir -p first-bundle/modules/app/sources
+for module in runtime syscall posix std io net; do
+  cp -R "quxlang/tests/testdata/testbundle/modules/$module" first-bundle/modules/
+done
+```
+
+## Bundle configuration
+
+The file `first-bundle/qxcbuild.yml` defines one target and one output. The following
+configuration targets Linux on x86-64. For macOS on Apple silicon, the `platform` value is
+`macos` and the `cpu` value is `ARM64`.
+
+```yaml
+targets:
+  native:
+    platform: linux
+    cpu: x64
+    backend: llvm
+    modules:
+      RUNTIME: {source: runtime}
+      syscall: {source: syscall}
+      posix: {source: posix}
+      std: {source: std}
+      io: {source: io}
+      net: {source: net}
+      app: {source: app}
+
+outputs:
+  app:
+    target: native
+    type: executable
+    main_module: app
+    backend_llvm_options:
+      build_type: Release
+```
+
+The `targets` section defines compilation settings and maps each logical module name to a source
+directory. The `outputs` section selects a target and an output type for each artifact path. A
+target without outputs produces no artifact and only runs its enabled static tests.
+
+## Build and execution
 
 ```console
-qxc build ./example-bundle ./out
+$ qxc build ./first-bundle ./out
+$ ./out/output/app
+volume 100
 ```
 
-The current public invocation compiles the targets configured in
-`qxcbuild.yml`. Its `targets` section defines compilation settings, while
-`outputs` selects a target and output type for each artifact path. For example,
-an output key of `linux-x64/app` writes `./out/output/linux-x64/app`. A target
-without outputs only runs its enabled static tests.
+The output key `app` is the exact artifact path below `./out/output`. The compiler adds no
+filename extension.
 
-Next read [Source bundles](source-bundles.md),
-[Source files and imports](../reference/source-files-and-imports.md), and
-[Call arguments](../reference/call-arguments.md).
+## Further reading
+
+[Source Bundles and Targets](source-bundles.md) explains the bundle model.
+[The `qxcbuild.yml` File](qxcbuild-file.md) introduces targets, module mappings, and outputs.
+[Source Files and Imports](source-files-and-imports.md) describes the file preamble and the
+`IMPORT` declaration.

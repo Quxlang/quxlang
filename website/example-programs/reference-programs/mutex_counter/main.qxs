@@ -1,0 +1,38 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR mutex std::ordering_mutex;
+  VAR counter I32 := 0;
+  VAR workers std::dynarr#std::thread;
+  LOOP VALUE(index) FROM(0 AS SZ) UNTIL(4 AS SZ) DO
+  {
+    AUTO increment := -< [mutex, counter]
+    {
+      LOOP VALUE(iteration) FROM(0 AS SZ) UNTIL(1000 AS SZ) DO
+      {
+        mutex.lock();
+        counter++;
+        mutex.unlock();
+      }
+    };
+    workers.push_back(std::thread(increment));
+  }
+  LOOP ITEM(worker) IN(workers) DO { worker.join(); }
+  std::printf#("counter: {counter}\n")(@counter counter);
+
+  VAR compact std::thin_mutex;
+  VAR acquired BOOL := compact.try_lock();
+  std::printf#("thin mutex acquired: {acquired}\n")(@acquired acquired);
+  compact.unlock();
+
+  VAR unfair std::unfair_mutex;
+  VAR first_attempt BOOL := unfair.try_lock();
+  VAR second_attempt BOOL := unfair.try_lock();
+  unfair.unlock();
+  std::printf#("unfair mutex attempts: {first} {second}\n")(
+    @first first_attempt, @second second_attempt);
+  RETURN 0;
+}

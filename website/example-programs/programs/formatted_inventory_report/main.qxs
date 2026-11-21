@@ -1,0 +1,30 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR item_name std::string := "relay";
+  VAR quantity I32 := 42;
+  VAR adjustment I32 := -3;
+  VAR unit_mass F64 := 12.5;
+  VAR in_stock BOOL := TRUE;
+  VAR register_flags U8 := 172;
+
+  std::printf#("{} x {}, in stock: {}\n")(% [quantity, item_name, in_stock]);
+  std::printf#("{1} before {0}, then {1} again\n")(% ["second", "first"]);
+  std::printf#("{name}: quantity {count}, adjustment {delta}\n")(
+    @name item_name, @count quantity, @delta adjustment);
+
+  std::printf#("flags {value:d} = {value:x} hex = {value:X} HEX = {value:o} octal = {value:b} binary\n")(
+    @value register_flags);
+  std::printf#("unit mass {mass} default, {mass:.2f} fixed, {mass:e} scientific, {mass:.1E} short\n")(
+    @mass unit_mass);
+  std::printf#("doubled braces print {{}}; the literal {} keeps its spelling\n")(% [0.50]);
+
+  VAR summary std::string := std::fmt#("{count} units of {name}")(@count quantity, @name item_name);
+  std::printf#("summary has {size} bytes: {summary}\n")(@size summary.size(), @summary summary);
+  std::print(summary);
+  std::print("\n");
+  RETURN 0;
+}

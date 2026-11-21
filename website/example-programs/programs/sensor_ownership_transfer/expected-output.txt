@@ -1,0 +1,8 @@
+sensor 7 opened
+bench owns a sensor: false, installation owns a sensor: true
+sensor 8 opened
+installation now holds sensor 8
+decommissioning sensor 7
+sensor 7 closed
+leaving main
+sensor 8 closed

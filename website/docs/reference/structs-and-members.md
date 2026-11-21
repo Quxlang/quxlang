@@ -61,7 +61,7 @@ type.
 Modifiers appear between `STRUCT` and its body. The current set includes
 `MOVE_ONLY`, `NOT_COPYABLE`, `NO_IMPLICIT_DEFAULT_CONSTRUCTOR`,
 `NO_IMPLICIT_CONSTRUCTORS`, `NO_IMPLICIT_ASSIGNMENT`, `NO_IMPLICIT_COPY`,
-`ANTESTATAL`, `SERIALOID`, `NONSTATIC`, `STRINGLIKE`, `POLYMORPHIC`,
+`ROOTED`, `ANTESTATAL`, `SERIALOID`, `NONSTATIC`, `STRINGLIKE`, `POLYMORPHIC`,
 `VIRTUAL_POLYMORPHIC`, and `FINAL`.
 
 ```quxlang
@@ -77,6 +77,42 @@ static/serialization contracts. See
 [Inheritance](inheritance.md),
 [`STATIC` Compile-Time Constants](static-compile-time-constants.md),
 and [Serialization](serialization.md).
+
+### `ROOTED`
+
+A `ROOTED` structure has a fixed object address for its entire lifetime. The
+modifier suppresses the generated copy constructor, move constructor,
+assignment operator, and swap operator.
+
+```quxlang
+::rooted_value STRUCT ROOTED
+{
+  .value VAR I32;
+
+  .CONSTRUCTOR FUNCTION(@value I32)
+  {
+    .value := value;
+  }
+}
+
+VAR object rooted_value :(@value 7);
+```
+
+The following constraints apply:
+
+- A `ROOTED` structure cannot declare a copy constructor, a move constructor,
+  or a swap operator, including the `OPERATOR<->RHS` form.
+- `ROOTED` and `MOVE_ONLY` cannot be combined.
+- Copy construction, move construction, assignment, swap, by-value argument
+  passing, and the return of a named local object are ill-formed for a
+  `ROOTED` type.
+- A structure that contains a `ROOTED` field has no generated move constructor
+  or swap operator.
+- A template structure preserves the modifier in every instantiation.
+
+A `ROOTED` object is constructed in place and accessed through references or
+pointers. The modifier suits objects whose address is registered elsewhere,
+such as synchronization primitives.
 
 ## `IBC_STRUCT`
 

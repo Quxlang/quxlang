@@ -1,0 +1,28 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR stock std::map#[I32:I32];
+  stock.insert(@key (30 AS I32), @value (4 AS I32));
+  stock.insert(@key (10 AS I32), @value (7 AS I32));
+  stock[20 AS I32] := 2;
+  VAR inserted BOOL := stock.insert_or_assign(@key (10 AS I32), @value (9 AS I32));
+  stock.erase(@key 30);
+  LOOP INDEX(item) VALUE(quantity) IN(stock) DO
+  {
+    std::printf#("item {item}: {quantity}\n")(@item item, @quantity quantity);
+  };
+  TRY
+  {
+    stock.at(@key 30);
+  }
+  CATCH error CONST& std::container_error
+  {
+    std::print("item 30 is absent\n");
+  }
+  std::printf#("inserted: {inserted}, size: {size}\n")(
+    @inserted inserted, @size stock.size());
+  RETURN 0;
+}

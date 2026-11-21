@@ -1,0 +1,4 @@
+first negative reading at index 2
+has value after correction: false
+threshold 15
+threshold has value: false

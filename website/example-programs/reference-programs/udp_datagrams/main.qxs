@@ -1,0 +1,49 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT net;
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR address net::ipv4_address;
+  address.data[0] := 127;
+  address.data[3] := 1;
+  VAR endpoint net::endpoint;
+  endpoint.address := net::ip_address(@OTHER address);
+
+  VAR sender net::udp_session :(@address endpoint.address);
+  VAR receiver net::udp_session :(@address endpoint.address);
+  sender.bind(@endpoint endpoint);
+  receiver.bind(@endpoint endpoint);
+  VAR destination net::endpoint := receiver.local_endpoint();
+
+  VAR message [4]BYTE;
+  message[0] := 10;
+  message[1] := 20;
+  message[2] := 30;
+  message[3] := 40;
+  VAR output io::buffer_ref :(@data message[&0], @size 4);
+  VAR storage [4]BYTE;
+
+  // The destination buffer holds the complete message.
+  std::printf#("sent: {size}\n")(@size sender.send(@buffer output, @destination destination));
+  VAR complete io::buffer_ref :(@data storage[&0], @size 4);
+  VAR result net::datagram_result := receiver.receive(@buffer complete);
+  std::printf#("size {size}, truncated {truncated}, from sender {matched}\n")(
+    @size result.size, @truncated result.truncated,
+    @matched result.source.port == sender.local_endpoint().port);
+
+  // A shorter destination buffer receives a prefix; the remainder of the message is discarded.
+  sender.send(@buffer output, @destination destination);
+  VAR prefix io::buffer_ref :(@data storage[&0], @size 2);
+  result := receiver.receive(@buffer prefix);
+  std::printf#("size {size}, truncated {truncated}\n")(@size result.size, @truncated result.truncated);
+
+  // An empty datagram is a complete message of size zero.
+  VAR empty io::buffer_ref :(@data message[&0], @size 0);
+  sender.send(@buffer empty, @destination destination);
+  result := receiver.receive(@buffer complete);
+  std::printf#("size {size}, truncated {truncated}\n")(@size result.size, @truncated result.truncated);
+  RETURN 0;
+}

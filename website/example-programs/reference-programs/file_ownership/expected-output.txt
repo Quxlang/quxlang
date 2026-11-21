@@ -1,0 +1,6 @@
+source open after move: false
+destination open after move: true
+closing the closed source succeeds: true
+destination open after release: false
+released reference closes the descriptor: true
+stale copy reports valid: true

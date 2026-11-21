@@ -32,6 +32,36 @@ IMPORT syscall;
         @value CONST->socket_timeout, @length U32; RETURN I32);
   }
 
+  DOC <$ Fixed formatting rounds the exact binary64 value and carries into the integer digits. $>
+  ::fixed_rounding UNIT_TEST
+  {
+    VAR descriptors [2]I32;
+    TEST_ASSERT(socket_pair(@domain 1, @type 1, @protocol 0,
+      @descriptors descriptors[&0]) == 0);
+    VAR output io::file :(@native_ref io::file_ref(@descriptor io::io_descriptor_ref(@native_handle descriptors[0])));
+    VAR input io::file :(@native_ref io::file_ref(@descriptor io::io_descriptor_ref(@native_handle descriptors[1])));
+    VAR writer std::buffered_writer := output.reference() AS std::buffered_writer;
+    writer.write_fixed(@value 0.375, @precision 2);
+    writer.write_byte(32);
+    writer.write_fixed(@value -0.375, @precision 2);
+    writer.write_byte(32);
+    writer.write_fixed(@value 9.5, @precision 0);
+    writer.write_byte(32);
+    writer.write_fixed(@value 0.1 AS APPROXIMATE F64, @precision 18);
+    writer.write_byte(32);
+    writer.write_fixed(@value 18446744073709549568.0, @precision 2);
+    writer.write_byte(10);
+    writer.flush();
+
+    VAR reader std::buffered_reader := input.reference() AS std::buffered_reader;
+    VAR line std::dynarr#BYTE;
+    TEST_ASSERT(reader.read_line(line));
+    VAR expected STRING_CONSTANT := "0.38 -0.38 10 0.100000000000000006 18446744073709549568.00";
+    TEST_ASSERT(line.size() == (expected.END() - expected.BEGIN()) AS ASSUME SZ);
+    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(line.size()) DO
+    { TEST_ASSERT(line[index] == expected.BEGIN()[index]); }
+  }
+
   DOC <$ Buffered output preserves unwritten bytes across partial-transfer failures and subsequent writes. $>
   ::partial_flush_recovery UNIT_TEST
   {

@@ -1,0 +1,17 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR output std::buffered_writer :(@EXPLICIT std::standard_output());
+  output.write("unsigned: ");
+  output.write_unsigned(18446744073709551615);
+  output.write("\nsigned: ");
+  output.write_signed(-9223372036854775808);
+  output.write("\nfixed: ");
+  output.write_fixed(@value 1234.5625, @precision 2);
+  output.write("\n");
+  output.flush();
+  RETURN 0;
+}

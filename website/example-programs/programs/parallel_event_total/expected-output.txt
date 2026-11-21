@@ -1,0 +1,2 @@
+batches recorded: 4000
+events counted: 10000

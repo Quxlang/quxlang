@@ -1,0 +1,3 @@
+counter: 4000
+thin mutex acquired: true
+unfair mutex attempts: true false

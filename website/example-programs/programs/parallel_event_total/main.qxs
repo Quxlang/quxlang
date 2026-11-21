@@ -1,0 +1,36 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR total_mutex std::thin_mutex;
+  VAR total U64 := 0;
+  VAR batches SZ := 0;
+
+  {
+    VAR workers std::dynarr#std::thread;
+    LOOP VALUE(worker_number) FROM(1 AS U64) TO(4) DO
+    {
+      AUTO count_events := -< [total_mutex, total, batches, =worker_number]
+      {
+        LOOP VALUE(batch) FROM(0 AS SZ) UNTIL(1000) DO
+        {
+          total_mutex.lock();
+          total += worker_number;
+          batches++;
+          total_mutex.unlock();
+        }
+      };
+      workers.push_back(std::thread(count_events));
+    }
+    LOOP ITEM(worker) IN(workers) DO
+    {
+      worker.join();
+    }
+  }
+
+  std::printf#("batches recorded: {batches}\n")(@batches batches);
+  std::printf#("events counted: {total}\n")(@total total);
+  RETURN 0;
+}

@@ -1,0 +1,5 @@
+owners inside scope: 2
+owners after scope: 1, balance 125
+locked value 7, strong owners: 2
+expired: true
+lock after expiry has value: false

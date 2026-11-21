@@ -87,7 +87,7 @@ exception handling to complete before control leaves the callable:
 {
   TRY
   {
-    THROW I32(@OTHER 17);
+    THROW 17 AS I32;
   }
   CATCH error CONST& I32
   {

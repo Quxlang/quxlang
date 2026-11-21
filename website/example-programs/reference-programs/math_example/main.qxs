@@ -1,0 +1,14 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR first_side F64 := 3.0;
+  VAR second_side F64 := 4.0;
+  VAR hypotenuse F64 := std::sqrt((first_side * first_side) + (second_side * second_side));
+  std::printf#("hypotenuse: {value:.1f}\n")(@value hypotenuse);
+  std::printf#("square root of 2: {value:.15f}\n")(@value std::sqrt(2.0));
+  std::printf#("square root of -1: {value}\n")(@value std::sqrt(-1.0));
+  RETURN 0;
+}

@@ -63,7 +63,7 @@ The current target-level keys are:
 | `binary` | `elf`, `macho`, `pe`, or `wasm` on a native target | Derived from `platform` |
 | `environment` | `glibc`, `musl`, `bionic`, `msvc`, `ucrt`, `cygwin`, `static`, `libsystem`, or `freestanding` | Derived from `platform` |
 | `macho_config` | Mach-O metadata mapping with `minimum_os_version` | Minimum OS version `11.0.0`; valid only for Mach-O targets |
-| `backend` | `llvm` or `cortado` | `llvm` for native; `cortado` for JVM |
+| `backend` | `llvm` or `experimental_cortado` | `llvm` for native; `experimental_cortado` for JVM |
 | `backend_llvm_options` | `build_type` and `enable_strict_aliasing` | Inherit build type; build-dependent strict aliasing |
 | `backend_cortado_options` | Cortado defaults for the target | `mode: standard` |
 | `unimplemented_compiles` | Boolean permission to generate `UNIMPLEMENTED` | `true` |

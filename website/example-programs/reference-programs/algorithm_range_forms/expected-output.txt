@@ -1,0 +1,5 @@
+sorted first 1, reversed first 3
+ones in array 2, ones in list 2
+tail maximum 4, tail is a permutation of the list: false
+array and list hold the same multiset: true
+iterator form agrees: true

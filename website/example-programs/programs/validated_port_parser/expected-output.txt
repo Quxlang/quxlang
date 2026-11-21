@@ -1,0 +1,9 @@
+field 0: parsing "8080"
+field 0: port 8080
+field 0: done
+field 1: parsing "44x3"
+field 1: unexpected character at offset 2
+field 1: done
+field 2: parsing "70000"
+field 2: done
+configuration rejected: 70000 exceeds 65535

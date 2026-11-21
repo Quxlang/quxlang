@@ -1,0 +1,32 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR readings [6]I32 :[12, 7, 30, 7, 18, 25];
+
+  AUTO interior := std::subrange(@first readings[&1], @last readings[&5]);
+  VAR distance std::iterator_difference := interior.END() - interior.BEGIN();
+  std::printf#("interior holds {distance} elements, {sevens} of them equal to 7\n")(
+    @distance distance, @sevens std::count(@range interior, @value 7));
+
+  VAR selected std::dynarr#I32;
+  std::copy_if(@range interior, @output std::back_inserter(selected),
+    @predicate -< (@ARG:value I32): BOOL = value > 10);
+  std::printf#("appended {size} elements: {first} {second}\n")(
+    @size selected.size(), @first selected[0], @second selected[1]);
+
+  VAR equal std::equal_to;
+  VAR compare std::compare_three_way;
+  VAR projection std::identity;
+  std::printf#("equal {equal}, less {less}, projected {projected}\n")(
+    @equal equal(@left readings[1], @right readings[3]),
+    @less compare(@left readings[1], @right readings[0]) == ORDER::LESS,
+    @projected projection(readings[2]));
+
+  VAR storage [4]TYPED_STORAGE(I32);
+  VAR scratch std::scratch_ref#I32 :(@storage storage[&0], @count 4);
+  std::printf#("scratch slots {slots}\n")(@slots scratch.size());
+  RETURN 0;
+}

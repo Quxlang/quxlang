@@ -1,0 +1,17 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR count SZ := std::args::count();
+  VAR launcher std::string := std::args::at(@index 0);
+  std::printf#("launcher name is empty: {empty}\n")(@empty launcher.size() == 0);
+  std::printf#("user-supplied arguments: {count}\n")(@count count - 1);
+  LOOP VALUE(index) FROM(1 AS SZ) UNTIL(count) DO
+  {
+    VAR argument std::string := std::args::at(@index index);
+    std::printf#("argument {index}: {argument}\n")(@index index, @argument argument);
+  }
+  RETURN 0;
+}

@@ -1,0 +1,79 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT net;
+IMPORT std;
+
+DOC <$ Accepts one connection and returns every received byte to the peer until end of stream. $>
+::serve_echo COROUTINE(@listener net::tcp_listener_ref): SZ
+{
+  VAR connection net::tcp_connection := listener.accept();
+  VAR bytes [16]BYTE;
+  VAR buffer io::buffer_ref :(@data bytes[&0], @size 16);
+  VAR total SZ;
+  LOOP DO
+  {
+    VAR received SZ := connection.read(@buffer buffer);
+    IF (received == 0) { BREAK; }
+    VAR sent SZ;
+    LOOP WHILE (sent < received) DO
+    {
+      VAR remaining io::buffer_ref :(@data bytes[&sent], @size received - sent);
+      sent += connection.write(@buffer remaining);
+    }
+    total += received;
+  };
+  RETURN total;
+}
+
+DOC <$ Sends one message, shuts down the sending direction, and counts the echoed bytes. $>
+::exchange COROUTINE(@destination net::endpoint): SZ
+{
+  VAR connection net::tcp_connection :(@address destination.address);
+  connection.connect(@endpoint destination);
+  VAR message [5]BYTE;
+  message[0] := 'h';
+  message[1] := 'e';
+  message[2] := 'l';
+  message[3] := 'l';
+  message[4] := 'o';
+  VAR sent SZ;
+  LOOP WHILE (sent < 5) DO
+  {
+    VAR output io::buffer_ref :(@data message[&sent], @size 5 - sent);
+    sent += connection.write(@buffer output);
+  }
+  connection.shutdown(@direction net::shutdown_direction::send);
+  VAR echoed [5]BYTE;
+  VAR count SZ;
+  LOOP DO
+  {
+    VAR input io::buffer_ref :(@data echoed[&0], @size 5);
+    VAR received SZ := connection.read(@buffer input);
+    IF (received == 0) { BREAK; }
+    count += received;
+  };
+  RETURN count;
+}
+
+::main FUNCTION(): I32
+{
+  VAR address net::ipv4_address;
+  address.data[0] := 127;
+  address.data[3] := 1;
+  VAR endpoint net::endpoint;
+  endpoint.address := net::ip_address(@OTHER address);
+
+  VAR listener net::tcp_listener :(@address endpoint.address);
+  listener.bind(@endpoint endpoint);
+  listener.listen();
+  endpoint := listener.local_endpoint();
+
+  VAR runtime io::async_runtime :(@workers 1);
+  VAR served := ON(runtime) RUN serve_echo(@listener listener.reference());
+  VAR exchanged := ON(runtime) RUN exchange(@destination endpoint);
+  std::printf#("client received: {count}\n")(@count exchanged.get());
+  std::printf#("server echoed: {count}\n")(@count served.get());
+  runtime.drain();
+  RETURN 0;
+}

@@ -160,6 +160,17 @@ LANGUAGE QUXLANG EN 0.0;
     RETURN TRUE;
   }
 
+  DOC <$ Orders strings lexicographically by unsigned byte value. A proper prefix sorts first. $>
+  .OPERATOR<=> FUNCTION(@OTHER CONST& string) CONST: ORDER
+  {
+    LOOP INIT { VAR index SZ := 0; }
+      WHILE (index < .length && index < OTHER.length) STEP { index++; } DO
+    {
+      RETURN_UNEQUAL (THIS[index] AS U8) <=> (OTHER[index] AS U8);
+    }
+    RETURN .length <=> OTHER.length;
+  }
+
   .OPERATOR[] FUNCTION(%index SZ): BYTE
   {
     ASSERT(index < .length);

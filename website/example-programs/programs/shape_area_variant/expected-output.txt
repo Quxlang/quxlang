@@ -1,0 +1,5 @@
+circle with radius 1.5
+rectangle 2.0 by 3.5
+empty slot
+square with side 4.0
+3 shapes, total area 30.07

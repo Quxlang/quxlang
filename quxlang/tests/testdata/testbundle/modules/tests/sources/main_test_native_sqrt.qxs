@@ -21,6 +21,9 @@ IMPORT std;
   }
   ::exact_and_special DUAL_TEST KNOWN_BROKEN_IF(ARCH_IS_JVM)
   {
+    VAR width F64 := 3.0;
+    VAR height F64 := 4.0;
+    TEST_ASSERT(std::sqrt((width * width) + (height * height)) == 5.0);
     TEST_ASSERT(std::sqrt(0.0) == 0.0);
     TEST_ASSERT(std::sqrt(1.0) == 1.0);
     TEST_ASSERT(std::sqrt(4.0) == 2.0);
@@ -28,6 +31,12 @@ IMPORT std;
     TEST_ASSERT(encode(std::sqrt(decode(9218868437227405312))) == 9218868437227405312);
     TEST_ASSERT(encode(std::sqrt(-1.0)) == 9221120237041090560);
     TEST_ASSERT(encode(std::sqrt(decode(9221120237041090561))) == 9221120237041090560);
+  }
+
+  DOC <$ Reports a compilation error for decimal literals used as integer-literal operands. $>
+  ::decimal_literal_multiplication STATIC_TEST EXPECT_COMPILATION_FAILURE
+  {
+    VAR result F64 := std::sqrt((3.0 * 3.0) + (4.0 * 4.0));
   }
   ::rounding_and_extremes DUAL_TEST KNOWN_BROKEN_IF(ARCH_IS_JVM)
   {

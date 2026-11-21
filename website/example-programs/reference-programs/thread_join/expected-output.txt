@@ -1,0 +1,4 @@
+joinable before join: true
+joinable after join: false
+squares: 36 49
+sum: 85

@@ -127,7 +127,7 @@ selection; it does not impose a conversion on the return operand.
 ```quxlang
 ::produce COROUTINE(): task#I32
 {
-  RETURN I32(@OTHER 42);
+  RETURN 42 AS I32;
 }
 ```
 

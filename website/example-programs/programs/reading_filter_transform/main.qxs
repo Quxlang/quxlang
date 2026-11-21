@@ -1,0 +1,41 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::print_readings FUNCTION(@label STRING_CONSTANT, @readings CONST& std::dynarr#I32)
+{
+  std::print(label);
+  std::for_each(@range readings, @action -< (@ARG:reading I32)
+  {
+    std::printf#(" {reading}")(@reading reading);
+  });
+  std::print("\n");
+}
+
+::main FUNCTION(): I32
+{
+  VAR raw_readings [8]I32 :[21, -1, 19, 24, -1, 30, 19, 26];
+  AUTO is_valid := -< (@ARG:reading I32): BOOL = reading >= 0;
+
+  std::printf#("readings equal to 19: {count}\n")(@count std::count(@range raw_readings, @value 19));
+  std::printf#("invalid readings: {count}\n")(
+    @count std::count_if(@range raw_readings, @predicate -< (@ARG:reading I32): BOOL = reading < 0));
+
+  AUTO first_invalid := std::find_if_not(@range raw_readings, @predicate is_valid);
+  std::printf#("first invalid reading at index {index}\n")(@index first_invalid - raw_readings.BEGIN());
+
+  VAR valid_readings std::dynarr#I32;
+  std::copy_if(@range raw_readings, @output std::back_inserter(valid_readings), @predicate is_valid);
+  print_readings(@label "valid:", @readings valid_readings);
+
+  VAR tenths std::dynarr#I32;
+  std::transform(@range valid_readings, @output std::back_inserter(tenths),
+    @operation -< (@ARG:reading I32): I32 = reading * 10 + 5);
+  print_readings(@label "calibrated tenths:", @readings tenths);
+
+  AUTO hottest := std::max_element(@range valid_readings);
+  std::printf#("hottest valid reading: {reading}\n")(@reading hottest->);
+  std::printf#("every valid reading below 40: {below}\n")(
+    @below std::all_of(@range valid_readings, @predicate -< (@ARG:reading I32): BOOL = reading < 40));
+  RETURN 0;
+}

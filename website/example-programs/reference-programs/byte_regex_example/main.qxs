@@ -1,0 +1,37 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::to_bytes FUNCTION(@ARG:text STRING_CONSTANT): std::dynarr#BYTE
+{
+  VAR bytes std::dynarr#BYTE;
+  LOOP INIT { VAR cursor CONST=>>BYTE := text.BEGIN(); }
+    WHILE (cursor != text.END()) STEP { cursor++; } DO
+  { bytes.push_back(cursor[0]); }
+  RETURN MOVE(bytes);
+}
+
+::main FUNCTION(): I32
+{
+  VAR pattern std::string := "[0-9]+|error";
+  VAR expression std::byte_regex :(@EXPLICIT pattern);
+  VAR input std::dynarr#BYTE := to_bytes("error 404 at line 17");
+  std::printf#("matches: {count}\n")(@count expression.count(input));
+
+  VAR replaced std::dynarr#BYTE := expression.replace(@input input, @replacement "#");
+  VAR output std::buffered_writer :(@EXPLICIT std::standard_output());
+  output.write(replaced);
+  output.write("\n");
+  output.flush();
+
+  VAR unsupported std::string := "(error)";
+  TRY
+  {
+    VAR grouped std::byte_regex :(@EXPLICIT unsupported);
+  }
+  CATCH error CONST& std::byte_regex::error
+  {
+    std::print("grouping is rejected\n");
+  }
+  RETURN 0;
+}

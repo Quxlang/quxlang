@@ -13,8 +13,8 @@ is always `BOOL`.
 | --- | --- | --- |
 | `a && b` | `a` and `b` | `a` is false |
 | `a !& b` | not (`a` and `b`) | `a` is false |
-| `a !\| b` | not (`a` or `b`) | `a` is true |
-| `a \|\| b` | `a` or `b` | `a` is true |
+| <code>a !&#124; b</code> | not (`a` or `b`) | `a` is true |
+| <code>a &#124;&#124; b</code> | `a` or `b` | `a` is true |
 | `a ^^ b` | exactly one operand is true | never |
 | `a !^ b` | both operands have the same truth value | never |
 | `a ^> b` | `a` implies `b` | `a` is false |

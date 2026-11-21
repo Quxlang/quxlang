@@ -1,0 +1,30 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  VAR bytes [4]BYTE;
+  bytes[0] := 7;
+  bytes[1] := 7;
+  bytes[2] := 7;
+  bytes[3] := 7;
+  VAR path std::string := "/dev/zero";
+  VAR source io::file := io::open_read(@path path);
+
+  // The reference covers the first two bytes of the array.
+  VAR prefix io::buffer_ref :(@data bytes[&0], @size 2);
+  VAR result io::transfer_result;
+  source.read(@buffer prefix, @result result);
+  std::printf#("succeeded: {succeeded}\n")(@succeeded result.succeeded);
+  std::printf#("size: {size}\n")(@size result.size);
+  std::printf#("bytes: {first} {second} {third} {fourth}\n")(
+    @first bytes[0] AS U8, @second bytes[1] AS U8, @third bytes[2] AS U8, @fourth bytes[3] AS U8);
+
+  VAR closed io::file;
+  closed.read(@buffer prefix, @result result);
+  std::printf#("closed owner succeeded: {succeeded}, size: {size}\n")(
+    @succeeded result.succeeded, @size result.size);
+  RETURN 0;
+}
