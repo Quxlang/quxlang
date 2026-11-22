@@ -12,6 +12,11 @@
 
 namespace quxlang::parsers
 {
+    namespace detail
+    {
+        inline expression_lambda parse_lambda_expression(parsing_context& ctx);
+    }
+
     /** Returns whether a direct callee reference names an IEEE comparison keyword. */
     inline auto is_ieee_comparison_keyword_reference(expression const& callee) -> bool
     {
@@ -57,7 +62,16 @@ namespace quxlang::parsers
             result.args = parse_call_argument_list(ctx, ")");
         }
 
-        result.location = ctx.get_location_optional(parse_iterator(begin), parse_iterator(pos));
+        parse_iterator callback_begin = pos;
+        skip_whitespace_and_comments(callback_begin, end);
+        std::string symbol = peek_symbol(callback_begin, end);
+        if (symbol == "{" || symbol == "-<")
+        {
+            pos = callback_begin;
+            expression_lambda callback = detail::parse_lambda_expression(ctx);
+            result.args.push_back(expression_arg{.name = "CALLBACK", .value = std::move(callback), .location = ctx.get_location_optional(callback_begin, pos)});
+        }
+        result.location = ctx.get_location_optional(begin, pos);
         return std::move(result);
     }
 

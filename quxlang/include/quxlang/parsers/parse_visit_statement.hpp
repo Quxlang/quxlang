@@ -37,7 +37,7 @@ namespace quxlang::parsers
 
         parse_iterator const subject_begin = position;
         detail::statement_expression_boundary const boundary = detail::find_statement_expression_boundary(
-            position, end, true, false, "Expected AS, ';', or '{' after VISIT expression");
+            position, end, detail::statement_expression_header::visit_subject, "Expected AS, ';', or '{' after VISIT expression");
 
         function_visit_statement result;
         result.subject = detail::parse_bounded_statement_expression(ctx, subject_begin, boundary.position, "Unexpected text in VISIT subject expression");

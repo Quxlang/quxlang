@@ -19,7 +19,6 @@ namespace quxlang::parsers
         auto begin = pos;
 
         skip_whitespace_and_comments(pos, end);
-        std::optional< expression > expr;
         if (auto expr = try_parse_expression(ctx); expr)
         {
             skip_whitespace_and_comments(pos, end);

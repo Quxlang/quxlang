@@ -23,6 +23,14 @@ namespace quxlang::parsers::detail
         shadow_binding,
     };
 
+    /** Selects the delimiters recognized in each statement header. */
+    enum class statement_expression_header
+    {
+        match_subject,
+        match_guard,
+        visit_subject,
+    };
+
     /** Records where and how a nesting-aware statement-header expression ends. */
     struct statement_expression_boundary
     {
@@ -31,7 +39,7 @@ namespace quxlang::parsers::detail
     };
 
     /** Finds a top-level statement-header delimiter while skipping nested expressions and comments. */
-    inline auto find_statement_expression_boundary(parse_iterator position, parse_iterator end, bool permit_terminator, bool permit_shadow,
+    inline auto find_statement_expression_boundary(parse_iterator position, parse_iterator end, statement_expression_header header,
                                                     std::string const& missing_delimiter_message) -> statement_expression_boundary
     {
         std::size_t parenthesis_depth = 0;
@@ -118,6 +126,23 @@ namespace quxlang::parsers::detail
 
             if (at_top_level)
             {
+                parse_iterator opening = position;
+                if ((*position == ':' && skip_symbol_if_is(opening, end, ":{")) || (*position == '.' && skip_symbol_if_is(opening, end, "...{")))
+                {
+                    ++brace_depth;
+                    position = opening;
+                    continue;
+                }
+                if (separated_from_expression && *position == 'D' && skip_keyword_if_is(opening, end, "DO"))
+                {
+                    skip_whitespace_and_comments(opening, end);
+                    if (skip_symbol_if_is(opening, end, "{"))
+                    {
+                        ++brace_depth;
+                        position = opening;
+                        continue;
+                    }
+                }
                 if (*position == '{')
                 {
                     if (top_level_lambda_body_pending)
@@ -130,14 +155,14 @@ namespace quxlang::parsers::detail
                     }
                     return statement_expression_boundary{.position = position, .delimiter = statement_expression_delimiter::body};
                 }
-                if (permit_terminator && *position == ';')
+                if (header == statement_expression_header::visit_subject && *position == ';')
                 {
                     return statement_expression_boundary{.position = position, .delimiter = statement_expression_delimiter::terminator};
                 }
-                if (separated_from_expression && !top_level_lambda_body_pending)
+                if (header != statement_expression_header::match_guard && separated_from_expression && !top_level_lambda_body_pending)
                 {
                     parse_iterator trial = position;
-                    if (permit_shadow && skip_keyword_if_is(trial, end, "SHADOW"))
+                    if (header == statement_expression_header::match_subject && skip_keyword_if_is(trial, end, "SHADOW"))
                     {
                         return statement_expression_boundary{.position = position, .delimiter = statement_expression_delimiter::shadow_binding};
                     }
@@ -153,7 +178,7 @@ namespace quxlang::parsers::detail
             {
                 top_level_lambda_body_pending = true;
             }
-            else if (at_top_level && top_level_lambda_body_pending && *position == '=')
+            else if (at_top_level && top_level_lambda_body_pending && *position == '=' && peek_symbol(position, end) == "=")
             {
                 top_level_lambda_body_pending = false;
             }

@@ -1,8 +1,9 @@
 # Lambdas
 
-A lambda is an unnamed callable value introduced by `-<`. It may capture
+A lambda is an unnamed callable value. It may capture
 enclosing locals, declare call parameters and a return type, and use either a
-block body or a returned-expression body.
+block body or a returned-expression body. An explicit lambda starts with `-<`.
+A trailing block on a call implicitly declares a lambda.
 
 ## Grammar
 
@@ -50,6 +51,40 @@ Lambda parameters use the full function-parameter grammar, including named and
 positional parameters, type deduction, packs, and defaults. Calls use the same
 argument syntax as other callable values. An empty block with no explicit
 return type deduces `VOID`.
+
+## Trailing callbacks
+
+A block following a parenthesized call supplies its final named argument,
+`@CALLBACK`. The block declares a parameterless lambda with implicit reference
+capture and a `VOID` result. A `RETURN` or `RETURN_UNEQUAL` statement in the
+callback body requires an explicit `-<` declaration. An explicit callback
+can deduce its return type, as in `foo() -< { RETURN 1; }`.
+Other arguments retain their ordinary names and positions. The callee
+controls when and how often the callback runs.
+
+```quxlang
+VAR total I32 := 0;
+repeat(@count 2) { total += 3; };
+repeat(@count 2, @CALLBACK -< { total += 3; });
+```
+
+The two calls pass equivalent callbacks. A trailing `-<` declaration accepts
+the ordinary lambda syntax, including captures, parameters and return types.
+A call that supplies both an explicit `@CALLBACK` and a trailing lambda has a
+duplicate named argument.
+
+```quxlang
+VAR offset I32 := 4;
+VAR result I32 := transform(3) -< [=offset] (@ARG:value I32): I32
+{
+  RETURN value + offset;
+};
+```
+
+A standalone call with a trailing block ends with a semicolon.
+In a `MATCH` subject, a `WHERE` guard or a `VISIT` subject, a top-level bare
+block begins the statement body. Parentheses around the callback call allow a
+bare trailing block within these expressions.
 
 ## Synchronous and coroutine invocation
 

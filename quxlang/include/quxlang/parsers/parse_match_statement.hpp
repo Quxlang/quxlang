@@ -37,7 +37,7 @@ namespace quxlang::parsers
 
         parse_iterator const subject_begin = position;
         detail::statement_expression_boundary const boundary = detail::find_statement_expression_boundary(
-            position, end, false, true, "Expected AS, SHADOW, or '{' after MATCH expression");
+            position, end, detail::statement_expression_header::match_subject, "Expected AS, SHADOW, or '{' after MATCH expression");
 
         function_match_statement result;
         result.subject = detail::parse_bounded_statement_expression(ctx, subject_begin, boundary.position, "Unexpected text in MATCH subject expression");
@@ -169,7 +169,10 @@ namespace quxlang::parsers
             if (skip_keyword_if_is(position, end, "WHERE"))
             {
                 skip_whitespace_and_comments(position, end);
-                arm.where_condition = parse_expression(ctx);
+                detail::statement_expression_boundary guard_end = detail::find_statement_expression_boundary(
+                    position, end, detail::statement_expression_header::match_guard, "Expected a block after MATCH guard");
+                arm.where_condition = detail::parse_bounded_statement_expression(ctx, position, guard_end.position, "Unexpected text in MATCH guard");
+                position = guard_end.position;
             }
             else if (skip_keyword_if_is(position, end, "OTHERWISE"))
             {

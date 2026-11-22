@@ -1,7 +1,10 @@
 # Overview of Lambdas
 
-A lambda begins with `-<`. It may declare captures, parameters, a return type,
-and either an expression or block body.
+An explicit lambda begins with `-<`. It may declare captures, parameters, a return type,
+and either an expression or block body. A call can also pass a block as its
+`@CALLBACK` argument. For example, `repeat(@count 2) { total += 1; };` passes a
+lambda that increments `total` each time the callee invokes it. A callback
+that returns a value uses `-<`, as in `read() -< { RETURN total; }`.
 
 ## Expression bodies
 

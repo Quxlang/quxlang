@@ -70,6 +70,10 @@ namespace quxlang::parsers
         }
 
         auto kw = next_keyword(pos, end);
+        if (ctx.in_implicit_callback && (kw == "RETURN" || kw == "RETURN_UNEQUAL"))
+        {
+            throw syntax_compilation_error(kw + " in a trailing callback requires an explicit '-<' lambda");
+        }
         if (skip_keyword_if_is(pos, end, "INIT"))
         {
             function_init_statement statement;

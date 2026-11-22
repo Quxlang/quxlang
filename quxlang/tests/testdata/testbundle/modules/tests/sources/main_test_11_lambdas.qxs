@@ -115,3 +115,45 @@ LANGUAGE QUXLANG EN 0.0;
 {
   TEST_ASSERT(lambda_unlisted_capture_rejected_call() == 1);
 }
+
+::trailing_lambda_tests NAMESPACE
+{
+  ::repeat FUNCTION(@count I32, @CALLBACK AUTO)
+  {
+    LOOP INIT { VAR index I32 := 0; } WHILE(index < count) STEP { index++; } DO
+    {
+      CALLBACK();
+    }
+  }
+
+  ::transform FUNCTION(@ARG:value I32, @CALLBACK:operation AUTO): I32
+  {
+    RETURN operation(value);
+  }
+
+  ::callback_arguments DUAL_TEST
+  {
+    VAR total I32 := 0;
+    repeat(@count 0) { total := 100; };
+    repeat(@count 2) { total += 3; };
+    repeat(@count 1) -< [total] { total += 4; };
+    AUTO increment := -< { total += 1; };
+    repeat(@count 1, @CALLBACK increment);
+    TEST_ASSERT(total == 11);
+
+    VAR result I32 := transform(3) -< [=total] (@ARG:value I32): I32 { RETURN total + value; };
+    TEST_ASSERT(result == 14);
+    repeat(@count 1)
+    {
+      total := transform(2) -< (@ARG:value I32) { RETURN total + value; }
+        - 1;
+    };
+    TEST_ASSERT(total == 12);
+    TEST_ASSERT((transform(3) -< (@ARG:value I32) = value * 2) == 6);
+  }
+
+  ::duplicate_callback STATIC_TEST EXPECT_COMPILATION_FAILURE
+  {
+    repeat(@count 1, @CALLBACK -< {}) {};
+  }
+}

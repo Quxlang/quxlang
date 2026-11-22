@@ -26,6 +26,9 @@ namespace quxlang::parsers
         /// Stores the prefix documentation until the following declaration consumes it.
         std::optional< std::string > pending_doc;
 
+        /// Indicates that the current callable body is a trailing block introduced without -<.
+        bool in_implicit_callback = false;
+
         parse_iterator iter_begin;
         parse_iterator iter_pos;
         parse_iterator iter_end;

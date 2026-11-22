@@ -8622,6 +8622,22 @@ TEST(parsing, lambda_explicit_return_type_allows_block_body)
     EXPECT_TRUE(lambda.body.statements.front().template type_is< quxlang::function_return_statement >());
 }
 
+TEST(parsing, implicit_trailing_callback_rejects_return_statements)
+{
+    for (char const* source : {"foo() { RETURN; }", "foo() { IF (TRUE) { RETURN 1; } }",
+                               "foo() { RETURN_UNEQUAL 1, 2; }", "foo() { inner() -< { RETURN; }; RETURN; }"})
+    {
+        SCOPED_TRACE(source);
+        EXPECT_THROW(parse_expression_text(source), quxlang::compilation_error);
+    }
+}
+
+TEST(parsing, trailing_callback_statement_requires_semicolon)
+{
+    EXPECT_THROW(parse_expression_text("-< { foo() {} }"), quxlang::compilation_error);
+    EXPECT_THROW(parse_expression_text("-< { foo() -< [] {} }"), quxlang::compilation_error);
+}
+
 TEST(parsing, lambda_expression_body_requires_equal_for_parenthesized_expression)
 {
     EXPECT_THROW(parse_expression_text("-< (x)"), std::logic_error);

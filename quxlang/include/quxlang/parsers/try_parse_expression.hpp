@@ -142,11 +142,11 @@ namespace quxlang::parsers
             }
         }
 
-        inline expression_lambda parse_lambda_expression(parsing_context& ctx)
+        /** Parses the capture list, parameters, qualifiers and result type following a lambda introducer. */
+        inline expression_lambda parse_lambda_declaration(parsing_context& ctx)
         {
             auto& pos = ctx.iter_pos;
             auto end = ctx.iter_end;
-            auto begin = pos;
             if (!skip_symbol_if_is(pos, end, "-<"))
             {
                 throw syntax_compilation_error("Expected '-<'");
@@ -194,6 +194,49 @@ namespace quxlang::parsers
                 skip_whitespace_and_comments(pos, end);
             }
 
+            return lambda;
+        }
+
+        /** Restores the enclosing callable's return rules after parsing a nested callable body. */
+        class lambda_body_scope
+        {
+            parsing_context& context;
+            bool enclosing_implicit_callback;
+
+          public:
+            /** Selects the return rules for the current lambda body. */
+            lambda_body_scope(parsing_context& ctx, bool implicit_callback)
+                : context(ctx), enclosing_implicit_callback(std::exchange(ctx.in_implicit_callback, implicit_callback))
+            {
+            }
+
+            /** Restores the enclosing callable's return rules. */
+            ~lambda_body_scope()
+            {
+                context.in_implicit_callback = enclosing_implicit_callback;
+            }
+
+            lambda_body_scope(lambda_body_scope const&) = delete;
+            lambda_body_scope& operator=(lambda_body_scope const&) = delete;
+        };
+
+        /** Parses a lambda, including the implicit declaration of a trailing block. */
+        inline expression_lambda parse_lambda_expression(parsing_context& ctx)
+        {
+            parse_iterator& pos = ctx.iter_pos;
+            parse_iterator end = ctx.iter_end;
+            parse_iterator begin = pos;
+            expression_lambda lambda;
+            bool implicit_callback = peek_symbol(pos, end) == "{";
+            if (implicit_callback)
+            {
+                lambda.coroutine_capable = true;
+            }
+            else
+            {
+                lambda = parse_lambda_declaration(ctx);
+            }
+            lambda_body_scope scope(ctx, implicit_callback);
             if (auto block = try_parse_function_block(ctx); block.has_value())
             {
                 lambda.body = std::move(*block);
@@ -407,9 +450,10 @@ namespace quxlang::parsers
             *value_bind_point = std::move(literal);
             have_anything = true;
         }
-        else if (skip_keyword_if_is(pos, end, "KWARGS"))
+        else if (kw_pre_translate == "KWARGS" || kw_pre_translate == "CALLBACK")
         {
-            *value_bind_point = expression_symbol_reference{.symbol = freebound_identifier{.name = "KWARGS"}};
+            skip_keyword_if_is(pos, end, kw_pre_translate);
+            *value_bind_point = expression_symbol_reference{.symbol = freebound_identifier{.name = kw_pre_translate}};
             have_anything = true;
         }
         else if (skip_keyword_if_is(pos, end, "APPLY"))
@@ -1425,6 +1469,7 @@ namespace quxlang::parsers
                     generator.parameters.push_back(ast2_function_parameter{.name = *index_name, .api_name = "INDEX", .type = size_type{}});
                 }
                 generator.return_type = void_type{};
+                lambda_body_scope scope(ctx, false);
                 generator.body = parse_function_block(ctx);
                 generator.body.completion = function_completion::continue_;
                 new_expr.initializer = new_generator_initializer{.generator = std::move(generator)};

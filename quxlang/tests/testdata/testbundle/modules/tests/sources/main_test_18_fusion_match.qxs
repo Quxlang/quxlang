@@ -319,3 +319,16 @@ LANGUAGE QUXLANG EN 0.0;
 
 
 }
+
+::match_trailing_callback_guard_test DUAL_TEST
+{
+  VAR subject match_variant;
+  AUTO check := -< (@CALLBACK:action AUTO): BOOL { action(); RETURN TRUE; };
+  VAR selected BOOL := FALSE;
+  MATCH subject
+  {
+    TYPE I32 WHERE :{ .enabled = TRUE }.enabled && (check() { selected := TRUE; }) { TEST_ASSERT(selected); }
+    DEFAULT { TEST_ASSERT(FALSE); }
+  }
+  TEST_ASSERT(selected);
+}
