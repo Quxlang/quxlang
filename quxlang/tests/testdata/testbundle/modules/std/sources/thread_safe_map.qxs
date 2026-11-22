@@ -1,0 +1,31 @@
+LANGUAGE QUXLANG EN 0.0;
+
+DOC <$
+  An ordered map with mutually exclusive indexed reads and writes. Each read
+  returns a copy of the mapped value. All accessing threads must finish before
+  destruction begins.
+  $>
+::thread_safe_map TEMPLATE(@INDEX TYPE AUTO, @VALUE TYPE AUTO) STRUCT ROOTED
+{
+  PRIVATE(CLASS)
+  {
+    .mutex VAR unfair_mutex;
+    .entries VAR map#[INDEX:VALUE];
+  }
+
+  DOC <$ Copies the mapped value under the lock. An absent key raises container_error::missing_key. $>
+  .OPERATOR[] FUNCTION(%key CONST& INDEX) MUT: VALUE
+  {
+    .mutex.lock();
+    DEFER { .mutex.unlock(); }
+    RETURN .entries.at(@key key);
+  }
+
+  DOC <$ Inserts or replaces the mapped value under the lock. $>
+  .OPERATOR[]:= FUNCTION(%key INDEX, @OTHER VALUE) MUT
+  {
+    .mutex.lock();
+    DEFER { .mutex.unlock(); }
+    .entries.insert_or_assign(@key MOVE(key), @value MOVE(OTHER));
+  }
+}

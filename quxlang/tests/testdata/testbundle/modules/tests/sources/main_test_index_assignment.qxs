@@ -1,0 +1,74 @@
+LANGUAGE QUXLANG EN 0.0;
+
+::indexed_assignment_tests NAMESPACE
+{
+  ::table STRUCT
+  {
+    .events VAR I32;
+    .stored VAR I32;
+
+    .OPERATOR[] FUNCTION(%row I32, %column I32) MUT: MUT& I32
+    {
+      .events := .events * 10 + 4;
+      RETURN .stored;
+    }
+
+    .OPERATOR[]:= FUNCTION(%row I32, %column I32, @OTHER BOOL) MUT: I32
+    {
+      .events := .events * 10 + 5;
+      TEST_ASSERT(OTHER);
+      RETURN row * 10 + column;
+    }
+
+    .receiver FUNCTION() MUT: MUT& table
+    {
+      .events := .events * 10 + 1;
+      RETURN THIS;
+    }
+
+    .digit FUNCTION(@ARG:digit I32) MUT: I32
+    {
+      .events := .events * 10 + digit;
+      RETURN digit;
+    }
+  }
+
+  ::write_only STRUCT
+  {
+    .stored VAR I32;
+
+    .OPERATOR[]:= FUNCTION(%row I32, %column I32 DEFAULT(3), @OTHER I32) MUT
+    {
+      .stored := row * 100 + column * 10 + OTHER;
+    }
+  }
+
+  DOC <$ A setter accepts defaulted indices on a type with no index getter. $>
+  ::write_only_index DUAL_TEST
+  {
+    VAR object write_only;
+    object[4] := 2;
+    TEST_ASSERT(object.stored == 432);
+    object.OPERATOR[]:=(% [1, 2], @OTHER 3);
+    TEST_ASSERT(object.stored == 123);
+  }
+
+  DOC <$ A matching setter receives both indices and yields the assignment expression's result. $>
+  ::combined DUAL_TEST
+  {
+    VAR object table;
+    VAR result I32 := (object.receiver()[object.digit(2), object.digit(3)] := object.digit(6) == 6);
+    TEST_ASSERT(result == 23);
+    TEST_ASSERT(object.events == 12365);
+    TEST_ASSERT(object.stored == 0);
+  }
+
+  DOC <$ An incompatible setter falls back to the getter before the right operand executes. $>
+  ::fallback DUAL_TEST
+  {
+    VAR object table;
+    object.receiver()[object.digit(2), object.digit(3)] := object.digit(6) + 1;
+    TEST_ASSERT(object.stored == 7);
+    TEST_ASSERT(object.events == 12346);
+  }
+}

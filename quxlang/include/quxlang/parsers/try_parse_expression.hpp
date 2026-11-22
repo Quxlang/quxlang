@@ -338,18 +338,24 @@ namespace quxlang::parsers
             skip_whitespace_and_comments(pos, end);
 
             int priority = it->second;
-            expression_binary new_expression;
-            new_expression.operator_str = sym;
-
-            expression* binding_point2 = operator_bindings[priority];
-            new_expression.lhs = std::move(*binding_point2);
-            *binding_point2 = std::move(new_expression);
-            expression* binding_pointer = &as< expression_binary >(*binding_point2).rhs;
+            expression& left_operand = *operator_bindings[priority];
+            if (sym == ":=" && typeis< expression_multibind >(left_operand) &&
+                as< expression_multibind >(left_operand).operator_str == "OPERATOR[]")
+            {
+                expression_multibind& index = as< expression_multibind >(left_operand);
+                index.operator_str = "OPERATOR[]:=";
+                value_binding = &index.operands.emplace_back();
+            }
+            else
+            {
+                expression_binary binary{.operator_str = sym, .lhs = std::move(left_operand)};
+                left_operand = std::move(binary);
+                value_binding = &as< expression_binary >(left_operand).rhs;
+            }
             for (std::size_t i = static_cast< std::size_t >(priority) + 1; i < operator_bindings.size(); i++)
             {
-                operator_bindings[i] = binding_pointer;
+                operator_bindings[i] = value_binding;
             }
-            value_binding = &(as< expression_binary >(*binding_point2)).rhs;
             return true;
         }
 
@@ -1968,7 +1974,7 @@ namespace quxlang::parsers
             brkts.lhs = std::move(*bindings[bindings.size() - 1]);
             while (true)
             {
-                brkts.bracketed.push_back(parse_expression_impl(ctx));
+                brkts.operands.push_back(parse_expression_impl(ctx));
                 skip_whitespace_and_comments(pos, end);
                 if (skip_symbol_if_is(pos, end, "]"))
                 {
@@ -1989,7 +1995,7 @@ namespace quxlang::parsers
             brkts.lhs = std::move(*bindings[bindings.size() - 1]);
             while (true)
             {
-                brkts.bracketed.push_back(parse_expression_impl(ctx));
+                brkts.operands.push_back(parse_expression_impl(ctx));
                 skip_whitespace_and_comments(pos, end);
                 if (skip_symbol_if_is(pos, end, "]"))
                 {

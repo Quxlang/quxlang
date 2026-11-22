@@ -636,18 +636,17 @@ namespace quxlang
 
         std::string operator()(expression_multibind const& brkts) const
         {
-            std::string result;
-            result += expr_to_string(brkts.lhs);
-            result += " [ ";
-            for (std::size_t i = 0; i < brkts.bracketed.size(); i++)
+            bool assignment = brkts.operator_str == "OPERATOR[]:=";
+            std::size_t index_count = brkts.operands.size() - (assignment ? 1 : 0);
+            std::string result = expr_to_string(brkts.lhs);
+            result += brkts.operator_str == "OPERATOR[&]" ? " [& " : " [ ";
+            for (std::size_t i = 0; i < index_count; ++i)
             {
-                result += expr_to_string(brkts.bracketed[i]);
-                if (i != brkts.bracketed.size() - 1)
-                {
-                    result += " , ";
-                }
+                if (i != 0) result += " , ";
+                result += expr_to_string(brkts.operands[i]);
             }
             result += " ]";
+            if (assignment) return "(" + result + " := " + expr_to_string(brkts.operands.back()) + ")";
             return result;
         }
 
@@ -2366,7 +2365,7 @@ quxlang::expression quxlang::strip_source_locations(expression expr)
             else if constexpr (std::is_same_v< value_type, expression_multibind >)
             {
                 value.lhs = strip_source_locations(std::move(value.lhs));
-                for (auto& item : value.bracketed)
+                for (auto& item : value.operands)
                 {
                     item = strip_source_locations(std::move(item));
                 }

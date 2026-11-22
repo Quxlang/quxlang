@@ -10,7 +10,7 @@ VAR value I32 := 3;
 value := 8;
 ```
 
-The left operand must provide writable access to an existing object. Assignment
+For ordinary assignment, the left operand must provide writable access to an existing object. Assignment
 dispatches to `OPERATOR:=` for the left operand's type, with the destination as
 `THIS` and the source as `OTHER`. Primitive assignment stores a value of the
 same concrete type. Applicable conversions are selected before the operator
@@ -24,6 +24,26 @@ VAR copied I32 := value;
 
 That syntax initializes a new object by calling a constructor with `OTHER`; it
 does not call assignment on an already-live `copied`. See [Variables](variables.md).
+
+## Indexed assignment
+
+For `object[row, column] := value`, overload resolution first looks for
+`OPERATOR[]:=` on the receiver. The indices are positional arguments in source
+order, and the right operand binds to `@OTHER`.
+
+```quxlang
+.OPERATOR[]:= FUNCTION(%row SZ, %column SZ, @OTHER I32) MUT
+{
+  .cells[row * .columns + column] := OTHER;
+}
+```
+
+When an overload matches, the expression evaluates the receiver, indices, and
+right operand once in that order, invokes the selected member, and yields its
+result. A type can provide indexed assignment without defining `OPERATOR[]`.
+When no overload matches, the expression evaluates the receiver and indices,
+invokes `OPERATOR[]`, evaluates the right operand, and applies ordinary
+assignment to the result of indexing.
 
 ## Generated assignment
 

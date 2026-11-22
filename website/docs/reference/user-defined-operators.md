@@ -103,12 +103,13 @@ evaluates `left <=> right`; a non-equal result is returned immediately, while
 
 ## Call, indexing, and dereference
 
-The following reserved members provide postfix operations:
+The following reserved members implement calls, indexing, indexed assignment, and dereference.
 
 | Expression | Member selected | Arguments |
 | --- | --- | --- |
 | `object(...)` | `OPERATOR()` | call arguments after `@THIS` |
 | `object[...]` | `OPERATOR[]` | bracket arguments after `@THIS` |
+| `object[...] := value` | `OPERATOR[]:=` | positional indices and `@OTHER` for the assigned value |
 | `object[& ...]` | `OPERATOR[&]` | bracket arguments after `@THIS` |
 | `object->` | `OPERATOR->` | only `@THIS` |
 
@@ -163,8 +164,8 @@ once and Boolean-inverts its result. `OPERATOR!?` cannot be declared. See
 ## Fixed grammar and overload selection
 
 An `OPERATOR` declaration must use an operator token accepted by the lexer;
-`OPERATOR()`, `OPERATOR[]`, and `OPERATOR[&]` use their paired delimiter
-spellings. Whitespace may appear between `OPERATOR` and its token. `RHS`, when
+`OPERATOR()`, `OPERATOR[]`, `OPERATOR[]:=`, and `OPERATOR[&]` use the
+spellings shown above. Whitespace may appear between `OPERATOR` and its token. `RHS`, when
 present, follows that token.
 
 Operator overloads use the ordinary function candidate and parameter-ranking

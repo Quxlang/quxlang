@@ -16,6 +16,7 @@ declarations with the prefix `std::`.
 | [`std::list`](list.md) | Doubly linked list |
 | [`std::set`](set.md) | Ordered set of unique keys |
 | [`std::map`](map.md) | Ordered key/value map |
+| [`std::thread_safe_map`](thread-safe-map.md) | Ordered map with synchronized indexed reads and writes |
 | [`std::hadix_map`](hadix-map.md) | Hash-radix map and the `std::unordered_map` aliases |
 | [`std::default_hasher`](default-hasher.md) | Default hash policy and the hasher contract |
 | [`std::avl_tree`](avl-tree.md) | Rank-indexed balanced sequence |

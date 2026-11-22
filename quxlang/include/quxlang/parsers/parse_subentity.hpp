@@ -84,6 +84,11 @@ namespace quxlang::parsers
                 }
                 ++pos;
                 sym += "]";
+                if (sym == "[]" && pos != end && *pos == ':' && std::next(pos) != end && *std::next(pos) == '=')
+                {
+                    std::advance(pos, 2);
+                    sym += ":=";
+                }
             }
             else
             {

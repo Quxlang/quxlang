@@ -9068,7 +9068,7 @@ namespace quxlang
                     else if constexpr (std::is_same_v< value_type, expression_multibind >)
                     {
                         co_await this->co_analyze_lambda_expression(analysis, value.lhs);
-                        for (auto const& item : value.bracketed)
+                        for (auto const& item : value.operands)
                         {
                             co_await this->co_analyze_lambda_expression(analysis, item);
                         }
@@ -11506,23 +11506,55 @@ namespace quxlang
             co_return co_await co_gen_call_functum(bidx, oper, codegen_invocation_args{.named = {{"THIS", val}}});
         }
 
-        QUXLANG_WORKAROUND_MSVC_NOINLINE auto co_generate(block_index& bidx, expression_multibind const& what) -> co_type< value_index >
+        /** Resolves indexed assignment before emitting the getter used by ordinary assignment. */
+        QUXLANG_WORKAROUND_MSVC_NOINLINE auto co_generate(block_index& bidx, expression_multibind const& index) -> co_type< value_index >
         {
-            auto lhs_val = co_await co_generate_expr(bidx, what.lhs);
-
-            codegen_invocation_args invoke_brackets_args;
-            invoke_brackets_args.named["THIS"] = lhs_val;
-
-            for (auto& arg : what.bracketed)
+            value_index receiver = co_await co_generate_expr(bidx, index.lhs);
+            codegen_invocation_args arguments{.named = {{"THIS", receiver}}};
+            bool assignment = index.operator_str == "OPERATOR[]:=";
+            std::size_t index_count = index.operands.size() - (assignment ? 1 : 0);
+            for (std::size_t i = 0; i < index_count; ++i)
             {
-                invoke_brackets_args.positional.push_back(co_await co_generate_expr(bidx, arg));
+                arguments.positional.push_back(co_await co_generate_expr(bidx, index.operands[i]));
             }
 
-            type_symbol lhs_class_type = this->current_type(bidx, lhs_val);
-            lhs_class_type = remove_ref(lhs_class_type);
-            auto call_brackets_operator = submember{lhs_class_type, what.operator_str};
+            type_symbol owner = remove_ref(current_type(bidx, receiver));
+            type_symbol operation = submember{.of = owner, .name = index.operator_str};
+            if (!assignment)
+            {
+                co_return co_await co_gen_call_functum(bidx, operation, std::move(arguments));
+            }
 
-            co_return co_await co_gen_call_functum(bidx, call_brackets_operator, invoke_brackets_args);
+            expression const& assigned = index.operands.back();
+            if ((co_await rpnx::querygraph::request< symbol_type_query >(operation)) == symbol_kind::functum)
+            {
+                // Generate the operand in its actual lexical and coroutine context. A failed
+                // match restores the emission point so the getter runs before the operand.
+                codegen_state before_operand = state;
+                block_index before_block = bidx;
+                std::optional< std::uint64_t > before_body = active_body;
+                arguments.named["OTHER"] = co_await co_generate_expr(bidx, assigned);
+                invocation_selection selected = co_await co_select_invocation(initialization_reference{
+                    .initializee = operation,
+                    .context = body_context(),
+                    .parameters = instatype_from_invotype(codegen_args_to_invotype(bidx, arguments)),
+                    .adaptations = allowed_adaptations::destination_rebinding,
+                });
+                if (selected.operation.has_value())
+                {
+                    co_return co_await co_gen_call_functum(bidx, operation, std::move(arguments));
+                }
+                // Published lambda identities are monotonic even across discarded emission.
+                before_operand.next_lambda_index = state.next_lambda_index;
+                state = std::move(before_operand);
+                active_body = before_body;
+                lexical_block = bidx = before_block;
+                arguments.named.erase("OTHER");
+            }
+
+            value_index element = co_await co_gen_call_functum(bidx, submember{.of = owner, .name = "OPERATOR[]"}, std::move(arguments));
+            value_index value = co_await co_generate_expr(bidx, assigned);
+            co_return co_await co_generate_binary(bidx, ":=", element, value);
         }
 
         auto get_class_member(block_index bidx, value_index val, std::string func)

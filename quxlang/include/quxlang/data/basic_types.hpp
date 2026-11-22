@@ -1232,9 +1232,10 @@ namespace quxlang
     {
         std::string operator_str;
         expression lhs;
-        std::vector< expression > bracketed;
+        /// Positional indices followed by the assigned value for OPERATOR[]:=.
+        std::vector< expression > operands;
 
-        QUXLANG_WITH_SOURCE_LOCATION_METADATA(expression_multibind, operator_str, lhs, bracketed);
+        QUXLANG_WITH_SOURCE_LOCATION_METADATA(expression_multibind, operator_str, lhs, operands);
     };
 
     struct expression_lvalue_reference

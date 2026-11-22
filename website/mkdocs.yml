@@ -33,6 +33,9 @@ not_in_nav: |
 extra_css:
   - stylesheets/theme.css
 
+extra_javascript:
+  - https://keepandroidopen.org/banner.js
+
 markdown_extensions:
   - admonition
   - attr_list
@@ -253,6 +256,7 @@ nav:
               - "std::list": standard-modules/std/list.md
               - "std::set": standard-modules/std/set.md
               - "std::map": standard-modules/std/map.md
+              - "std::thread_safe_map": standard-modules/std/thread-safe-map.md
               - "std::hadix_map": standard-modules/std/hadix-map.md
               - "std::default_hasher": standard-modules/std/default-hasher.md
               - "std::avl_tree": standard-modules/std/avl-tree.md

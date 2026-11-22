@@ -1,0 +1,50 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::thread_safe_map_tests NAMESPACE
+{
+  ::mapped_value STRUCT NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    .number VAR I32;
+    .CONSTRUCTOR FUNCTION(@ARG:number I32) { .number := number; }
+  }
+
+  DOC <$ A missing read releases the mutex, and subsequent writes do not modify earlier copies. $>
+  ::indexed_access INCLUDE_IF(OS_LINUX || OS_WINDOWS || OS_MACOS) UNIT_TEST
+  {
+    VAR entries std::thread_safe_map#[I32:mapped_value];
+    VAR caught BOOL := FALSE;
+    TRY { entries[2]; }
+    CATCH error CONST& std::container_error { caught := error == std::container_error::missing_key; }
+    TEST_ASSERT(caught);
+    entries[2] := mapped_value(11);
+    AUTO copy := entries[2];
+    entries[2] := mapped_value(entries[2].number + 1);
+    TEST_ASSERT(copy.number == 11);
+    TEST_ASSERT(entries[2].number == 12);
+    TEST_ASSERT(SAME_TYPES(TYPEOF(entries[2]), mapped_value));
+  }
+
+  DOC <$ Concurrent writers can insert and replace keys while other threads read their own entries. $>
+  ::concurrent_indexing INCLUDE_IF(OS_LINUX || OS_WINDOWS || OS_MACOS) UNIT_TEST
+  {
+    VAR entries std::thread_safe_map#[SZ:SZ];
+    VAR workers std::dynarr#std::thread;
+    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(4 AS SZ) DO
+    {
+      AUTO write := -< [entries, =index]
+      {
+        LOOP VALUE(offset) FROM(0 AS SZ) UNTIL(16 AS SZ) DO
+        {
+          VAR key SZ := offset * 4 + index;
+          entries[key] := key;
+          entries[key] := entries[key] + 1;
+        }
+      };
+      workers.push_back(std::thread(write));
+    }
+    LOOP ITEM(worker) IN(workers) DO { worker.join(); }
+    LOOP VALUE(key) FROM(0 AS SZ) UNTIL(64 AS SZ) DO { TEST_ASSERT(entries[key] == key + 1); }
+  }
+}
