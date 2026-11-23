@@ -43,6 +43,65 @@ LANGUAGE QUXLANG EN 0.0;
     }
   }
 
+  ::base_table STRUCT POLYMORPHIC
+  {
+    .stored VAR I32;
+    .OPERATOR[]:= FUNCTION(%index I32, @OTHER I32) MUT VIRTUAL
+    {
+      .stored := OTHER;
+    }
+    .OPERATOR[] FUNCTION(%row I32, %column I32) MUT VIRTUAL: MUT& base_table
+    {
+      RETURN THIS;
+    }
+    .OPERATOR:= FUNCTION(@OTHER I32) MUT VIRTUAL
+    {
+      .stored := OTHER;
+    }
+  }
+
+  ::derived_table STRUCT POLYMORPHIC
+  {
+    .base BASE base_table;
+    .OPERATOR[]:= FUNCTION(%index I32, @OTHER I32) MUT VIRTUAL(OVERRIDE)
+    {
+      .base.stored := index + OTHER;
+    }
+    .OPERATOR[] FUNCTION(%row I32, %column I32) MUT VIRTUAL(OVERRIDE): MUT& base_table
+    {
+      .base.stored := row + column;
+      RETURN .base;
+    }
+    .OPERATOR:= FUNCTION(@OTHER I32) MUT VIRTUAL(OVERRIDE)
+    {
+      .base.stored += OTHER;
+    }
+  }
+
+  DOC <$ Both setter spellings invoke the derived override through a base reference. $>
+  ::virtual_setter DUAL_TEST
+  {
+    VAR object derived_table;
+    VAR table_view MUT& base_table := object.base;
+    table_view.OPERATOR[]:=(% [3], @OTHER 10);
+    TEST_ASSERT(object.base.stored == 13);
+    table_view[4] := 20;
+    TEST_ASSERT(object.base.stored == 24);
+    base_table::.OPERATOR[]:=(@THIS table_view, % [4], @OTHER 20);
+    TEST_ASSERT(object.base.stored == 20);
+  }
+
+  DOC <$ Indexed assignment with two indices dispatches both the getter and ordinary assignment to their overrides. $>
+  ::virtual_fallback DUAL_TEST
+  {
+    VAR object derived_table;
+    VAR table_view MUT& base_table := object.base;
+    VAR entry MUT& base_table := table_view[5, 6];
+    TEST_ASSERT(entry.stored == 11);
+    table_view[2, 3] := 30;
+    TEST_ASSERT(object.base.stored == 35);
+  }
+
   DOC <$ A setter accepts defaulted indices on a type with no index getter. $>
   ::write_only_index DUAL_TEST
   {
@@ -53,6 +112,27 @@ LANGUAGE QUXLANG EN 0.0;
     TEST_ASSERT(object.stored == 123);
   }
 
+  ::store_awaited COROUTINE(@target MUT& write_only, @events MUT& I32)
+  {
+    target[1, 2] := AWAIT(coroutine_await_lifetime_tests::operation(@events events));
+  }
+
+  DOC <$ A suspended right operand resumes into the indexed setter exactly once. $>
+  ::awaited_setter DUAL_TEST
+  {
+    VAR target write_only;
+    VAR events I32;
+    VAR controller coroutine_await_lifetime_tests::controller;
+    VAR frame store_awaited#(@target MUT& write_only, @events MUT& I32, @CONTROLLER coroutine_await_lifetime_tests::controller)::FRAME_TYPE;
+    frame.INITIALIZE(@target target, @events events);
+    TEST_ASSERT(frame.RESUME(@CONTROLLER controller) == FALSE);
+    TEST_ASSERT(events == 1);
+    TEST_ASSERT(target.stored == 0);
+    TEST_ASSERT(frame.RESUME(@CONTROLLER controller));
+    TEST_ASSERT(events == 2);
+    TEST_ASSERT(target.stored == 143);
+  }
+
   DOC <$ A matching setter receives both indices and yields the assignment expression's result. $>
   ::combined DUAL_TEST
   {
@@ -61,6 +141,15 @@ LANGUAGE QUXLANG EN 0.0;
     TEST_ASSERT(result == 23);
     TEST_ASSERT(object.events == 12365);
     TEST_ASSERT(object.stored == 0);
+  }
+
+  DOC <$ An outer fallback invokes its getter before a nested setter and assigns the nested result. $>
+  ::nested_fallback DUAL_TEST
+  {
+    VAR object table;
+    object[1, 2] := (object[3, 4] := TRUE);
+    TEST_ASSERT(object.events == 45);
+    TEST_ASSERT(object.stored == 34);
   }
 
   DOC <$ An incompatible setter falls back to the getter before the right operand executes. $>

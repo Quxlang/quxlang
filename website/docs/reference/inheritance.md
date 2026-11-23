@@ -129,8 +129,12 @@ command.secondary.command_id := 2;
 The same canonical virtual subobject reached through multiple paths is
 deduplicated.
 
-To call one declared function body without virtual dispatch, name the declaring
-struct and pass `@THIS` explicitly:
+A call with a bound receiver dispatches to the final overrider when the
+selected member is virtual. This rule applies to member calls and operator
+expressions, including `object[index]` and `object[index] := value`.
+
+A call that names the declaring struct and supplies `@THIS` explicitly
+invokes the named body directly.
 
 ```quxlang
 RETURN animal::.speak(@THIS value);

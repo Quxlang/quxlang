@@ -40,7 +40,9 @@ order, and the right operand binds to `@OTHER`.
 
 When an overload matches, the expression evaluates the receiver, indices, and
 right operand once in that order, invokes the selected member, and yields its
-result. A type can provide indexed assignment without defining `OPERATOR[]`.
+result. A virtual setter uses the same virtual dispatch rules as an explicit
+bound call to `OPERATOR[]:=`. A type can provide indexed assignment without
+defining `OPERATOR[]`.
 When no overload matches, the expression evaluates the receiver and indices,
 invokes `OPERATOR[]`, evaluates the right operand, and applies ordinary
 assignment to the result of indexing.

@@ -122,6 +122,7 @@
 #include <limits>
 #include <quxlang/macros.hpp>
 #include <set>
+#include <span>
 #include <string_view>
 #include <utility>
 
@@ -547,6 +548,10 @@ namespace quxlang
         bool static_evaluation = false;
         /// Permit evaluated expressions to return mutations of static bindings.
         bool mutable_static_evaluation = false;
+        /// Nested setter selections made while determining the type of an enclosing right operand.
+        std::vector< std::uint8_t >* recorded_indexed_assignments = nullptr;
+        /// Selections in evaluation order for the operand currently being materialized.
+        std::span< std::uint8_t const > resolved_indexed_assignments;
         codegen_state state;
         type_symbol ctx;
         machine_target_info machine_info;
@@ -2194,8 +2199,9 @@ namespace quxlang
         /**
          * Resolves and adapts a call, then transfers any destruction obligation at invocation.
          * Explicit call expressions enable optional controller interception before or after overload selection.
+         * Receiver-bound members use virtual dispatch. A qualified call with an explicit receiver selects the named body.
          */
-        QUXLANG_WORKAROUND_MSVC_NOINLINE auto co_gen_call_functum(block_index& bidx, type_symbol func, codegen_invocation_args args, allowed_adaptations adaptations = allowed_adaptations::destination_rebinding, bool permit_virtual_dispatch = false, std::optional< vmir2::local_index > destruction_target = std::nullopt,
+        QUXLANG_WORKAROUND_MSVC_NOINLINE auto co_gen_call_functum(block_index& bidx, type_symbol func, codegen_invocation_args args, allowed_adaptations adaptations = allowed_adaptations::destination_rebinding, bool permit_virtual_dispatch = true, std::optional< vmir2::local_index > destruction_target = std::nullopt,
             call_execution_mode execution_mode = call_execution_mode::ordinary, std::optional< value_index > launch_controller = std::nullopt,
             bool intercept_function_call = false) -> co_type< value_index >
         {
@@ -3978,7 +3984,7 @@ namespace quxlang
 
             auto new_object = create_local_value(new_type);
             args.named["THIS"] = new_object;
-            auto retval = co_await this->co_gen_call_functanoid(bidx, *instanciation, args, allowed_adaptations::destination_rebinding, false, std::nullopt, selection.uses_implicit_controller);
+            auto retval = co_await this->co_gen_call_functanoid(bidx, *instanciation, args, allowed_adaptations::destination_rebinding, true, std::nullopt, selection.uses_implicit_controller);
 
             assert(retval == 0);
 
@@ -7440,7 +7446,7 @@ namespace quxlang
             return std::nullopt;
         }
 
-        QUXLANG_WORKAROUND_MSVC_NOINLINE auto co_gen_invoke(block_index& bidx, instanciation_reference what, codegen_invocation_args args, bool permit_virtual_dispatch = false) -> co_type< void >
+        QUXLANG_WORKAROUND_MSVC_NOINLINE auto co_gen_invoke(block_index& bidx, instanciation_reference what, codegen_invocation_args args, bool permit_virtual_dispatch = true) -> co_type< void >
         {
             auto builtin_kind = co_await rpnx::querygraph::request< function_builtin_query >(what.temploid);
             if (builtin_kind != builtin_function_kind::not_builtin)
@@ -7557,7 +7563,7 @@ namespace quxlang
             {
                 assert(args.size() == what.params.size());
             }
-            if (permit_virtual_dispatch && typeis< submember >(what.temploid.templexoid))
+            if (permit_virtual_dispatch && what.params.named.contains("THIS") && typeis< submember >(what.temploid.templexoid))
             {
                 submember const& member = as< submember >(what.temploid.templexoid);
                 symbol_kind const owner_kind = co_await rpnx::querygraph::request< symbol_type_query >(member.of);
@@ -7566,8 +7572,11 @@ namespace quxlang
                 {
                     struct_virtual_slots const& slots = co_await rpnx::querygraph::request< struct_virtual_slots_query >(member.of);
                     type_symbol const selected_declaration = what.temploid;
+                    type_symbol receiver_type = parameter_instantiation_type(what.params.named.at("THIS"));
                     for (struct_virtual_slot const& slot : slots.slots)
                     {
+                        // A destructor slot takes DVALUE storage. Its user body takes a mutable reference.
+                        if (slot.key.signature.this_parameter.type() != receiver_type.type()) continue;
                         std::vector< struct_virtual_overrider >::const_iterator const selected_overrider = std::ranges::find_if(slot.overriders, [&](struct_virtual_overrider const& overrider)
                         {
                             return overrider.final_overrider == selected_declaration;
@@ -11506,6 +11515,100 @@ namespace quxlang
             co_return co_await co_gen_call_functum(bidx, oper, codegen_invocation_args{.named = {{"THIS", val}}});
         }
 
+        /** Lends the append-only local and value tables to an operand lookup for the duration of its lowering. */
+        class operand_lookup_values
+        {
+            codegen_state& enclosing;
+            codegen_state& lookup;
+            std::size_t local_count;
+            std::size_t value_count;
+
+          public:
+            /** Transfers ownership of the tables while retaining the enclosing routine's boundaries. */
+            operand_lookup_values(codegen_state& enclosing, codegen_state& lookup)
+                : enclosing(enclosing), lookup(lookup), local_count(enclosing.locals.size()), value_count(enclosing.genvalues.size())
+            {
+                enclosing.locals.swap(lookup.locals);
+                enclosing.genvalues.swap(lookup.genvalues);
+            }
+
+            operand_lookup_values(operand_lookup_values const&) = delete;
+
+            /** Discards the lookup's appended entries and returns the tables to their owner. */
+            ~operand_lookup_values()
+            {
+                lookup.locals.resize(local_count);
+                lookup.genvalues.resize(value_count);
+                enclosing.locals.swap(lookup.locals);
+                enclosing.genvalues.swap(lookup.genvalues);
+            }
+        };
+
+        /** Tries the indexed setter in the operand's lexical and coroutine context. */
+        QUXLANG_WORKAROUND_MSVC_NOINLINE auto co_try_lookup_indexed_setter(block_index block, type_symbol const& member, codegen_invocation_args arguments,
+            expression& operand, std::vector< std::uint8_t >& nested_assignments) -> co_type< bool >
+        {
+            if ((co_await rpnx::querygraph::request< symbol_type_query >(member)) != symbol_kind::functum) co_return false;
+            lexical_block = block;
+            co_await co_prepare_expression(operand);
+            co_vmir_generator2 lookup(machine_info, ctx);
+            lookup.recorded_indexed_assignments = &nested_assignments;
+            lookup.active_body = active_body;
+            lookup.body_count = body_count;
+            lookup.serialized_snapshot_count = serialized_snapshot_count;
+            lookup.static_iterations = static_iterations;
+            lookup.static_evaluation = static_evaluation;
+            lookup.mutable_static_evaluation = mutable_static_evaluation;
+            lookup.state.next_lambda_index = state.next_lambda_index;
+            lookup.state.params = state.params;
+            lookup.state.packs = state.packs;
+            lookup.state.top_level_lookups = state.top_level_lookups;
+            lookup.state.top_level_lookups_weak = state.top_level_lookups_weak;
+            lookup.state.static_scopes = state.static_scopes;
+            lookup.state.statics = state.statics;
+            lookup.state.is_noexcept = state.is_noexcept;
+            lookup.state.generating_controller_hook = state.generating_controller_hook;
+            if (state.coroutine.has_value())
+            {
+                lookup.state.coroutine = vmir2::coroutine_body{
+                    .specialization = state.coroutine->specialization,
+                    .frame = state.coroutine->frame,
+                    .controller = state.coroutine->controller,
+                    .cancellation_mode = state.coroutine->cancellation_mode,
+                    .cancellation_state = state.coroutine->cancellation_state,
+                };
+                lookup.state.coroutine_controller = state.coroutine_controller;
+                lookup.state.coroutine_frame = state.coroutine_frame;
+                lookup.state.coroutine_cancellation_state = state.coroutine_cancellation_state;
+                lookup.state.coroutine_shielded = state.coroutine_shielded;
+                lookup.state.coroutine_handler_root = state.coroutine_handler_root;
+                lookup.state.coroutine_handler_exception = state.coroutine_handler_exception;
+            }
+
+            codegen_block const& source = state.blocks.at(block);
+            codegen_block& entry = lookup.state.blocks.emplace_back();
+            entry.entry_state = entry.current_state = source.current_state;
+            entry.entry_packs = entry.current_packs = source.current_packs;
+            entry.lookup_values = source.lookup_values;
+            entry.lookup_tombstones = source.lookup_tombstones;
+            entry.ownership_transfers = source.ownership_transfers;
+            lookup.state.catch_exception = source.catch_exception;
+
+            operand_lookup_values values(state, lookup.state);
+            block_index current(0);
+            arguments.named["OTHER"] = co_await lookup.co_generate_expr(current, operand);
+            body_count = lookup.body_count;
+            serialized_snapshot_count = lookup.serialized_snapshot_count;
+            state.next_lambda_index = lookup.state.next_lambda_index;
+            invocation_selection selected = co_await lookup.co_select_invocation(initialization_reference{
+                .initializee = member,
+                .context = lookup.body_context(),
+                .parameters = instatype_from_invotype(lookup.codegen_args_to_invotype(current, arguments)),
+                .adaptations = allowed_adaptations::destination_rebinding,
+            });
+            co_return selected.operation.has_value();
+        }
+
         /** Resolves indexed assignment before emitting the getter used by ordinary assignment. */
         QUXLANG_WORKAROUND_MSVC_NOINLINE auto co_generate(block_index& bidx, expression_multibind const& index) -> co_type< value_index >
         {
@@ -11525,36 +11628,28 @@ namespace quxlang
                 co_return co_await co_gen_call_functum(bidx, operation, std::move(arguments));
             }
 
-            expression const& assigned = index.operands.back();
-            if ((co_await rpnx::querygraph::request< symbol_type_query >(operation)) == symbol_kind::functum)
+            expression assigned = index.operands.back();
+            std::vector< std::uint8_t > nested_assignments;
+            bool use_setter;
+            if (resolved_indexed_assignments.empty())
+                use_setter = co_await co_try_lookup_indexed_setter(bidx, operation, arguments, assigned, nested_assignments);
+            else
             {
-                // Generate the operand in its actual lexical and coroutine context. A failed
-                // match restores the emission point so the getter runs before the operand.
-                codegen_state before_operand = state;
-                block_index before_block = bidx;
-                std::optional< std::uint64_t > before_body = active_body;
-                arguments.named["OTHER"] = co_await co_generate_expr(bidx, assigned);
-                invocation_selection selected = co_await co_select_invocation(initialization_reference{
-                    .initializee = operation,
-                    .context = body_context(),
-                    .parameters = instatype_from_invotype(codegen_args_to_invotype(bidx, arguments)),
-                    .adaptations = allowed_adaptations::destination_rebinding,
-                });
-                if (selected.operation.has_value())
-                {
-                    co_return co_await co_gen_call_functum(bidx, operation, std::move(arguments));
-                }
-                // Published lambda identities are monotonic even across discarded emission.
-                before_operand.next_lambda_index = state.next_lambda_index;
-                state = std::move(before_operand);
-                active_body = before_body;
-                lexical_block = bidx = before_block;
-                arguments.named.erase("OTHER");
+                use_setter = resolved_indexed_assignments.front();
+                resolved_indexed_assignments = resolved_indexed_assignments.subspan(1);
             }
+            if (recorded_indexed_assignments) recorded_indexed_assignments->push_back(use_setter);
 
-            value_index element = co_await co_gen_call_functum(bidx, submember{.of = owner, .name = "OPERATOR[]"}, std::move(arguments));
+            std::optional< value_index > element;
+            if (!use_setter)
+                element = co_await co_gen_call_functum(bidx, submember{.of = owner, .name = "OPERATOR[]"}, std::move(arguments));
+
+            if (!nested_assignments.empty()) resolved_indexed_assignments = nested_assignments;
             value_index value = co_await co_generate_expr(bidx, assigned);
-            co_return co_await co_generate_binary(bidx, ":=", element, value);
+            QUXLANG_COMPILER_BUG_IF(!nested_assignments.empty() && !resolved_indexed_assignments.empty(), "Unconsumed indexed assignment selections");
+            if (element.has_value()) co_return co_await co_generate_binary(bidx, ":=", *element, value);
+            arguments.named["OTHER"] = value;
+            co_return co_await co_gen_call_functum(bidx, operation, std::move(arguments));
         }
 
         auto get_class_member(block_index bidx, value_index val, std::string func)
@@ -17788,12 +17883,12 @@ namespace quxlang
             bool previous_hook = state.generating_controller_hook;
             state.generating_controller_hook = true;
             value_index result = co_await co_gen_call_functum(block, std::move(operation), std::move(arguments),
-                allowed_adaptations::destination_rebinding, false, destruction_target);
+                allowed_adaptations::destination_rebinding, true, destruction_target);
             state.generating_controller_hook = previous_hook;
             co_return result;
         }
 
-        /** Invokes a statically selected synchronous controller hook. */
+        /** Invokes a synchronous hook on the current controller. */
         auto co_coroutine_hook(block_index& block, std::string const& name, codegen_invocation_args arguments) -> co_type< value_index >
         {
             if (!state.coroutine_controller.has_value()) throw semantic_compilation_error(name + " requires a COROUTINE execution context");
