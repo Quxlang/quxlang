@@ -13,7 +13,7 @@ sources:
     datastructures:
         git:
             repository: https://gitlab.com/rpnx/datastructures.git
-            revision: 7628c68b381cebf738eac8ad917ce56769817236
+            revision: 849e84175e1329d94ef9c93e9a9a3464ca44d25e
     googletest:
         git:
             repository: https://github.com/rpnx/googletest.git
@@ -38,6 +38,7 @@ sources:
     serialization:
         git:
             repository: https://gitlab.com/rpnx/serialization.git
+            revision: 54bb86101b3801330bb21253904b9e2529d0995a
     yaml-cpp:
         git:
             repository: https://github.com/rpnx/yaml-cpp.git
