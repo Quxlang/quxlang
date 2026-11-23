@@ -1,0 +1,67 @@
+LANGUAGE QUXLANG EN 0.0;
+
+PRIVATE(MODULE)
+{
+  DOC <$ Tracks unfinished invocations and the destructor's single continuation. The mutex orders completion with registration and makes child effects visible to the destructor. $>
+  ::task_group_state STRUCT ROOTED
+  {
+    .mutex VAR unfair_mutex;
+    .pending VAR SZ;
+    .continuation VAR MUT->async_continuation;
+
+    DOC <$ Registers a child before the scheduler can start it. $>
+    .register_task FUNCTION() MUT
+    {
+      .mutex.lock();
+      .pending++;
+      .mutex.unlock();
+    }
+
+    DOC <$ Retires a child after cleanup and notifies the waiting destructor when the last child finishes. $>
+    .complete_task FUNCTION() MUT
+    {
+      VAR continuation MUT->async_continuation;
+      .mutex.lock();
+      .pending--;
+      IF (.pending == 0)
+      {
+        continuation := .continuation;
+        .continuation := NULL;
+      }
+      .mutex.unlock();
+      IF (continuation??) { continuation->.notify(@context continuation->.context); }
+    }
+
+    DOC <$ Reports whether every registered child has finished. $>
+    .AWAIT_READY FUNCTION() MUT: BOOL
+    {
+      .mutex.lock();
+      VAR ready BOOL := .pending == 0;
+      .mutex.unlock();
+      RETURN ready;
+    }
+
+    DOC <$ Registers the waiting destructor unless the final child has already finished. $>
+    .AWAIT_SUSPEND FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) MUT: BOOL
+    {
+      VAR continuation MUT->async_continuation := CONTROLLER.continuation();
+      .mutex.lock();
+      VAR pending BOOL := .pending != 0;
+      IF (pending) { .continuation := continuation; }
+      .mutex.unlock();
+      RETURN pending;
+    }
+
+    DOC <$ Completes the wait after every child has finished. $>
+    .AWAIT_RESUME FUNCTION() {}
+  }
+}
+
+DOC <$ Joins the invocations launched with GO USING this group. The group must outlive submissions to it. Child results and exceptions are delivered through their individual futures. $>
+::task_group STRUCT ROOTED
+{
+  PRIVATE(MODULE) { .state VAR task_group_state; }
+
+  DOC <$ Suspends destruction until all registered invocations and their cleanup finish. $>
+  .DESTRUCTOR COROUTINE() { AWAIT(.state); }
+}

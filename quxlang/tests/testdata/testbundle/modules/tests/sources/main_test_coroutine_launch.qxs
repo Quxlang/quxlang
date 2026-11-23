@@ -99,6 +99,11 @@ LANGUAGE QUXLANG EN 0.0;
         RETURN gate;
       }
     }
+    .CO_GO FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ..., @USING:counter MUT& I32) MUT: AUTO
+    {
+      counter += 1;
+      RETURN .CO_GO(@COROUTINE child, @ARGUMENTS FORWARD PACK(arguments));
+    }
     .CO_AWAIT FUNCTION(@ARG AUTO& launch_gate): MUT& launch_gate { RETURN ARG AS MUT& launch_gate; }
     .CO_AWAIT FUNCTION(@ARG AUTO& void_launch_gate): MUT& void_launch_gate { RETURN ARG AS MUT& void_launch_gate; }
     .CO_AWAIT FUNCTION(@ARG AUTO& coroutine_call_tests::completed_value): MUT& coroutine_call_tests::completed_value { RETURN ARG AS MUT& coroutine_call_tests::completed_value; }
@@ -145,6 +150,34 @@ LANGUAGE QUXLANG EN 0.0;
     result := task.value;
     VAR completed := AWAIT(task);
     result += AWAIT(completed);
+  }
+
+  ::using_counter FUNCTION(@counter MUT& I32, @expected I32): MUT& I32
+  {
+    TEST_ASSERT(counter == expected);
+    counter += 1;
+    RETURN counter;
+  }
+
+  ::grouped_parent COROUTINE(@counter MUT& I32, @result MUT& I32)
+  {
+    VAR task := GO value(@VALUE using_counter(@counter counter, @expected 0))
+      USING(using_counter(@counter counter, @expected 1));
+    result := task.value;
+  }
+
+  DOC <$ GO evaluates the USING operand once after the call arguments and passes it separately to the launch hook. $>
+  ::go_using_operand DUAL_TEST
+  {
+    VAR observed coroutine_call_tests::observations;
+    VAR execution controller;
+    execution.entry.observed := observed<-;
+    VAR counter I32;
+    VAR result I32;
+    VAR frame grouped_parent#(@counter MUT& I32, @result MUT& I32, @CONTROLLER controller)::FRAME_TYPE;
+    frame.INITIALIZE(@counter counter, @result result);
+    TEST_ASSERT(frame.RESUME(@CONTROLLER execution));
+    TEST_ASSERT(observed.calls == 1 && counter == 3 && result == 4);
   }
 
   DOC <$ GO returns the launch gate directly and only an explicit await suspends the caller. $>

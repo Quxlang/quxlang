@@ -134,6 +134,71 @@ IMPORT std;
     TEST_ASSERT(result.get() == 42);
   }
 
+  ::grouped_cleanup STRUCT
+  {
+    .completed VAR MUT->BOOL;
+    .DESTRUCTOR COROUTINE()
+    {
+      AWAIT(std::cort_yield());
+      .completed-> := TRUE;
+    }
+  }
+
+  ::fail_after_cleanup COROUTINE(@completed MUT& BOOL): I32
+  {
+    VAR cleanup grouped_cleanup;
+    cleanup.completed := completed<-;
+    THROW I32(@OTHER 23);
+  }
+
+  ::grouped_work COROUTINE()
+  {
+    { VAR empty std::task_group; }
+    VAR cleaned BOOL;
+    VAR updated I32;
+    VAR failed std::future#I32;
+    {
+      VAR group std::task_group;
+      failed := GO fail_after_cleanup(@completed cleaned) USING(group);
+      GO set_value(@value updated) USING(group);
+      TEST_ASSERT(cleaned == FALSE && updated == 0);
+    }
+    TEST_ASSERT(cleaned && updated == 42);
+    VAR caught BOOL;
+    TRY { AWAIT(failed); } CATCH value CONST& I32 { caught := value == 23; }
+    TEST_ASSERT(caught);
+  }
+
+  DOC <$ Scope exit joins a function and a coroutine through asynchronous child cleanup while preserving the result future. $>
+  ::task_group_scope_exit UNIT_TEST
+  {
+    VAR runtime std::thread_pool_cort_runtime:(@workers 1);
+    VAR result := ON(runtime) RUN grouped_work();
+    result.get();
+  }
+
+  ::grouped_unwind COROUTINE()
+  {
+    VAR updated I32;
+    VAR caught BOOL;
+    TRY
+    {
+      VAR group std::task_group;
+      GO set_value(@value updated) USING(group);
+      THROW I32(@OTHER 7);
+    }
+    CATCH value CONST& I32 { caught := value == 7 && updated == 42; }
+    TEST_ASSERT(caught);
+  }
+
+  DOC <$ Exception unwinding joins the group before entering the enclosing handler. $>
+  ::task_group_exception_unwind UNIT_TEST
+  {
+    VAR runtime std::thread_pool_cort_runtime:(@workers 1);
+    VAR result := ON(runtime) RUN grouped_unwind();
+    result.get();
+  }
+
   ::set_value FUNCTION(@value MUT& I32) { value := 42; }
   ::capture_values COROUTINE(@reference MUT& I32): I32
   {

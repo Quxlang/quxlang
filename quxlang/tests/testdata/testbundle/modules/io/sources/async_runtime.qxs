@@ -105,31 +105,31 @@ DOC <$ Owns a platform completion runtime, completion workers, and a coroutine s
   }
 
   DOC <$ Schedules a selected descriptor with the I/O controller for its return type. $>
-  .launch FUNCTION(@COROUTINE:descriptor AUTO, @ARGUMENTS:arguments ...) MUT: AUTO
+  .launch FUNCTION(@COROUTINE:descriptor AUTO, @ARGUMENTS:arguments ..., @group MUT->std::task_group DEFAULT(NULL)) MUT: AUTO
   {
     VAR invocation MUT->async_invocation#descriptor;
     VAR submitted BOOL;
     DEFER { IF (submitted == FALSE) { DELETE OPTIONAL invocation; } }
     invocation := NEW async_invocation#descriptor:(@runtime THIS, @ARGUMENTS FORWARD PACK(arguments));
     VAR result := .scheduler.CO_RUN(@COROUTINE drive_async_invocation#descriptor,
-      @ARGUMENTS ...{ .invocation = invocation; });
+      @ARGUMENTS ...{ .invocation = invocation; }, @group group);
     submitted := TRUE;
     RETURN MOVE(result);
   }
 
   DOC <$ Selects and schedules a coroutine while preserving the I/O policy for recursive calls. $>
-  .CO_RUN FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ...) MUT: AUTO
+  .CO_RUN FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ..., @group MUT->std::task_group DEFAULT(NULL)) MUT: AUTO
   {
     STATIC_IF(PACK_CONTAINS(arguments, "RECEIVER"))
     {
       VAR descriptor := child#(@CONTROLLER async_controller#VOID, @THIS PACK_FIELD_TYPE(arguments, "RECEIVER"),
         ...PACK_TYPES_EXCEPT(arguments, "RECEIVER"));
-      RETURN .launch(@COROUTINE descriptor, @ARGUMENTS FORWARD PACK(arguments));
+      RETURN .launch(@COROUTINE descriptor, @ARGUMENTS FORWARD PACK(arguments), @group group);
     }
     STATIC_ELSE
     {
       VAR descriptor := child#(@CONTROLLER async_controller#VOID, ...PACK_TYPES(arguments));
-      RETURN .launch(@COROUTINE descriptor, @ARGUMENTS FORWARD PACK(arguments));
+      RETURN .launch(@COROUTINE descriptor, @ARGUMENTS FORWARD PACK(arguments), @group group);
     }
   }
 }
@@ -170,16 +170,22 @@ DOC <$ Extends thread-pool scheduling with controller-selected I/O operations. N
   }
 
   DOC <$ Schedules coroutine children on this runtime and ordinary functions on its scheduler. $>
-  .CO_GO FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ...): AUTO
+  .CO_GO FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ..., @group MUT->std::task_group DEFAULT(NULL)): AUTO
   {
     STATIC_IF(STATIC_CHOOSE(PACK_CONTAINS(arguments, "RECEIVER"),
       IS_COROUTINE_CALLABLE_WITH(child, @CONTROLLER async_controller#VOID, @THIS PACK_FIELD_TYPE(arguments, "RECEIVER"),
         ...PACK_TYPES_EXCEPT(arguments, "RECEIVER")),
       IS_COROUTINE_CALLABLE_WITH(child, @CONTROLLER async_controller#VOID, ...PACK_TYPES(arguments))))
     {
-      RETURN .runtime->.CO_RUN(@COROUTINE child, @ARGUMENTS FORWARD PACK(arguments));
+      RETURN .runtime->.CO_RUN(@COROUTINE child, @ARGUMENTS FORWARD PACK(arguments), @group group);
     }
-    STATIC_ELSE { RETURN .scheduling.CO_GO(@COROUTINE child, @ARGUMENTS FORWARD PACK(arguments)); }
+    STATIC_ELSE { RETURN .scheduling.CO_GO(@COROUTINE child, @ARGUMENTS FORWARD PACK(arguments), @group group); }
+  }
+
+  DOC <$ Schedules a child whose completion is joined by the supplied group. $>
+  .CO_GO FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ..., @USING:group MUT& std::task_group): AUTO
+  {
+    RETURN .CO_GO(@COROUTINE child, @ARGUMENTS FORWARD PACK(arguments), @group group<-);
   }
 
   DOC <$ Schedules a recursive coroutine and suspends its caller through the returned task. $>

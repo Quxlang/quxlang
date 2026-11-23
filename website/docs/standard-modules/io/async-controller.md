@@ -151,11 +151,13 @@ future of the invocation in place of a value.
 ### `CO_GO`
 
 ```quxlang
-.CO_GO FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ...): AUTO
+.CO_GO FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ..., @group MUT->std::task_group DEFAULT(NULL)): AUTO
+.CO_GO FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ..., @USING:group MUT& std::task_group): AUTO
 ```
 
 Implements `GO callable(arguments...)` inside a coroutine that runs on the
-runtime.
+runtime. The optional `USING(group)` clause registers the invocation with a
+[`std::task_group`](../../reference/thread-pool-coroutines.md#task-groups).
 
 - When `callable` has a coroutine overload that accepts `io::async_controller`
   and the given argument types, the function schedules that coroutine through

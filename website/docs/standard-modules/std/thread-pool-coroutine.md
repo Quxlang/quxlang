@@ -101,7 +101,7 @@ of this pool.
 ### `thread_pool_cort_runtime::CO_RUN`
 
 ```quxlang
-.CO_RUN FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ...) MUT: AUTO
+.CO_RUN FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ..., @group MUT->task_group DEFAULT(NULL)) MUT: AUTO
 ```
 
 The expression `ON(runtime) RUN coroutine(arguments...)` calls this hook with
@@ -115,7 +115,8 @@ calling thread:
    where `T` is the declared return type of the coroutine.
 2. Captures the arguments in the frame.
 3. Obtains the future of the promise.
-4. Appends the invocation to the ready queue and wakes one worker.
+4. Registers the invocation with `group` when the pointer is non-null.
+5. Appends the invocation to the ready queue and wakes one worker.
 
 A worker later drives the frame. When the frame reports terminal completion,
 which follows the destruction of its locals and captured arguments, the worker
@@ -172,7 +173,7 @@ controller as the `CONTROLLER` argument of `AWAIT_SUSPEND`.
 | [`CO_AWAIT`](#thread_pool_cort_controllerco_await) | `AWAIT(operand)` | Borrows a native awaiter. |
 | [`CO_RETURN`](#thread_pool_cort_controllerco_return) | `RETURN` | Stages the result. |
 | [`CO_EXCEPTION`](#thread_pool_cort_controllerco_exception) | An unhandled exception | Stages the exception. |
-| [`CO_GO`](#thread_pool_cort_controllerco_go) | `GO callable(arguments...)` | Schedules a coroutine or a function and returns its future. |
+| [`CO_GO`](#thread_pool_cort_controllerco_go) | `GO callable(arguments...)` with an optional `USING` clause | Schedules a coroutine or a function and returns its future. |
 | [`CO_COROUTINE_CALL`](#thread_pool_cort_controllerco_coroutine_call) | A coroutine call | Schedules the child and returns a task that the caller awaits. |
 | [`CO_CALL_CTOR`](#thread_pool_cort_controllerco_call_ctor) | A coroutine constructor | Schedules the constructor against the destination object. |
 | [`CO_CALL_DTOR`](#thread_pool_cort_controllerco_call_dtor) | A coroutine destructor | Schedules the destructor. |
@@ -232,11 +233,15 @@ receives the exception from `future::get` or at its `AWAIT` expression.
 ### `thread_pool_cort_controller::CO_GO`
 
 ```quxlang
-.CO_GO FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ...): AUTO
+.CO_GO FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ..., @group MUT->task_group DEFAULT(NULL)): AUTO
+.CO_GO FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ..., @USING:group MUT& task_group): AUTO
 ```
 
 Schedules `child` on the pool of the current invocation and returns without
-waiting for it.
+waiting for it. `@USING` is supplied by the `USING(group)` clause and registers
+the child with the group before scheduling. The group joins the child after
+cleanup. [Task groups](../../reference/thread-pool-coroutines.md#task-groups)
+describes group lifetime and scope exit.
 
 - When `IS_COROUTINE_CALLABLE_WITH` reports that a coroutine overload of
   `child` accepts the argument types, the function forwards to

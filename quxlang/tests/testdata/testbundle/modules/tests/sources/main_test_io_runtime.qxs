@@ -91,6 +91,17 @@ IMPORT syscall;
     EXTERN_PROCEDURE["/usr/lib/libSystem.B.dylib":"unlink"]
     CALLABLE CALLCONV CCALL(@path CONST=>>BYTE; RETURN I32);
 
+  ::grouped_write COROUTINE(@file MUT& io::file, @buffer io::buffer_ref): io::transfer_result
+  {
+    VAR result std::future#io::transfer_result;
+    {
+      VAR group std::task_group;
+      result := GO write(@file file, @buffer buffer) USING(group);
+    }
+    TEST_ASSERT(result.is_ready());
+    RETURN AWAIT(result);
+  }
+
   DOC <$ Positioned writes and nested reads complete on a single scheduler worker, preserving file ownership and byte contents. $>
   ::positioned_round_trip INCLUDE_IF(OS_MACOS || OS_LINUX) UNIT_TEST
   {
@@ -110,7 +121,7 @@ IMPORT syscall;
     bytes[3] := 71;
     VAR buffer io::buffer_ref :(@data bytes[&0], @size bytes.SIZE());
     VAR runtime io::async_runtime :(@workers 1);
-    VAR written := ON(runtime) RUN write(@file file, @buffer buffer);
+    VAR written := ON(runtime) RUN grouped_write(@file file, @buffer buffer);
     VAR write_result io::transfer_result := written.get();
     TEST_ASSERT(write_result.succeeded && write_result.size == 4);
     bytes[0] := 0;

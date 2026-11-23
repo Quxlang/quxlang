@@ -666,9 +666,10 @@ namespace quxlang
             if (expr.execution_mode == call_execution_mode::run) result += "ON(" + expr_to_string(*expr.controller) + ") RUN ";
             else if (expr.execution_mode == call_execution_mode::go) result += "GO ";
             else if (expr.execution_mode == call_execution_mode::capture) result += "BIND_CALL ";
+            std::string suffix = expr.using_operand.has_value() ? " USING(" + expr_to_string(*expr.using_operand) + "))" : ")";
             if (expr.composite_arguments.has_value())
             {
-                return result + (expr.consumes_pack ? "FORWARD PACK(" : "APPLY ") + expr_to_string(*expr.composite_arguments) + (expr.consumes_pack ? ") TO " : " TO ") + expr_to_string(expr.callee) + ")";
+                return result + (expr.consumes_pack ? "FORWARD PACK(" : "APPLY ") + expr_to_string(*expr.composite_arguments) + (expr.consumes_pack ? ") TO " : " TO ") + expr_to_string(expr.callee) + suffix;
             }
             result += to_string(expr.callee) + "(";
             for (decltype(expr.args)::size_type i = 0; i < expr.args.size(); i++)
@@ -683,7 +684,7 @@ namespace quxlang
                     result += ", ";
                 }
             }
-            result += "))";
+            result += ")" + suffix;
             return result;
         }
 
@@ -2383,6 +2384,7 @@ quxlang::expression quxlang::strip_source_locations(expression expr)
                     arg.location = std::nullopt;
                     arg.value = strip_source_locations(std::move(arg.value));
                 }
+                if (value.using_operand.has_value()) value.using_operand = strip_source_locations(std::move(*value.using_operand));
             }
             else if constexpr (std::is_same_v< value_type, expression_composite_literal >)
             {

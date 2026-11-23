@@ -1990,8 +1990,10 @@ namespace quxlang
         call_execution_mode execution_mode = call_execution_mode::ordinary;
         /** Explicit ON operand, evaluated before the target receiver and arguments. */
         std::optional< expression > controller;
+        /** Explicit USING operand passed to the GO controller hook. */
+        std::optional< expression > using_operand;
 
-        QUXLANG_WITH_SOURCE_LOCATION_METADATA(expression_call, callee, args, composite_arguments, consumes_pack, execution_mode, controller);
+        QUXLANG_WITH_SOURCE_LOCATION_METADATA(expression_call, callee, args, composite_arguments, consumes_pack, execution_mode, controller, using_operand);
     };
 
     /** Represents a `BIT n` numeric-literal expression. */

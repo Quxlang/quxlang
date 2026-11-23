@@ -36,6 +36,11 @@ Within a scheduled coroutine, `GO operation(...)` invokes the controller's
 returns `std::future#VOID`. `GO` evaluates and captures arguments before returning;
 it does not implicitly await completion.
 
+`GO operation(...) USING(operand)` evaluates `operand` once after the call
+receiver and arguments. The controller receives it as the named `@USING`
+parameter of `CO_GO`, alongside the callable binding and its argument pack.
+The result of the hook is the result of the `GO` expression.
+
 The hooks receive the complete callable binding before overload selection. The
 standard pool policy selects coroutine overloads when the binding contains a
 coroutine. A function-only binding is selected through ordinary function overload
@@ -55,6 +60,41 @@ cleanup. A cleanup exception replaces a previously staged return value.
 
 `AWAIT(std::cort_yield())` queues another activation of the current invocation.
 The pool returns to its ready queue before that activation starts.
+
+## Task groups
+
+The thread-pool and asynchronous I/O controllers accept a mutable
+`std::task_group` in the `USING` clause. Both coroutine and synchronous
+function launches can belong to a group.
+
+```quxlang
+IMPORT std;
+
+::collect COROUTINE(): I32
+{
+  VAR first I32;
+  VAR second I32;
+  {
+    VAR group std::task_group;
+    GO store(@target first, @value 20) USING(group);
+    GO store(@target second, @value 22) USING(group);
+  }
+  RETURN first + second;
+}
+
+::store FUNCTION(@target MUT& I32, @value I32) { target := value; }
+```
+
+`std::task_group` is rooted and has a coroutine destructor. The destructor
+suspends the enclosing coroutine until every registered invocation has completed
+its cleanup. This applies to ordinary scope exit, return, and exception
+unwinding. The join is ready immediately for an empty group. Each launch returns its own
+`std::future#T`, which delivers the child's value or exception when consumed.
+
+The group must outlive submissions to it. Borrowed arguments and receivers
+must outlive the corresponding invocations. Local
+objects borrowed by group members can be declared before the group so their
+destruction follows the group join.
 
 ## Futures, promises, and tasks
 

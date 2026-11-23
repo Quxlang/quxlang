@@ -129,14 +129,14 @@ connection whose peer sends no data, keeps the function blocked.
 ### `CO_RUN`
 
 ```quxlang
-.CO_RUN FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ...) MUT: AUTO
+.CO_RUN FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ..., @group MUT->std::task_group DEFAULT(NULL)) MUT: AUTO
 ```
 
 `CO_RUN` is the hook that the expression `ON(runtime) RUN operation(arguments...)`
 invokes. The function selects the coroutine overload of `operation` for the
 controller type `io::async_controller` and the types of `arguments`, and
-schedules the selected coroutine through [`launch`](#launch). For a member
-coroutine, the receiver is part of the selection.
+schedules the selected coroutine through [`launch`](#launch), forwarding the
+group pointer. For a member coroutine, the receiver is part of the selection.
 
 **Return value**: a [`std::future#T`](../std/future.md), where `T` is the
 declared return type of the selected coroutine. The future becomes ready after
@@ -158,7 +158,7 @@ the `ON ... RUN` and `GO` expressions.
 ### `launch`
 
 ```quxlang
-.launch FUNCTION(@COROUTINE:descriptor AUTO, @ARGUMENTS:arguments ...) MUT: AUTO
+.launch FUNCTION(@COROUTINE:descriptor AUTO, @ARGUMENTS:arguments ..., @group MUT->std::task_group DEFAULT(NULL)) MUT: AUTO
 ```
 
 Allocates one invocation that holds an `io::async_controller` and the frame of

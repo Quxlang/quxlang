@@ -978,6 +978,14 @@ namespace quxlang::parsers
             call.execution_mode = explicit_controller ? call_execution_mode::run :
                 (kw_pre_translate == "GO" ? call_execution_mode::go : call_execution_mode::capture);
             call.controller = std::move(controller);
+            if (call.execution_mode == call_execution_mode::go && skip_keyword_if_is(pos, end, "USING"))
+            {
+                skip_whitespace_and_comments(pos, end);
+                if (!skip_symbol_if_is(pos, end, "(")) throw syntax_compilation_error("Expected '(' after GO USING");
+                call.using_operand = parse_expression_impl(ctx);
+                skip_whitespace_and_comments(pos, end);
+                if (!skip_symbol_if_is(pos, end, ")")) throw syntax_compilation_error("Expected ')' after GO USING operand");
+            }
             *value_bind_point = std::move(*target);
             have_anything = true;
         }
