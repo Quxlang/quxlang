@@ -32,7 +32,7 @@ sources:
     querygraph:
         git:
             repository: https://gitlab.com/rpnx/querygraph.git
-            revision: 794491cb5319181afeb5ff04c1942cd88ebd3057
+            revision: cf6c3590c096b6a043cb32b41aa48c0c8adb8b97
     quxlang:
         local: ../../quxlang
     serialization:
