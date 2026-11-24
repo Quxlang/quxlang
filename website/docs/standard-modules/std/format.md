@@ -1,11 +1,12 @@
-# `std::fmt`, `std::printf`, and `std::print`
+# `std::fmt`, `std::printf`, `std::printfln`, `std::print`, and `std::println`
 
 Module `std` · source file `format.qxs`
 
 The formatting functions convert values to text according to a format string
 that is a template argument. `std::fmt` returns the text as a
-[`std::string`](string.md), `std::printf` writes the text to standard output,
-and `std::print` writes one unformatted string to standard output. The format
+[`std::string`](string.md), `std::printf` and `std::printfln` write formatted text
+to standard output, and `std::print` and `std::println` write unformatted text
+to standard output. The format
 string is parsed during compilation: every field, every argument, and every
 modifier is validated before code is generated, and a mismatch is a
 compilation error. The generated code contains no format-string interpreter;
@@ -17,7 +18,9 @@ each field is lowered to a direct call for the static type of its argument.
 | --- | --- |
 | [`fmt`](#fmt) | Returns formatted text as an owned string. |
 | [`printf`](#printf) | Writes formatted text to standard output and flushes. |
+| [`printfln`](#printfln) | Writes formatted text followed by a newline and flushes. |
 | [`print`](#print) | Writes a string constant or an owned string to standard output and flushes. |
+| [`println`](#println) | Writes a string constant, an owned string, or only a newline, then flushes. |
 
 ## Functions
 
@@ -71,6 +74,22 @@ targets other than the JVM, the function uses
 Linux, macOS, and Windows targets. On JVM targets, the function writes to the
 Java standard output stream.
 
+### `printfln`
+
+```quxlang
+::printfln TEMPLATE(@T:text VALUE STRING_CONSTANT)
+  FUNCTION(%...args CONST& AUTO, @KWARGS ...)
+```
+
+The function formats `text` with the supplied arguments, writes the result and
+one newline byte to standard output, and flushes before returning. The template
+parameter, parameters, and compile-time validation are identical to those of
+[`printf`](#printf). The formatted bytes pass directly to the output writer.
+
+**Exceptions**: An output failure throws the `I32` value `1`.
+
+**Target restrictions**: The restrictions of [`printf`](#printf) apply.
+
 ### `print`
 
 ```quxlang
@@ -83,6 +102,25 @@ Java standard output stream.
 
 Both overloads flush the output before returning and append no newline. The
 text is not interpreted as a format string; braces are written unchanged.
+
+**Exceptions**: An output failure throws the `I32` value `1`.
+
+**Target restrictions**: The restrictions of [`printf`](#printf) apply.
+
+### `println`
+
+```quxlang
+::println FUNCTION()                                                                          // (1)
+::println FUNCTION(@ARG:text STRING_CONSTANT)                                                 // (2)
+::println FUNCTION(@ARG:text CONST& AUTO(text_type)) ENABLE_IF(SAME_TYPES(text_type, string))  // (3)
+```
+
+1. Writes one newline byte to standard output.
+2. Writes the bytes of a string constant followed by one newline byte.
+3. Writes the bytes of a `std::string` followed by one newline byte.
+
+The function flushes the output before returning. The text is written without
+format interpretation.
 
 **Exceptions**: An output failure throws the `I32` value `1`.
 

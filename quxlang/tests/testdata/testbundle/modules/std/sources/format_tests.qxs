@@ -201,5 +201,9 @@ LANGUAGE QUXLANG EN 0.0;
     print(text);
     printf#("{name}={}\n")(% [42], @name "value");
     printf#("modifiers: {hex:X} {scientific:.2e}\n")(@hex -128 AS I8, @scientific 12.5 AS F64);
+    println("literal {braces}");
+    println(text);
+    println();
+    printfln#("{name}: {}")(% [42], @name "value");
   }
 }

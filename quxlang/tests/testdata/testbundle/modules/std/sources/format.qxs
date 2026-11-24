@@ -447,6 +447,20 @@ DOC <$
   output.flush();
 }
 
+DOC <$
+  Writes a compile-time-validated brace format followed by a newline to
+  standard output and flushes before returning. The positional pack and
+  KWARGS must match the format fields. Output failures throw.
+  $>
+::printfln TEMPLATE(@T:text VALUE STRING_CONSTANT)
+  FUNCTION(%...args CONST& AUTO, @KWARGS ...)
+{
+  AUTO output := open_standard_output_writer();
+  format_arguments#text(% [output], ...FORWARD PACK(args), ...FORWARD PACK(KWARGS));
+  output.write_byte('\n');
+  output.flush();
+}
+
 DOC <$ Writes a string constant to standard output without appending a newline. Output failures throw. $>
 ::print FUNCTION(@ARG:text STRING_CONSTANT)
 {
@@ -460,5 +474,31 @@ DOC <$ Writes an owned string to standard output without appending a newline. Ou
 {
   AUTO output := open_standard_output_writer();
   format_value(@output output, @value text);
+  output.flush();
+}
+
+DOC <$ Writes a newline to standard output. Output failures throw. $>
+::println FUNCTION()
+{
+  AUTO output := open_standard_output_writer();
+  output.write_byte('\n');
+  output.flush();
+}
+
+DOC <$ Writes a string constant followed by a newline to standard output. Output failures throw. $>
+::println FUNCTION(@ARG:text STRING_CONSTANT)
+{
+  AUTO output := open_standard_output_writer();
+  format_value(@output output, @value text);
+  output.write_byte('\n');
+  output.flush();
+}
+
+DOC <$ Writes an owned string followed by a newline to standard output. Output failures throw. $>
+::println FUNCTION(@ARG:text CONST& AUTO(text_type)) ENABLE_IF(SAME_TYPES(text_type, string))
+{
+  AUTO output := open_standard_output_writer();
+  format_value(@output output, @value text);
+  output.write_byte('\n');
   output.flush();
 }
