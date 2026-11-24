@@ -1,0 +1,9 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::main FUNCTION(): I32
+{
+  std::print("Hello, world!\n");
+  RETURN 0;
+}

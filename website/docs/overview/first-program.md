@@ -9,23 +9,25 @@ A Quxlang source file begins with a language declaration. Import declarations fo
 module-level declaration begins with `::name`.
 
 ```quxlang
---8<-- "example-programs/programs/volume_clamp/main.qxs"
+--8<-- "example-programs/programs/hello_world/main.qxs"
 ```
 
-The example establishes several rules that apply throughout the language:
+The program writes one line of text to standard output. The example establishes several rules
+that apply throughout the language:
 
 - Keywords are uppercase, and user identifiers are lowercase.
-- `::clamp` and `::main` are declarations in the current module.
-- `@value`, `@minimum`, and `@maximum` are named parameters. The names state the role of each of
-  the three same-typed arguments at the call site.
-- `: I32` declares the return type.
-- `VAR volume I32 := ...;` declares and initializes a local variable.
-- `:=` initializes or assigns, and `==` compares.
-- `IMPORT std;` makes the standard module available. `std::printf` validates its format string
-  during compilation and receives each value as a named argument.
+- `LANGUAGE QUXLANG EN 0.0;` is the language declaration.
+- `IMPORT std;` makes the standard module available under the name `std`.
+- `::main` is a declaration in the current module. The function `main` of the application module
+  is the entry function of the executable.
+- `FUNCTION(): I32` declares a function that has no parameters and returns an `I32` value.
+- `std::print` writes a string to standard output and appends no newline, so the string literal
+  ends with the escape sequence `\n`.
+- `RETURN 0;` ends the function. The returned value becomes the exit status of the process.
 
-Quxlang also provides positional argument groups for interfaces in which position carries the
-meaning. [Call Arguments](call-arguments.md) introduces both forms.
+[`std::printf`](../standard-modules/std/format.md#printf) writes formatted text.
+[Syntax at a Glance](syntax-examples.md) presents a longer program that declares parameters, local
+variables, and conditional statements.
 
 ## Bundle layout
 
@@ -96,7 +98,7 @@ target without outputs produces no artifact and only runs its enabled static tes
 ```console
 $ qxc build ./first-bundle ./out
 $ ./out/output/app
-volume 100
+Hello, world!
 ```
 
 The output key `app` is the exact artifact path below `./out/output`. The compiler adds no
