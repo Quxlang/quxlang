@@ -26,6 +26,21 @@ LANGUAGE QUXLANG EN 0.0;
     .event VAR ADDRESS;
   }
 
+  DOC <$ Matches the Windows OVERLAPPED_ENTRY ABI for batched I/O completion. $>
+  ::overlapped_entry IBC_STRUCT
+  {
+    .completion_key VAR UINTPTR;
+    .overlapped VAR MUT->windows::overlapped;
+    .reserved VAR UINTPTR;
+    .transferred VAR U32;
+  }
+
+  DOC <$ Checks the native array stride used by GetQueuedCompletionStatusEx on Windows. $>
+  ::overlapped_entry_layout STATIC_TEST
+  {
+    TEST_ASSERT(SIZEOF(overlapped_entry) == 4 * SIZEOF(UINTPTR));
+  }
+
   ::get_logical_processor_information_ex EXTERN_PROCEDURE["kernel32":"GetLogicalProcessorInformationEx"]
     CALLABLE CALLCONV CCALL(@relationship U32, @buffer ADDRESS, @length MUT->U32; RETURN I32);
 
@@ -109,6 +124,21 @@ LANGUAGE QUXLANG EN 0.0;
       @milliseconds U32;
       RETURN I32
     );
+
+  DOC <$ Dequeues up to capacity packets from the completion port into entries. $>
+  ::get_queued_completion_status_ex EXTERN_PROCEDURE["kernel32":"GetQueuedCompletionStatusEx"]
+    CALLABLE CALLCONV CCALL(
+      @completion_port ADDRESS, @entries MUT->overlapped_entry, @capacity U32,
+      @removed MUT->U32, @milliseconds U32, @alertable I32; RETURN I32
+    );
+
+  DOC <$ Requests cancellation of the overlapped I/O issued on the specified handle. $>
+  ::cancel_io_ex EXTERN_PROCEDURE["kernel32":"CancelIoEx"]
+    CALLABLE CALLCONV CCALL(@handle ADDRESS, @overlapped MUT->overlapped; RETURN I32);
+
+  DOC <$ Converts an NTSTATUS completion failure into its Windows system error code. $>
+  ::nt_status_to_dos_error EXTERN_PROCEDURE["ntdll":"RtlNtStatusToDosError"]
+    CALLABLE CALLCONV CCALL(@status I32; RETURN U32);
 
   ::post_queued_completion_status EXTERN_PROCEDURE["kernel32":"PostQueuedCompletionStatus"]
     CALLABLE CALLCONV CCALL(

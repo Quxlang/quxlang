@@ -1,6 +1,6 @@
 # Module `io`
 
-Module `io` · source files `filesystem.qxs`, `io_descriptor_ref.qxs`, `async_io.qxs`, `async_io_linux.qxs`, `async_io_epoll.qxs`, `async_io_macos.qxs`, `async_io_windows.qxs`, `async_runtime.qxs`, `native_operation.qxs`, `io_uring_processor.qxs`, `epoll_processor.qxs`
+Module `io` · source files `filesystem.qxs`, `io_descriptor_ref.qxs`, `async_io.qxs`, `async_io_linux.qxs`, `async_io_epoll.qxs`, `async_io_macos.qxs`, `async_io_windows.qxs`, `async_runtime.qxs`, `native_operation.qxs`, `io_uring_processor.qxs`, `epoll_processor.qxs`, `overlapped_processor.qxs`
 
 The `io` module provides native file access and asynchronous I/O. Its
 declarations form three layers. The first layer consists of value types that
@@ -12,6 +12,9 @@ The third layer, [`io::async_runtime`](async-runtime.md), combines the
 completion queue with worker threads and a coroutine scheduler, so that
 coroutines suspend while a transfer is in progress. The [`net`](../net/index.md)
 module builds its socket operations on the third layer.
+
+The standalone Linux and Windows processors expose native event dispatch to
+applications that provide their own scheduling.
 
 A source file gains access to the module with `IMPORT io;` and names its
 declarations with the prefix `io::`.
@@ -44,12 +47,13 @@ declarations with the prefix `io::`.
 | [`io::async_controller`](async-controller.md) | Controller of coroutines that run on a runtime. |
 | [Native operations and `io::async_submission_ref`](native-operation.md) | Protocol for operations that the completion queue drives. |
 
-**Standalone Linux processors**
+**Standalone processors**
 
 | Page | Contents |
 | --- | --- |
 | [`io::io_uring_processor`](io-uring-processor.md) | Standalone owner of an io_uring with batched submission and explicit completion processing. |
 | [`io::epoll_processor`](epoll-processor.md) | Standalone owner of an epoll instance with shared per-descriptor readiness notifications and explicit event processing. |
+| [`io::overlapped_processor`](overlapped-processor.md) | Windows I/O completion port with caller-owned requests and batched completion dispatch. |
 
 ## Module options
 
@@ -127,6 +131,7 @@ Each declaration exists only on the targets for which its
 | `async_submission_ref::associate`, `async_submission_ref::overlapped` | No | No | Yes | No |
 | `epoll_processor`, `epoll_operation_ref`, `epoll_events`, `epoll_registration_id`, `epoll_error` | Yes | No | No | No |
 | `io_uring_processor`, `io_uring_operation_ref`, `io_uring_submission_entry` | Yes | No | No | No |
+| `overlapped_processor`, `overlapped_handle_ref`, `overlapped_request`, `overlapped_operation_ref`, `overlapped_completion_result`, `overlapped_error` | No | No | Yes | No |
 
 The declarations `async_error`, `async_submission_ref`, `io_uring_error`,
 `io_uring_completion_result`, `io_uring_submission_id`, `operation_status`, and

@@ -1,0 +1,189 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT std;
+IMPORT syscall;
+
+::overlapped_processor_tests INCLUDE_IF(OS_WINDOWS) NAMESPACE
+{
+  DOC <$ Stores a reusable request together with the result its receiver observes. $>
+  ::operation STRUCT ROOTED
+  {
+    .request VAR io::overlapped_request;
+    .count VAR SZ;
+    .result VAR io::overlapped_completion_result;
+
+    .CONSTRUCTOR FUNCTION() :> .request:(@operation THIS) {}
+    .on_notify FUNCTION(@completion io::overlapped_completion_result) MUT NOEXCEPT
+    { .result := completion; .count++; }
+  }
+
+  DOC <$ The completion bound applies across multiple native batches. Each packet identifies its own request and byte count. $>
+  ::bounded_dispatch UNIT_TEST
+  {
+    VAR processor io::overlapped_processor;
+    VAR items [75]operation;
+    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(items.SIZE()) DO
+    { processor.post(@request items[index].request, @transferred index AS CHECKED U32); };
+    TEST_ASSERT(processor.process_completions(@maximum 0, @timeout_milliseconds -1) == 0);
+    TEST_ASSERT(processor.pending_count() == 75);
+    VAR dispatched SZ := processor.process_completions(@maximum 65);
+    TEST_ASSERT(dispatched > 0 && dispatched <= 65);
+    TEST_ASSERT(processor.pending_count() == items.SIZE() - dispatched);
+    LOOP WHILE(dispatched < items.SIZE()) DO
+    {
+      VAR count SZ := processor.process_completions(@maximum 7);
+      TEST_ASSERT(count > 0 && count <= 7);
+      dispatched := dispatched + count;
+    };
+    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(items.SIZE()) DO
+    {
+      TEST_ASSERT(items[index].count == 1);
+      TEST_ASSERT(items[index].result.transferred == index AS CHECKED U32 && items[index].result.error == 0);
+    };
+    TEST_ASSERT(processor.pending_count() == 0);
+    TEST_ASSERT(processor.process_completions(@maximum 1, @timeout_milliseconds 1) == 0);
+  }
+
+  DOC <$ Posting wakes a consumer on another thread and delivers the notification on that thread. $>
+  ::worker_wakeup UNIT_TEST
+  {
+    VAR processor io::overlapped_processor :(@concurrency 1);
+    VAR item operation;
+    VAR count SZ;
+    AUTO consume := -< { count := processor.process_completions(@maximum 32, @timeout_milliseconds 5000); };
+    VAR consumer std::thread := std::thread(consume);
+    processor.post(@request item.request, @transferred 17);
+    consumer.join();
+    TEST_ASSERT(count == 1 && processor.pending_count() == 0);
+    TEST_ASSERT(item.count == 1 && item.result.transferred == 17 && item.result.error == 0);
+  }
+
+  DOC <$ Posts a second packet for its request while receiving the first packet. $>
+  ::reposting_operation STRUCT ROOTED
+  {
+    .processor VAR MUT->io::overlapped_processor;
+    .request VAR io::overlapped_request;
+    .count VAR SZ;
+    .last VAR U32;
+
+    .CONSTRUCTOR FUNCTION(@processor MUT->io::overlapped_processor) :> .request:(@operation THIS)
+    { .processor := processor; }
+    .on_notify FUNCTION(@completion io::overlapped_completion_result) MUT NOEXCEPT
+    {
+      .last := completion.transferred;
+      .count++;
+      IF (.count == 1) { .processor->.post(@request .request, @transferred .last + 1); }
+    }
+  }
+
+  DOC <$ A callback can reuse its own request and the next dispatch observes the second packet. $>
+  ::reuse_in_callback UNIT_TEST
+  {
+    VAR processor io::overlapped_processor;
+    VAR item reposting_operation :(@processor processor<-);
+    processor.post(@request item.request, @transferred 7);
+    TEST_ASSERT(processor.process_completions(@maximum 1) == 1);
+    TEST_ASSERT(item.count == 1 && item.last == 7 && processor.pending_count() == 1);
+    TEST_ASSERT(processor.process_completions(@maximum 1) == 1);
+    TEST_ASSERT(item.count == 2 && item.last == 8 && processor.pending_count() == 0);
+  }
+
+  DOC <$ Positioned file I/O delivers the byte count, preserves the chosen offset, and permits immediate reuse after a rejected submission. $>
+  ::positioned_transfers UNIT_TEST
+  {
+    VAR processor io::overlapped_processor;
+    VAR name std::string := std::fmt#("quxlang-overlapped-{process_id}.tmp")(@process_id async_test_windows_process_id());
+    VAR path [64]BYTE;
+    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(name.size()) DO { path[index] := name[index]; };
+    VAR handle ADDRESS := syscall::windows::create_file_a(@path path[&0],
+      @desired_access 3221225472, @share_mode 0, @security_attributes NULL, @creation_disposition 1,
+      @flags 1140850688, @template_file NULL); // CREATE_NEW, FILE_FLAG_OVERLAPPED | FILE_FLAG_DELETE_ON_CLOSE
+    VAR descriptor io::io_descriptor_ref :(@native_handle handle);
+    TEST_ASSERT(descriptor.is_valid());
+    DEFER { syscall::windows::close_handle(@handle handle); }
+    VAR binding := processor.associate(@descriptor descriptor);
+    VAR other io::overlapped_processor;
+    VAR rejected BOOL;
+    TRY { other.associate(@descriptor descriptor); }
+    CATCH failure CONST& io::overlapped_error { rejected := failure.code != 0; }
+    TEST_ASSERT(rejected);
+
+    VAR item operation;
+    AUTO reject := -< [] (@handle ADDRESS, @overlapped MUT->syscall::windows::overlapped): U32 = 5;
+    rejected := FALSE;
+    TRY { binding.submit(@request item.request, @start reject); }
+    CATCH failure CONST& io::overlapped_error { rejected := failure.code == 5; }
+    TEST_ASSERT(rejected && processor.pending_count() == 0 && item.count == 0);
+
+    AUTO fail := -< [] (@handle ADDRESS, @overlapped MUT->syscall::windows::overlapped): U32 { THROW (27 AS I32); };
+    rejected := FALSE;
+    TRY { binding.submit(@request item.request, @start fail); }
+    CATCH failure CONST& I32 { rejected := failure == 27; }
+    TEST_ASSERT(rejected && processor.pending_count() == 0 && item.count == 0);
+
+    VAR data [3]BYTE;
+    data[0] := 9; data[1] := 25; data[2] := 64;
+    AUTO write := -< [data] (@handle ADDRESS, @overlapped MUT->syscall::windows::overlapped): U32
+    {
+      IF (syscall::windows::write_file(@handle handle, @buffer data[&0],
+        @count 3, @transferred NULL, @overlapped overlapped) != 0) { RETURN 0; }
+      RETURN syscall::windows::get_last_error();
+    };
+    binding.submit(@request item.request, @start write, @offset 2);
+    TEST_ASSERT(processor.process_completions(@maximum 1, @timeout_milliseconds 5000) == 1);
+    TEST_ASSERT(item.count == 1 && item.result.transferred == 3 && item.result.error == 0);
+
+    VAR readback [5]BYTE;
+    AUTO read := -< [readback] (@handle ADDRESS, @overlapped MUT->syscall::windows::overlapped): U32
+    {
+      IF (syscall::windows::read_file(@handle handle, @buffer readback[&0],
+        @count 5, @transferred NULL, @overlapped overlapped) != 0) { RETURN 0; }
+      RETURN syscall::windows::get_last_error();
+    };
+    binding.submit(@request item.request, @start read);
+    TEST_ASSERT(processor.process_completions(@maximum 1, @timeout_milliseconds 5000) == 1);
+    TEST_ASSERT(item.count == 2 && item.result.transferred == 5 && item.result.error == 0);
+    TEST_ASSERT(readback[2] == 9 && readback[3] == 25 && readback[4] == 64);
+    TEST_ASSERT(processor.pending_count() == 0);
+  }
+
+  DOC <$ Cancellation of a pending datagram receive delivers ERROR_OPERATION_ABORTED. Reusing the request for a posted notification delivers a fresh success status. $>
+  ::cancel_receive UNIT_TEST
+  {
+    VAR processor io::overlapped_processor;
+    VAR startup [64]U64;
+    TEST_ASSERT(syscall::windows::socket_startup(@version 514, @data IBC_GETADDR(@PTR startup[&0])) == 0);
+    DEFER { syscall::windows::socket_cleanup(); }
+    VAR socket UINTPTR := syscall::windows::socket(@family 2, @kind 2, @protocol 17, @information NULL, @group 0, @flags 1);
+    TEST_ASSERT(socket != (0 AS UINTPTR) #!!);
+    DEFER { syscall::windows::socket_close(@socket socket); }
+    VAR address syscall::socket_address_storage;
+    VAR bytes MUT=>>BYTE := IBC_PUN#(MUT=>>BYTE)(@ADDR IBC_GETADDR(@PTR address<-));
+    bytes[0] := 2; bytes[4] := 127; bytes[7] := 1; // AF_INET, loopback, ephemeral port.
+    TEST_ASSERT(syscall::windows::bind(@socket socket, @address address<-, @length 16) == 0);
+    VAR binding := processor.associate(@descriptor io::io_descriptor_ref(@native_handle (NULL AS ADDRESS) + socket));
+    VAR item operation;
+    VAR payload BYTE;
+    VAR buffer syscall::windows::socket_buffer;
+    buffer.length := 1;
+    buffer.data := IBC_GETADDR(@PTR payload<-);
+    VAR flags U32;
+    AUTO receive := -< [buffer, flags] (@handle ADDRESS, @overlapped MUT->syscall::windows::overlapped): U32
+    {
+      VAR status I32 := syscall::windows::socket_receive(@socket handle - (NULL AS ADDRESS),
+        @buffers buffer<-, @count 1, @transferred NULL, @flags flags<-, @overlapped overlapped, @completion NULL);
+      IF (status == 0) { RETURN 0; }
+      RETURN syscall::windows::socket_last_error() AS ASSUME U32;
+    };
+    binding.submit(@request item.request, @start receive);
+    TEST_ASSERT(binding.cancel(@request item.request));
+    TEST_ASSERT(processor.process_completions(@maximum 1, @timeout_milliseconds 5000) == 1);
+    TEST_ASSERT(item.count == 1 && item.result.error == 995); // ERROR_OPERATION_ABORTED
+    TEST_ASSERT(binding.cancel(@request item.request) == FALSE);
+    processor.post(@request item.request, @transferred 23);
+    TEST_ASSERT(processor.process_completions(@maximum 1) == 1);
+    TEST_ASSERT(item.count == 2 && item.result.error == 0 && item.result.transferred == 23);
+    TEST_ASSERT(processor.pending_count() == 0);
+  }
+}

@@ -107,6 +107,7 @@ mark them as broken on a JVM target; see
 | `io::async_runtime`, `io::async_context`, `io::async_file`, `io::thread_pool` | Yes | Yes | Yes | No |
 | `io::io_uring_processor` and the `io_uring` submission types | Yes | No | No | No |
 | `io::epoll_processor` and the `epoll` registration types | Yes | No | No | No |
+| `io::overlapped_processor` and its handle, request, and completion types | No | No | Yes | No |
 
 The module contains no function that opens a file by path on Windows. A
 Windows program constructs an `io::file_ref` from a native handle. The Windows
@@ -124,9 +125,10 @@ Windows file transfers have no test that reads or writes data.
 | macOS | `io::kqueue_async_runtime` | `kqueue`, with positioned file transfers issued as POSIX AIO requests that complete through the queue |
 | Windows | `io::overlapped_async_runtime` | Overlapped I/O completion |
 
-`io::io_uring_processor`, `io::epoll_processor`, and their tests exist only on
-Linux. The unit tests of `io::async_runtime` are included on Linux, macOS, and
-Windows; the positioned round-trip test is included on Linux and macOS only.
+`io::io_uring_processor` and `io::epoll_processor` are available on Linux.
+`io::overlapped_processor` is available on Windows. Each standalone processor
+has unit tests on its target. The `io::async_runtime` unit tests cover Linux,
+macOS, and Windows. Its positioned round-trip test covers Linux and macOS.
 
 ## Module `net`
 
