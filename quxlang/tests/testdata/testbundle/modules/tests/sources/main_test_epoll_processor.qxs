@@ -1,0 +1,515 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT std;
+IMPORT syscall;
+
+::epoll_processor_tests INCLUDE_IF(OS_LINUX) NAMESPACE
+{
+  DOC <$ Creates a nonblocking close-on-exec event counter. A nonzero counter is readable, and every counter in these tests is writable. $>
+  ::open_counter FUNCTION(@ARG:initial U32): io::io_descriptor_ref
+  {
+    VAR close_on_exec_and_nonblocking I32 := 526336;
+    RETURN io::io_descriptor_ref(@native_handle syscall::linux::eventfd2(@initial initial, @flags close_on_exec_and_nonblocking));
+  }
+
+  DOC <$ Adds one to an event counter, which makes the counter readable. $>
+  ::signal_counter FUNCTION(@ARG:descriptor io::io_descriptor_ref): BOOL
+  {
+    VAR increment U64 := 1;
+    VAR bytes CONST=>>BYTE := IBC_PUN#(CONST=>>BYTE)(@ADDR IBC_GETADDR(@PTR increment<-));
+    RETURN syscall::linux::write(@fd descriptor.native_handle(), @buffer bytes, @count 8) == 8;
+  }
+
+  DOC <$ Records notifications and returns pending for the configured number of notifications before it finishes. $>
+  ::waiter STRUCT
+  {
+    .watched VAR io::io_descriptor_ref;
+    .wanted VAR io::epoll_events;
+    .repeats VAR SZ;
+    .count VAR SZ;
+    .events VAR io::epoll_events;
+    .failures VAR SZ;
+
+    .descriptor FUNCTION() CONST NOEXCEPT: io::io_descriptor_ref { RETURN .watched; }
+    .interest FUNCTION() CONST NOEXCEPT: io::epoll_events { RETURN .wanted; }
+    .rearm_failed FUNCTION() MUT NOEXCEPT { .failures++; }
+    .notify FUNCTION(@events io::epoll_events) MUT NOEXCEPT: io::operation_status
+    {
+      .events := events;
+      .count++;
+      IF (.count <= .repeats) { RETURN io::operation_status::pending; }
+      RETURN io::operation_status::finished;
+    }
+  }
+
+  DOC <$ Waits for writability, then waits for readability on the same registration. $>
+  ::direction_switcher STRUCT
+  {
+    .watched VAR io::io_descriptor_ref;
+    .wanted VAR io::epoll_events;
+    .wrote VAR BOOL;
+    .read VAR BOOL;
+
+    .descriptor FUNCTION() CONST NOEXCEPT: io::io_descriptor_ref { RETURN .watched; }
+    .interest FUNCTION() CONST NOEXCEPT: io::epoll_events { RETURN .wanted; }
+    .rearm_failed FUNCTION() MUT NOEXCEPT { PANIC "Unexpected epoll rearm failure."; }
+    .notify FUNCTION(@events io::epoll_events) MUT NOEXCEPT: io::operation_status
+    {
+      IF (.wrote == FALSE)
+      {
+        .wrote := events.writable && ((events.readable) == FALSE);
+        .wanted := io::epoll_events::readable;
+        RETURN io::operation_status::pending;
+      }
+      .read := events.readable && ((events.writable) == FALSE);
+      RETURN io::operation_status::finished;
+    }
+  }
+
+  DOC <$ Removes the registration of its peer from inside a notification when the peer is still registered. $>
+  ::canceller STRUCT
+  {
+    .watched VAR io::io_descriptor_ref;
+    .processor VAR MUT->io::epoll_processor;
+    .peer VAR MUT->canceller;
+    .identity VAR io::epoll_registration_id;
+    .registered VAR BOOL;
+    .count VAR SZ;
+
+    .descriptor FUNCTION() CONST NOEXCEPT: io::io_descriptor_ref { RETURN .watched; }
+    .interest FUNCTION() CONST NOEXCEPT: io::epoll_events { RETURN io::epoll_events::readable; }
+    .rearm_failed FUNCTION() MUT NOEXCEPT { PANIC "Unexpected epoll rearm failure."; }
+    .notify FUNCTION(@events io::epoll_events) MUT NOEXCEPT: io::operation_status
+    {
+      .count++;
+      .registered := FALSE;
+      IF (.peer->.registered)
+      {
+        .processor->.remove(.peer->.identity);
+        .peer->.registered := FALSE;
+      }
+      RETURN io::operation_status::finished;
+    }
+  }
+
+  DOC <$ Removes its own registration from inside a notification and then requests rearming. $>
+  ::self_canceller STRUCT
+  {
+    .watched VAR io::io_descriptor_ref;
+    .processor VAR MUT->io::epoll_processor;
+    .identity VAR io::epoll_registration_id;
+    .count VAR SZ;
+
+    .descriptor FUNCTION() CONST NOEXCEPT: io::io_descriptor_ref { RETURN .watched; }
+    .interest FUNCTION() CONST NOEXCEPT: io::epoll_events { RETURN io::epoll_events::readable; }
+    .rearm_failed FUNCTION() MUT NOEXCEPT { PANIC "Unexpected epoll rearm failure."; }
+    .notify FUNCTION(@events io::epoll_events) MUT NOEXCEPT: io::operation_status
+    {
+      .count++;
+      .processor->.remove(.identity);
+      RETURN io::operation_status::pending;
+    }
+  }
+
+  DOC <$ Owns the operations that one producer thread registers. $>
+  ::waiter_group STRUCT
+  {
+    .items VAR [32]waiter;
+  }
+
+  DOC <$ Registers every operation of a group from a producer thread. $>
+  ::registrar STRUCT
+  {
+    .processor VAR MUT->io::epoll_processor;
+    .group VAR MUT->waiter_group;
+
+    .OPERATOR() FUNCTION()
+    {
+      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(32) DO { .processor->.add(.group->.items[index]); }
+    }
+  }
+
+  DOC <$ A pending result rearms the registration, and a finished result ends it. A finished registration stays silent while its descriptor remains ready. $>
+  ::rearming UNIT_TEST
+  {
+    VAR descriptor io::io_descriptor_ref := open_counter(1);
+    TEST_ASSERT(descriptor.is_valid());
+    DEFER { syscall::linux::close(@fd descriptor.native_handle()); }
+    VAR operation waiter;
+    operation.watched := descriptor;
+    operation.wanted := io::epoll_events::readable;
+    operation.repeats := 1;
+    VAR processor io::epoll_processor;
+    processor.add(operation);
+    TEST_ASSERT(processor.pending_count() == 1);
+    TEST_ASSERT(processor.process_events(@maximum 8, @timeout_milliseconds 1000) == 1);
+    TEST_ASSERT(operation.count == 1 && operation.events.readable);
+    TEST_ASSERT(processor.pending_count() == 1);
+    TEST_ASSERT(processor.process_events(@maximum 8, @timeout_milliseconds 1000) == 1);
+    TEST_ASSERT(operation.count == 2);
+    TEST_ASSERT(processor.pending_count() == 0);
+    TEST_ASSERT(processor.process_events(@maximum 8) == 0);
+    TEST_ASSERT(operation.count == 2);
+  }
+
+  DOC <$ A descriptor can be registered again after its last operation finishes. $>
+  ::descriptor_reuse UNIT_TEST
+  {
+    VAR descriptor io::io_descriptor_ref := open_counter(1);
+    TEST_ASSERT(descriptor.is_valid());
+    DEFER { syscall::linux::close(@fd descriptor.native_handle()); }
+    VAR first waiter;
+    first.watched := descriptor;
+    first.wanted := io::epoll_events::readable;
+    VAR second waiter;
+    second.watched := descriptor;
+    second.wanted := io::epoll_events::writable;
+    VAR processor io::epoll_processor;
+    processor.add(first);
+    TEST_ASSERT(processor.process_events(@maximum 8, @timeout_milliseconds 1000) == 1);
+    TEST_ASSERT(first.count == 1 && processor.pending_count() == 0);
+    TEST_ASSERT(syscall::linux::epoll_ctl(@queue processor.poll_descriptor().native_handle(),
+      @operation 2, @descriptor descriptor.native_handle(), @event NULL) == -2);
+    processor.add(second);
+    TEST_ASSERT(processor.pending_count() == 1);
+    TEST_ASSERT(processor.process_events(@maximum 8, @timeout_milliseconds 1000) == 1);
+    TEST_ASSERT(first.count == 1 && second.count == 1);
+    TEST_ASSERT(second.events.writable && ((second.events.readable) == FALSE));
+    TEST_ASSERT(processor.pending_count() == 0);
+  }
+
+  DOC <$ Rearming reads the operation's current interest, so one registration waits for different conditions in sequence. $>
+  ::interest_change UNIT_TEST
+  {
+    VAR descriptor io::io_descriptor_ref := open_counter(0);
+    TEST_ASSERT(descriptor.is_valid());
+    DEFER { syscall::linux::close(@fd descriptor.native_handle()); }
+    VAR operation direction_switcher;
+    operation.watched := descriptor;
+    operation.wanted := io::epoll_events::writable;
+    VAR processor io::epoll_processor;
+    processor.add(operation);
+    TEST_ASSERT(processor.process_events(@maximum 8, @timeout_milliseconds 1000) == 1);
+    TEST_ASSERT(operation.wrote);
+    TEST_ASSERT(processor.process_events(@maximum 8) == 0);
+    TEST_ASSERT(signal_counter(descriptor));
+    TEST_ASSERT(processor.process_events(@maximum 8, @timeout_milliseconds 1000) == 1);
+    TEST_ASSERT(operation.read);
+    TEST_ASSERT(processor.pending_count() == 0);
+  }
+
+  DOC <$ Removal before event processing deletes the kernel watch and suppresses notification. $>
+  ::removal UNIT_TEST
+  {
+    VAR descriptor io::io_descriptor_ref := open_counter(1);
+    TEST_ASSERT(descriptor.is_valid());
+    DEFER { syscall::linux::close(@fd descriptor.native_handle()); }
+    VAR operation waiter;
+    operation.watched := descriptor;
+    operation.wanted := io::epoll_events::readable;
+    VAR processor io::epoll_processor;
+    VAR identity := processor.add(operation);
+    processor.remove(identity);
+    TEST_ASSERT(processor.pending_count() == 0);
+    TEST_ASSERT(processor.process_events(@maximum 8) == 0);
+    TEST_ASSERT(operation.count == 0);
+    TEST_ASSERT(syscall::linux::epoll_ctl(@queue processor.poll_descriptor().native_handle(),
+      @operation 2, @descriptor descriptor.native_handle(), @event NULL) == -2);
+    processor.add(operation);
+    TEST_ASSERT(processor.process_events(@maximum 8, @timeout_milliseconds 1000) == 1);
+    TEST_ASSERT(operation.count == 1);
+  }
+
+  DOC <$ A notification that removes a registration of another descriptor suppresses the event that the same batch holds for it. $>
+  ::removal_during_dispatch UNIT_TEST
+  {
+    VAR first_descriptor io::io_descriptor_ref := open_counter(1);
+    TEST_ASSERT(first_descriptor.is_valid());
+    DEFER { syscall::linux::close(@fd first_descriptor.native_handle()); }
+    VAR second_descriptor io::io_descriptor_ref := open_counter(1);
+    TEST_ASSERT(second_descriptor.is_valid());
+    DEFER { syscall::linux::close(@fd second_descriptor.native_handle()); }
+    VAR processor io::epoll_processor;
+    VAR first canceller;
+    VAR second canceller;
+    first.watched := first_descriptor;
+    first.processor := processor<-;
+    first.peer := second<-;
+    second.watched := second_descriptor;
+    second.processor := processor<-;
+    second.peer := first<-;
+    first.identity := processor.add(first);
+    first.registered := TRUE;
+    second.identity := processor.add(second);
+    second.registered := TRUE;
+    TEST_ASSERT(processor.process_events(@maximum 8, @timeout_milliseconds 1000) == 1);
+    TEST_ASSERT(first.count + second.count == 1);
+    TEST_ASSERT(processor.pending_count() == 0);
+    TEST_ASSERT(processor.process_events(@maximum 8) == 0);
+    TEST_ASSERT(first.count + second.count == 1);
+  }
+
+  DOC <$ A notification that removes its own registration is not rearmed by its pending result. $>
+  ::self_removal UNIT_TEST
+  {
+    VAR descriptor io::io_descriptor_ref := open_counter(1);
+    TEST_ASSERT(descriptor.is_valid());
+    DEFER { syscall::linux::close(@fd descriptor.native_handle()); }
+    VAR processor io::epoll_processor;
+    VAR operation self_canceller;
+    operation.watched := descriptor;
+    operation.processor := processor<-;
+    operation.identity := processor.add(operation);
+    TEST_ASSERT(processor.process_events(@maximum 8, @timeout_milliseconds 1000) == 1);
+    TEST_ASSERT(operation.count == 1 && processor.pending_count() == 0);
+    TEST_ASSERT(processor.process_events(@maximum 8) == 0);
+    TEST_ASSERT(operation.count == 1);
+  }
+
+  DOC <$ The maximum bounds the events that one call transfers, and later calls deliver the remainder. $>
+  ::maximum UNIT_TEST
+  {
+    VAR first_descriptor io::io_descriptor_ref := open_counter(1);
+    TEST_ASSERT(first_descriptor.is_valid());
+    DEFER { syscall::linux::close(@fd first_descriptor.native_handle()); }
+    VAR second_descriptor io::io_descriptor_ref := open_counter(1);
+    TEST_ASSERT(second_descriptor.is_valid());
+    DEFER { syscall::linux::close(@fd second_descriptor.native_handle()); }
+    VAR first waiter;
+    first.watched := first_descriptor;
+    first.wanted := io::epoll_events::readable;
+    VAR second waiter;
+    second.watched := second_descriptor;
+    second.wanted := io::epoll_events::writable;
+    VAR processor io::epoll_processor;
+    processor.add(first);
+    processor.add(second);
+    TEST_ASSERT(processor.process_events(@maximum 0, @timeout_milliseconds 1000) == 0);
+    TEST_ASSERT(processor.process_events(@maximum 1, @timeout_milliseconds 1000) == 1);
+    TEST_ASSERT(first.count + second.count == 1);
+    TEST_ASSERT(processor.process_events(@maximum 8, @timeout_milliseconds 1000) == 1);
+    TEST_ASSERT(first.count == 1 && first.events.readable);
+    TEST_ASSERT(second.count == 1 && second.events.writable);
+    TEST_ASSERT(processor.pending_count() == 0);
+  }
+
+  DOC <$ A reader and a writer share one descriptor, and each receives only the conditions that its interest selects. $>
+  ::shared_descriptor UNIT_TEST
+  {
+    VAR descriptor io::io_descriptor_ref := open_counter(0);
+    TEST_ASSERT(descriptor.is_valid());
+    DEFER { syscall::linux::close(@fd descriptor.native_handle()); }
+    VAR reader waiter;
+    reader.watched := descriptor;
+    reader.wanted := io::epoll_events::readable;
+    VAR writer waiter;
+    writer.watched := descriptor;
+    writer.wanted := io::epoll_events::writable;
+    VAR processor io::epoll_processor;
+    processor.add(reader);
+    processor.add(writer);
+    TEST_ASSERT(processor.pending_count() == 2);
+    TEST_ASSERT(processor.process_events(@maximum 8, @timeout_milliseconds 1000) == 1);
+    TEST_ASSERT(reader.count == 0 && writer.count == 1);
+    TEST_ASSERT(writer.events.writable && ((writer.events.readable) == FALSE));
+    TEST_ASSERT(processor.pending_count() == 1);
+    TEST_ASSERT(processor.process_events(@maximum 8) == 0);
+    TEST_ASSERT(signal_counter(descriptor));
+    TEST_ASSERT(processor.process_events(@maximum 8, @timeout_milliseconds 1000) == 1);
+    TEST_ASSERT(reader.count == 1 && writer.count == 1);
+    TEST_ASSERT(reader.events.readable && ((reader.events.writable) == FALSE));
+    TEST_ASSERT(processor.pending_count() == 0);
+  }
+
+  DOC <$ One kernel event notifies every registration of its descriptor that waits for the reported condition. $>
+  ::concurrent_readers UNIT_TEST
+  {
+    VAR descriptor io::io_descriptor_ref := open_counter(0);
+    TEST_ASSERT(descriptor.is_valid());
+    DEFER { syscall::linux::close(@fd descriptor.native_handle()); }
+    VAR first waiter;
+    first.watched := descriptor;
+    first.wanted := io::epoll_events::readable;
+    VAR second waiter;
+    second.watched := descriptor;
+    second.wanted := io::epoll_events::readable;
+    second.repeats := 1;
+    VAR third waiter;
+    third.watched := descriptor;
+    third.wanted := io::epoll_events::readable;
+    VAR processor io::epoll_processor;
+    processor.add(first);
+    processor.add(second);
+    processor.add(third);
+    TEST_ASSERT(processor.process_events(@maximum 8) == 0);
+    TEST_ASSERT(signal_counter(descriptor));
+    TEST_ASSERT(processor.process_events(@maximum 1, @timeout_milliseconds 1000) == 3);
+    TEST_ASSERT(first.count == 1 && second.count == 1 && third.count == 1);
+    TEST_ASSERT(processor.pending_count() == 1);
+    TEST_ASSERT(processor.process_events(@maximum 1, @timeout_milliseconds 1000) == 1);
+    TEST_ASSERT(first.count == 1 && second.count == 2 && third.count == 1);
+    TEST_ASSERT(processor.pending_count() == 0);
+  }
+
+  DOC <$ A notification that removes another registration of the same descriptor suppresses the notification that the same event selected for it. $>
+  ::removal_within_event UNIT_TEST
+  {
+    VAR descriptor io::io_descriptor_ref := open_counter(1);
+    TEST_ASSERT(descriptor.is_valid());
+    DEFER { syscall::linux::close(@fd descriptor.native_handle()); }
+    VAR processor io::epoll_processor;
+    VAR first canceller;
+    VAR second canceller;
+    first.watched := descriptor;
+    first.processor := processor<-;
+    first.peer := second<-;
+    second.watched := descriptor;
+    second.processor := processor<-;
+    second.peer := first<-;
+    first.identity := processor.add(first);
+    first.registered := TRUE;
+    second.identity := processor.add(second);
+    second.registered := TRUE;
+    TEST_ASSERT(processor.process_events(@maximum 8, @timeout_milliseconds 1000) == 1);
+    TEST_ASSERT(first.count + second.count == 1);
+    TEST_ASSERT(processor.pending_count() == 0);
+    TEST_ASSERT(processor.process_events(@maximum 8) == 0);
+  }
+
+  DOC <$ Producer threads register operations on one descriptor while the consumer processes events, and every operation receives one notification. $>
+  ::concurrent_registration UNIT_TEST
+  {
+    VAR descriptor io::io_descriptor_ref := open_counter(1);
+    TEST_ASSERT(descriptor.is_valid());
+    DEFER { syscall::linux::close(@fd descriptor.native_handle()); }
+    VAR first_group waiter_group;
+    VAR second_group waiter_group;
+    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(32) DO
+    {
+      first_group.items[index].watched := descriptor;
+      first_group.items[index].wanted := io::epoll_events::readable;
+      second_group.items[index].watched := descriptor;
+      second_group.items[index].wanted := io::epoll_events::readable;
+    }
+    VAR processor io::epoll_processor;
+    VAR first_registrar registrar;
+    first_registrar.processor := processor<-;
+    first_registrar.group := first_group<-;
+    VAR second_registrar registrar;
+    second_registrar.processor := processor<-;
+    second_registrar.group := second_group<-;
+    VAR first_worker std::thread := std::thread(first_registrar);
+    VAR second_worker std::thread := std::thread(second_registrar);
+    VAR notified SZ;
+    VAR attempts SZ;
+    LOOP WHILE(notified < 64 && attempts < 1000) DO
+    {
+      notified := notified + processor.process_events(@maximum 64, @timeout_milliseconds 10);
+      attempts++;
+    };
+    first_worker.join();
+    second_worker.join();
+    TEST_ASSERT(notified == 64);
+    TEST_ASSERT(processor.pending_count() == 0);
+    VAR exact BOOL := TRUE;
+    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(32) DO
+    {
+      IF (first_group.items[index].count != 1 || second_group.items[index].count != 1) { exact := FALSE; }
+    }
+    TEST_ASSERT(exact);
+  }
+
+  DOC <$ An outer processor observes the inner processor's readiness and leaves its events for the inner consumer. $>
+  ::poll_descriptor UNIT_TEST
+  {
+    VAR descriptor io::io_descriptor_ref := open_counter(0);
+    TEST_ASSERT(descriptor.is_valid());
+    DEFER { syscall::linux::close(@fd descriptor.native_handle()); }
+    VAR inner io::epoll_processor;
+    VAR outer io::epoll_processor;
+    VAR reader waiter;
+    reader.watched := descriptor;
+    reader.wanted := io::epoll_events::readable;
+    VAR observer waiter;
+    observer.watched := inner.poll_descriptor();
+    observer.wanted := io::epoll_events::readable;
+    inner.add(reader);
+    outer.add(observer);
+    TEST_ASSERT(outer.process_events(@maximum 1) == 0);
+    TEST_ASSERT(signal_counter(descriptor));
+    TEST_ASSERT(outer.process_events(@maximum 1, @timeout_milliseconds 1000) == 1);
+    TEST_ASSERT(observer.events.readable && reader.count == 0);
+    TEST_ASSERT(inner.process_events(@maximum 1) == 1 && reader.events.readable);
+  }
+
+  DOC <$ Uses an interest rejected by Linux on a one-shot watch to exercise terminal failure delivery. $>
+  ::rejected_rearm STRUCT
+  {
+    .watched VAR io::io_descriptor_ref;
+    .processor VAR MUT->io::epoll_processor;
+    .replacement VAR MUT->waiter;
+    .attempted VAR BOOL;
+    .failures VAR SZ;
+
+    .descriptor FUNCTION() CONST NOEXCEPT: io::io_descriptor_ref { RETURN .watched; }
+    .interest FUNCTION() CONST NOEXCEPT: io::epoll_events
+    {
+      // Linux rejects EPOLLEXCLUSIVE on EPOLL_CTL_MOD.
+      IF (.attempted) { RETURN (268435456 AS U32) AS io::epoll_events; }
+      RETURN io::epoll_events::writable;
+    }
+    .notify FUNCTION(@events io::epoll_events) MUT NOEXCEPT: io::operation_status
+    {
+      .attempted := TRUE;
+      RETURN io::operation_status::pending;
+    }
+    .rearm_failed FUNCTION() MUT NOEXCEPT
+    {
+      .failures++;
+      .processor->.add(.replacement->);
+    }
+  }
+
+  DOC <$ A failed rearm terminates pending and unselected operations. A failure callback can register a fresh watch for the same descriptor. $>
+  ::rearm_failure UNIT_TEST
+  {
+    VAR descriptor io::io_descriptor_ref := open_counter(0);
+    TEST_ASSERT(descriptor.is_valid());
+    DEFER { syscall::linux::close(@fd descriptor.native_handle()); }
+    VAR processor io::epoll_processor;
+    VAR reader waiter;
+    reader.watched := descriptor;
+    reader.wanted := io::epoll_events::readable;
+    VAR replacement waiter;
+    replacement.watched := descriptor;
+    replacement.wanted := io::epoll_events::writable;
+    VAR writer rejected_rearm;
+    writer.watched := descriptor;
+    writer.processor := processor<-;
+    writer.replacement := replacement<-;
+    processor.add(reader);
+    processor.add(writer);
+    VAR rejected BOOL;
+    TRY { processor.process_events(@maximum 1, @timeout_milliseconds 1000); }
+    CATCH failure CONST& io::epoll_error { rejected := failure == io::epoll_error::registration_failed; }
+    TEST_ASSERT(rejected && writer.attempted && writer.failures == 1);
+    TEST_ASSERT(reader.count == 0 && reader.failures == 1);
+    TEST_ASSERT(processor.pending_count() == 1);
+    TEST_ASSERT(processor.process_events(@maximum 1, @timeout_milliseconds 1000) == 1);
+    TEST_ASSERT(replacement.count == 1 && processor.pending_count() == 0);
+  }
+
+  DOC <$ Registration of an invalid descriptor fails and retains no registration. $>
+  ::registration_failure UNIT_TEST
+  {
+    VAR operation waiter;
+    operation.wanted := io::epoll_events::readable;
+    VAR processor io::epoll_processor;
+    VAR rejected BOOL;
+    TRY { processor.add(operation); }
+    CATCH failure CONST& io::epoll_error { rejected := failure == io::epoll_error::registration_failed; }
+    TEST_ASSERT(rejected);
+    TEST_ASSERT(processor.pending_count() == 0);
+  }
+}

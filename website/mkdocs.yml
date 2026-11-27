@@ -312,6 +312,7 @@ nav:
               - "io::async_controller": standard-modules/io/async-controller.md
               - "Native Operations": standard-modules/io/native-operation.md
               - "io::io_uring_processor": standard-modules/io/io-uring-processor.md
+              - "io::epoll_processor": standard-modules/io/epoll-processor.md
       - Module net:
           - standard-modules/net/index.md
           - "Addresses and Endpoints": standard-modules/net/address.md

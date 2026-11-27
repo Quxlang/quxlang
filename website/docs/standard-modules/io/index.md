@@ -1,6 +1,6 @@
 # Module `io`
 
-Module `io` · source files `filesystem.qxs`, `io_descriptor_ref.qxs`, `async_io.qxs`, `async_io_linux.qxs`, `async_io_epoll.qxs`, `async_io_macos.qxs`, `async_io_windows.qxs`, `async_runtime.qxs`, `native_operation.qxs`, `io_uring_processor.qxs`
+Module `io` · source files `filesystem.qxs`, `io_descriptor_ref.qxs`, `async_io.qxs`, `async_io_linux.qxs`, `async_io_epoll.qxs`, `async_io_macos.qxs`, `async_io_windows.qxs`, `async_runtime.qxs`, `native_operation.qxs`, `io_uring_processor.qxs`, `epoll_processor.qxs`
 
 The `io` module provides native file access and asynchronous I/O. Its
 declarations form three layers. The first layer consists of value types that
@@ -44,11 +44,12 @@ declarations with the prefix `io::`.
 | [`io::async_controller`](async-controller.md) | Controller of coroutines that run on a runtime. |
 | [Native operations and `io::async_submission_ref`](native-operation.md) | Protocol for operations that the completion queue drives. |
 
-**Linux io_uring**
+**Standalone Linux processors**
 
 | Page | Contents |
 | --- | --- |
 | [`io::io_uring_processor`](io-uring-processor.md) | Standalone owner of an io_uring with batched submission and explicit completion processing. |
+| [`io::epoll_processor`](epoll-processor.md) | Standalone owner of an epoll instance with shared per-descriptor readiness notifications and explicit event processing. |
 
 ## Module options
 
@@ -83,8 +84,7 @@ The option has the following effects on Linux targets:
   describes.
 
 The option has no effect on macOS and Windows targets, on the synchronous file
-operations, and on [`io::io_uring_processor`](io-uring-processor.md), which is
-declared on every Linux target.
+operations, or on either standalone Linux processor.
 
 An option is a compile-time value that the target configuration of the build
 supplies. The value is set in the `options` mapping of the logical module that
@@ -125,11 +125,13 @@ Each declaration exists only on the targets for which its
 | `async_submission_ref::submit` | When `linux_use_io_uring` is `TRUE` | No | No | No |
 | `async_submission_ref::wait` | Yes | Yes | No | No |
 | `async_submission_ref::associate`, `async_submission_ref::overlapped` | No | No | Yes | No |
+| `epoll_processor`, `epoll_operation_ref`, `epoll_events`, `epoll_registration_id`, `epoll_error` | Yes | No | No | No |
 | `io_uring_processor`, `io_uring_operation_ref`, `io_uring_submission_entry` | Yes | No | No | No |
 
 The declarations `async_error`, `async_submission_ref`, `io_uring_error`,
-`io_uring_completion_result`, `io_uring_submission_id`, and the option
-`linux_use_io_uring` carry no condition and are declared on every target.
+`io_uring_completion_result`, `io_uring_submission_id`, `operation_status`, and
+the option `linux_use_io_uring` carry no condition and are declared on every
+target.
 `async_controller` carries no condition and is usable where `async_runtime` is
 declared.
 

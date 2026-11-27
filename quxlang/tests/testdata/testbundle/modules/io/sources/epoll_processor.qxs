@@ -1,0 +1,423 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+IMPORT syscall;
+
+DOC <$ Reports failures from the Linux epoll processor. $>
+::epoll_error INCLUDE_IF(OS_LINUX) ENUM
+[ initialization_failed, registration_failed, wait_failed ];
+
+DOC <$
+  Names the Linux epoll readiness conditions with their native masks. An interest set
+  selects the conditions that an operation waits for. A notification reports the
+  conditions that the kernel observed. Every operation receives error and hangup.
+  $>
+::epoll_events INCLUDE_IF(OS_LINUX) FLAGSET BITS(32)
+[
+  readable = 1,
+  priority = 2,
+  writable = 4,
+  error = 8,
+  hangup = 16,
+  peer_closed = 8192
+];
+
+DOC <$ States whether an operation requires a further notification. $>
+::operation_status ENUM [ pending, finished ];
+
+DOC <$
+  Borrows one operation that waits for descriptor readiness. The operation occupies a
+  stable address from registration until its notification returns finished or its
+  registration is removed or receives a terminal rearm failure.
+  $>
+::epoll_operation_ref INCLUDE_IF(OS_LINUX) GENERIC_REF INCOMPARABLE
+{
+  DOC <$ Returns the open descriptor to watch. The processor reads the descriptor once, during registration. $>
+  .descriptor FUNCTION() CONST NOEXCEPT: io_descriptor_ref;
+  DOC <$ Returns the conditions that the operation waits for. The processor reads the interest during registration and after each pending result. $>
+  .interest FUNCTION() CONST NOEXCEPT: epoll_events;
+  DOC <$
+    Receives one notification without blocking or recursive event processing. The events
+    contain the observed conditions that the interest selects, together with error and
+    hangup. A pending result continues the registration with the current interest. A
+    finished result ends the registration, after which the processor does not access
+    the operation.
+    $>
+  .notify FUNCTION(@events epoll_events) MUT NOEXCEPT: operation_status;
+  DOC <$ Reports a terminal failure to rearm this registration. The processor calls this method on the consumer thread outside its mutex. $>
+  .rearm_failed FUNCTION() MUT NOEXCEPT;
+}
+
+DOC <$ Identifies an outstanding registration in its originating processor. The identity expires when the notification that returns finished begins, when rearm_failed begins, or when the registration is removed. $>
+::epoll_registration_id INCLUDE_IF(OS_LINUX) STRUCT
+{
+  PRIVATE(MODULE)
+  {
+    .address VAR ADDRESS;
+  }
+}
+
+PRIVATE(MODULE)
+{
+  DOC <$ Stores the native EPOLL_CTL_ADD command. $>
+  ::epoll_control_add STATIC I32 := 1;
+  DOC <$ Stores the native EPOLL_CTL_DEL command. $>
+  ::epoll_control_delete STATIC I32 := 2;
+  DOC <$ Stores the native EPOLL_CTL_MOD command. $>
+  ::epoll_control_modify STATIC I32 := 3;
+  DOC <$ Stores the native EPOLLONESHOT mask, which disarms a kernel registration when the kernel reports it. $>
+  ::epoll_one_shot STATIC U32 := 1073741824;
+  DOC <$ Stores the native EPOLL_CLOEXEC flag. $>
+  ::epoll_close_on_exec STATIC I32 := 524288;
+  DOC <$ Stores the raw Linux ENOENT result for a descriptor without a kernel registration. $>
+  ::epoll_missing_result STATIC I32 := -2;
+  DOC <$ Stores the raw Linux EBADF result for a closed descriptor. $>
+  ::epoll_bad_descriptor_result STATIC I32 := -9;
+  DOC <$ Stores the raw Linux EINTR result for interrupted system calls. $>
+  ::epoll_interrupted_result STATIC I32 := -4;
+  DOC <$ Bounds the number of events that one wait transfers from the kernel. $>
+  ::epoll_batch_capacity STATIC SZ := 32;
+
+  DOC <$ Retains one borrowed operation and its position among the registrations of its descriptor. $>
+  ::epoll_registration INCLUDE_IF(OS_LINUX) STRUCT
+  {
+    .operation VAR epoll_operation_ref;
+    .descriptor VAR io_descriptor_ref;
+    DOC <$ Stores the interest that the operation reported most recently. $>
+    .interest VAR epoll_events;
+    DOC <$ Records that event processing holds the registration outside the list of its descriptor. $>
+    .detached VAR BOOL;
+    DOC <$ Records removal of a detached registration, whose storage event processing releases. $>
+    .removed VAR BOOL;
+    .previous VAR MUT->epoll_registration;
+    .next VAR MUT->epoll_registration;
+    DOC <$ Copies the operation reference into processor-owned registration storage. $>
+    .CONSTRUCTOR FUNCTION(@operation epoll_operation_ref) :> .operation:(@OTHER operation) {}
+  }
+
+  DOC <$
+    Tracks the listed registrations of one descriptor and the arming of its single kernel
+    registration. An entry exists while the descriptor has a listed registration or
+    undergoes notification.
+    $>
+  ::epoll_descriptor_state INCLUDE_IF(OS_LINUX) STRUCT
+  {
+    .first VAR MUT->epoll_registration;
+    .last VAR MUT->epoll_registration;
+    DOC <$ Accumulates interests during selection and registration. Removal can leave a wider mask until the next selection. $>
+    .interest VAR epoll_events;
+    DOC <$ Identifies the most recent arming. A kernel event that carries another generation is stale. $>
+    .generation VAR U32;
+    DOC <$ Records that the consumer notifies registrations of the descriptor and arms the descriptor afterwards. $>
+    .notifying VAR BOOL;
+  }
+
+  DOC <$ Appends a registration to the list of its descriptor. $>
+  ::link_epoll_registration INCLUDE_IF(OS_LINUX)
+    FUNCTION(@state MUT& epoll_descriptor_state, @registration MUT->epoll_registration)
+  {
+    registration->.detached := FALSE;
+    registration->.previous := state.last;
+    registration->.next := NULL;
+    IF (state.last??) { state.last->.next := registration; }
+    ELSE { state.first := registration; }
+    state.last := registration;
+  }
+
+  DOC <$ Removes a listed registration from the list of its descriptor. $>
+  ::unlink_epoll_registration INCLUDE_IF(OS_LINUX)
+    FUNCTION(@state MUT& epoll_descriptor_state, @registration MUT->epoll_registration)
+  {
+    IF (registration->.previous??) { registration->.previous->.next := registration->.next; }
+    ELSE { state.first := registration->.next; }
+    IF (registration->.next??) { registration->.next->.previous := registration->.previous; }
+    ELSE { state.last := registration->.previous; }
+  }
+}
+
+DOC <$
+  Owns a Linux epoll instance that delivers readiness notifications to borrowed operations.
+  A descriptor carries any number of outstanding registrations, which share one one-shot
+  kernel registration armed with the union of their interests. Notification order
+  among registrations of the same descriptor is unspecified. A mutex protects the
+  descriptor table, so registration is permitted from any thread. Event processing and
+  removal require one serialized consumer. Destruction requires exclusive access and no
+  outstanding registrations.
+  $>
+::epoll_processor INCLUDE_IF(OS_LINUX) STRUCT ROOTED
+{
+  PRIVATE(MODULE)
+  {
+    .queue VAR io_descriptor_ref;
+    .outstanding VAR ATOMIC#SZ;
+    DOC <$ Protects the descriptor table, the registration lists, the generation, and the arming of kernel registrations. $>
+    .mutex VAR std::ordering_mutex;
+    .descriptors VAR std::hadix_map#[I32:epoll_descriptor_state];
+    .generation VAR U32;
+    .processing VAR BOOL;
+
+    DOC <$
+      Adds or modifies a kernel watch with the supplied interest and a new generation.
+      The caller holds the mutex. A FALSE result denotes kernel rejection and preserves
+      the recorded generation.
+      $>
+    .arm FUNCTION(@descriptor io_descriptor_ref, @state MUT& epoll_descriptor_state, @command I32, @interest epoll_events) MUT: BOOL
+    {
+      VAR generation U32 := .generation + 1;
+      VAR event syscall::linux::epoll_event;
+      event.events := (interest AS U32) #|| epoll_one_shot;
+      event.data[0] := descriptor.native_handle() AS PARTIAL U32;
+      event.data[1] := generation;
+      VAR status I32 := syscall::linux::epoll_ctl(@queue .queue.native_handle(), @operation command,
+        @descriptor descriptor.native_handle(), @event event<-);
+      IF (status < 0) { RETURN FALSE; }
+      .generation := generation;
+      state.interest := interest;
+      state.generation := generation;
+      RETURN TRUE;
+    }
+
+    DOC <$ Deletes the kernel watch and retires its table entry while the caller holds the mutex. $>
+    .retire_watch FUNCTION(@descriptor io_descriptor_ref) MUT
+    {
+      VAR status I32 := syscall::linux::epoll_ctl(@queue .queue.native_handle(), @operation epoll_control_delete,
+        @descriptor descriptor.native_handle(), @event NULL);
+      IF (status != 0 && status != epoll_missing_result && status != epoll_bad_descriptor_result) { PANIC "Cannot delete an epoll watch."; }
+      .descriptors.erase(descriptor.native_handle());
+    }
+
+    DOC <$ Releases the storage of a registration that no list holds. $>
+    .release FUNCTION(@registration MUT->epoll_registration) MUT
+    {
+      DELETE registration;
+      .outstanding.SUBTRACT#ATOMIC_ACQREL(1);
+    }
+
+    DOC <$
+      Notifies the registrations of one descriptor that a kernel event selects, and arms the
+      descriptor for the registrations that remain. A stale event has no effect. The result
+      counts delivered notifications.
+      $>
+    .dispatch FUNCTION(@descriptor io_descriptor_ref, @generation U32, @events epoll_events, @rearm_failed MUT& BOOL) MUT: SZ
+    {
+      VAR universal epoll_events := epoll_events::error #|| epoll_events::hangup;
+      VAR broadcast BOOL := ((events #&& universal) AS U32) != 0;
+      VAR state MUT->epoll_descriptor_state;
+      VAR ready MUT->epoll_registration;
+      VAR ready_last MUT->epoll_registration;
+      .mutex.lock();
+      VAR position := .descriptors.find(descriptor.native_handle());
+      IF (position == .descriptors.END()) { .mutex.unlock(); RETURN 0; }
+      state := position->.value()<-;
+      IF (state->.notifying || state->.generation != generation) { .mutex.unlock(); RETURN 0; }
+      // The kernel registration is disarmed, and registrations that arrive during notification join the later arming.
+      state->.notifying := TRUE;
+      state->.interest := epoll_events();
+      VAR candidate MUT->epoll_registration := state->.first;
+      LOOP WHILE(candidate??) DO
+      {
+        VAR following MUT->epoll_registration := candidate->.next;
+        IF (broadcast || ((candidate->.interest #&& events) AS U32) != 0)
+        {
+          unlink_epoll_registration(@state state->, @registration candidate);
+          candidate->.detached := TRUE;
+          candidate->.next := NULL;
+          IF (ready_last??) { ready_last->.next := candidate; }
+          ELSE { ready := candidate; }
+          ready_last := candidate;
+        }
+        ELSE { state->.interest #||= candidate->.interest; }
+        candidate := following;
+      };
+      .mutex.unlock();
+
+      VAR notified SZ;
+      VAR continuing MUT->epoll_registration;
+      VAR continuing_last MUT->epoll_registration;
+      LOOP WHILE(ready??) DO
+      {
+        VAR registration MUT->epoll_registration := ready;
+        ready := registration->.next;
+        // An earlier notification of this event may have removed the registration.
+        IF (registration->.removed) { DELETE registration; CONTINUE; }
+        VAR status operation_status := registration->.operation.notify(
+          @events (events #&& (registration->.interest #|| universal)));
+        notified++;
+        IF (registration->.removed) { DELETE registration; CONTINUE; }
+        IF (status == operation_status::finished) { .release(@registration registration); CONTINUE; }
+        registration->.interest := registration->.operation.interest();
+        registration->.next := NULL;
+        IF (continuing_last??) { continuing_last->.next := registration; }
+        ELSE { continuing := registration; }
+        continuing_last := registration;
+      };
+
+      .mutex.lock();
+      LOOP WHILE(continuing??) DO
+      {
+        VAR resumed MUT->epoll_registration := continuing;
+        continuing := resumed->.next;
+        // A later notification of this event may have removed a registration that returned pending.
+        IF (resumed->.removed) { DELETE resumed; }
+        ELSE
+        {
+          link_epoll_registration(@state state->, @registration resumed);
+          state->.interest #||= resumed->.interest;
+        }
+      };
+      state->.notifying := FALSE;
+      VAR failed MUT->epoll_registration;
+      IF (state->.first!?)
+      {
+        .retire_watch(@descriptor descriptor);
+      }
+      ELSE IF (.arm(@descriptor descriptor, @state state->, @command epoll_control_modify, @interest state->.interest) == FALSE)
+      {
+        failed := state->.first;
+        VAR entry MUT->epoll_registration := failed;
+        LOOP WHILE(entry??) DO { entry->.detached := TRUE; entry := entry->.next; };
+        .retire_watch(@descriptor descriptor);
+        rearm_failed := TRUE;
+      }
+      .mutex.unlock();
+      LOOP WHILE(failed??) DO
+      {
+        VAR entry MUT->epoll_registration := failed;
+        failed := entry->.next;
+        IF (entry->.removed) { DELETE entry; CONTINUE; }
+        VAR operation epoll_operation_ref := entry->.operation;
+        .release(@registration entry);
+        operation.rearm_failed();
+      };
+      RETURN notified;
+    }
+  }
+
+  DOC <$ Opens an epoll descriptor with close-on-exec enabled. $>
+  .CONSTRUCTOR FUNCTION()
+  {
+    .queue := io_descriptor_ref(@native_handle syscall::linux::epoll_create1(@flags epoll_close_on_exec));
+    IF (.queue.is_valid() == FALSE) { THROW epoll_error::initialization_failed; }
+  }
+
+  DOC <$ Closes the epoll descriptor. Destroying a processor with outstanding registrations violates its lifetime contract. $>
+  .DESTRUCTOR FUNCTION()
+  {
+    IF (.outstanding.LOAD#ATOMIC_ACQUIRE() != 0) { PANIC "epoll processor destroyed with outstanding registrations."; }
+    IF (syscall::linux::close(@fd .queue.native_handle()) < 0) { PANIC "Cannot close an epoll descriptor."; }
+  }
+
+  DOC <$
+    Registers the operation for its descriptor and interest. The kernel registration of
+    the descriptor is armed when its current arming does not cover the interest. Failure
+    retains no operation reference. The notification may begin on the consumer thread
+    before this method returns.
+    $>
+  .add FUNCTION(@ARG:operation epoll_operation_ref) MUT: epoll_registration_id
+  {
+    VAR registration MUT->epoll_registration := NEW epoll_registration :(@operation operation);
+    VAR registered BOOL;
+    DEFER { IF (registered == FALSE) { DELETE registration; } }
+    registration->.descriptor := operation.descriptor();
+    registration->.interest := operation.interest();
+    VAR identity epoll_registration_id;
+    identity.address := IBC_GETADDR(@PTR registration);
+    .mutex.lock();
+    DEFER { .mutex.unlock(); }
+    VAR state MUT& epoll_descriptor_state := .descriptors[registration->.descriptor.native_handle()];
+    VAR interest epoll_events := state.interest #|| registration->.interest;
+    IF (state.notifying) { state.interest := interest; }
+    ELSE
+    {
+      VAR command I32 := epoll_control_modify;
+      IF (state.first!?) { command := epoll_control_add; }
+      IF (command == epoll_control_add || (interest AS U32) != (state.interest AS U32))
+      {
+        IF (.arm(@descriptor registration->.descriptor, @state state, @command command, @interest interest) == FALSE)
+        {
+          IF (state.first!?) { .descriptors.erase(registration->.descriptor.native_handle()); }
+          THROW epoll_error::registration_failed;
+        }
+      }
+    }
+    link_epoll_registration(@state state, @registration registration);
+    .outstanding.ADD#ATOMIC_ACQREL(1);
+    registered := TRUE;
+    RETURN identity;
+  }
+
+  DOC <$
+    Ends an outstanding registration from this processor without notification. The
+    operation receives no notification after this method returns, including from an
+    event that the kernel transferred to the current event processing. The processor
+    deletes the watch when the last registration ends. The caller serializes removal
+    with event processing.
+    $>
+  .remove FUNCTION(@ARG:registration epoll_registration_id) MUT
+  {
+    VAR target MUT->epoll_registration := IBC_PUN#(MUT->epoll_registration)(@ADDR registration.address);
+    IF (target->.detached)
+    {
+      // Event processing holds the registration and releases its storage.
+      target->.removed := TRUE;
+      .outstanding.SUBTRACT#ATOMIC_ACQREL(1);
+      RETURN;
+    }
+    .mutex.lock();
+    DEFER { .mutex.unlock(); }
+    VAR state MUT& epoll_descriptor_state := .descriptors.at(target->.descriptor.native_handle());
+    unlink_epoll_registration(@state state, @registration target);
+    // A kernel registration that remains armed for a wider interest produces at most one event, which selects no removed registration.
+    IF (state.first!? && state.notifying == FALSE) { .retire_watch(@descriptor target->.descriptor); }
+    .release(@registration target);
+  }
+
+  DOC <$ Borrows the processor descriptor for polling by an external event loop. $>
+  .poll_descriptor FUNCTION() CONST: io_descriptor_ref { RETURN .queue; }
+
+  DOC <$ Returns the current number of outstanding registrations. $>
+  .pending_count FUNCTION() CONST: SZ { RETURN .outstanding.LOAD#ATOMIC_ACQUIRE(); }
+
+  DOC <$
+    Transfers at most maximum readiness events from the kernel and notifies the selected
+    operations on the calling thread. The timeout applies to the first wait: zero polls
+    immediately and a negative value waits indefinitely. The result counts delivered
+    notifications. Timeout and signal interruption end processing without an error. The
+    registrations of a descriptor whose arming fails receive terminal failure
+    notifications, and the method throws after the transferred events are processed.
+    $>
+  .process_events FUNCTION(@maximum SZ, @timeout_milliseconds I32 DEFAULT(0)) MUT: SZ
+  {
+    ASSERT(.processing == FALSE, "An epoll notification cannot process events recursively.");
+    .processing := TRUE;
+    DEFER { .processing := FALSE; }
+    VAR transferred SZ;
+    VAR notified SZ;
+    VAR rearm_failed BOOL;
+    VAR batch [epoll_batch_capacity]syscall::linux::epoll_event;
+    LOOP WHILE(transferred < maximum) DO
+    {
+      VAR capacity SZ := maximum - transferred;
+      IF (capacity > epoll_batch_capacity) { capacity := epoll_batch_capacity; }
+      VAR result I32 := syscall::linux::epoll_wait(@queue .queue.native_handle(), @event batch[0]<-,
+        @maximum (capacity AS CHECKED I32), @timeout timeout_milliseconds);
+      IF (result == epoll_interrupted_result) { BREAK; }
+      IF (result < 0) { THROW epoll_error::wait_failed; }
+      VAR count SZ := result AS CHECKED SZ;
+      VAR index SZ;
+      LOOP WHILE(index < count) DO
+      {
+        VAR event CONST& syscall::linux::epoll_event := batch[index];
+        index++;
+        notified := notified + .dispatch(@descriptor io_descriptor_ref(@native_handle event.data[0] AS PARTIAL I32),
+          @generation event.data[1],
+          @events (event.events AS epoll_events), @rearm_failed rearm_failed);
+      };
+      transferred := transferred + count;
+      IF (rearm_failed || count < capacity) { BREAK; }
+      timeout_milliseconds := 0;
+    };
+    IF (rearm_failed) { THROW epoll_error::registration_failed; }
+    RETURN notified;
+  }
+}
