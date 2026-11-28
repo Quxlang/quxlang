@@ -1,0 +1,174 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+IMPORT syscall;
+
+DOC <$
+  Reads from a file at a byte offset through the io_uring of an async_runtime2. The
+  runtime uses io_uring. The descriptor and the buffer outlive completion. A
+  coroutine awaits the operation in its own frame, and the operation occupies a
+  stable address until its result has been taken.
+  $>
+::io_uring_file_read INCLUDE_IF(OS_LINUX) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  DOC <$ Names the result type. $>
+  ::value_type ALIAS transfer_result;
+
+  PRIVATE(MODULE)
+  {
+    .completion VAR operation_completion;
+    .descriptor VAR io_descriptor_ref;
+    .buffer VAR buffer_ref;
+    .offset VAR U64;
+    .outcome VAR transfer_result;
+  }
+
+  DOC <$ Describes the transfer without starting it. $>
+  .CONSTRUCTOR FUNCTION(@runtime MUT& async_runtime2, @descriptor io_descriptor_ref, @buffer CONST& buffer_ref, @offset U64)
+    :> .completion:(@runtime runtime), .buffer:(@OTHER buffer)
+  {
+    .descriptor := descriptor;
+    .offset := offset;
+  }
+
+  DOC <$ Encodes the request. The processor calls prepare during submission. $>
+  .prepare FUNCTION(@entry MUT& io_uring_submission_entry) MUT
+  {
+    entry.opcode := 22; // IORING_OP_READ
+    entry.descriptor := .descriptor.native_handle();
+    entry.address.value := IBC_GETADDR(@PTR .buffer.data);
+    entry.length := async_transfer_size(@size .buffer.size);
+    entry.offset := .offset;
+  }
+
+  DOC <$ Receives the completion of the request on the consumer thread. $>
+  .on_notify FUNCTION(@completion io_uring_completion_result) MUT
+  {
+    IF (completion.result >= 0)
+    {
+      .outcome.succeeded := TRUE;
+      .outcome.size := completion.result AS ASSUME SZ;
+    }
+    ELSE { .outcome.error := (0 - completion.result) AS ASSUME U32; }
+    .completion.finish();
+  }
+
+  DOC <$ Submits the transfer once. TRUE reports that the result is available without waiting, which occurs when the descriptor, the offset or the submission is rejected. $>
+  .start FUNCTION() MUT: BOOL
+  {
+    IF (.descriptor.is_valid() == FALSE) { .outcome.error := 9; RETURN TRUE; } // EBADF
+    IF (.offset > 9223372036854775807) { .outcome.error := 22; RETURN TRUE; } // EINVAL
+    .completion.begin();
+    TRY { .completion.runtime().backend.submit(@operation THIS); }
+    CATCH failure CONST& io_uring_error
+    {
+      .completion.abandon();
+      .outcome.error := 11; // EAGAIN: the kernel did not accept the request.
+      RETURN TRUE;
+    }
+    CATCH DEFAULT { .completion.abandon(); RETHROW; }
+    RETURN FALSE;
+  }
+
+  DOC <$ Registers the continuation that completion notifies. FALSE reports that the transfer completed first. $>
+  .suspend FUNCTION(@continuation MUT->std::async_continuation) MUT: BOOL
+  { RETURN .completion.suspend(@continuation continuation); }
+
+  DOC <$ Returns the outcome of the completed transfer. $>
+  .result FUNCTION() MUT: transfer_result { RETURN .outcome; }
+
+  DOC <$ Starts the transfer. $>
+  .AWAIT_READY FUNCTION() MUT: BOOL { RETURN .start(); }
+  DOC <$ Registers the awaiting coroutine. $>
+  .AWAIT_SUSPEND FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) MUT: BOOL
+  { RETURN .completion.suspend(@continuation CONTROLLER.continuation()); }
+  DOC <$ Returns the outcome after resumption. $>
+  .AWAIT_RESUME FUNCTION() MUT: transfer_result { RETURN .outcome; }
+  DOC <$ A started transfer runs to completion. $>
+  .TRY_CANCEL FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) CONST NOEXCEPT: BOOL { RETURN FALSE; }
+}
+
+DOC <$
+  Writes to a file at a byte offset through the io_uring of an async_runtime2. The
+  runtime uses io_uring. The descriptor and the buffer outlive completion. A
+  coroutine awaits the operation in its own frame, and the operation occupies a
+  stable address until its result has been taken.
+  $>
+::io_uring_file_write INCLUDE_IF(OS_LINUX) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  DOC <$ Names the result type. $>
+  ::value_type ALIAS transfer_result;
+
+  PRIVATE(MODULE)
+  {
+    .completion VAR operation_completion;
+    .descriptor VAR io_descriptor_ref;
+    .buffer VAR buffer_ref;
+    .offset VAR U64;
+    .outcome VAR transfer_result;
+  }
+
+  DOC <$ Describes the transfer without starting it. $>
+  .CONSTRUCTOR FUNCTION(@runtime MUT& async_runtime2, @descriptor io_descriptor_ref, @buffer CONST& buffer_ref, @offset U64)
+    :> .completion:(@runtime runtime), .buffer:(@OTHER buffer)
+  {
+    .descriptor := descriptor;
+    .offset := offset;
+  }
+
+  DOC <$ Encodes the request. The processor calls prepare during submission. $>
+  .prepare FUNCTION(@entry MUT& io_uring_submission_entry) MUT
+  {
+    entry.opcode := 23; // IORING_OP_WRITE
+    entry.descriptor := .descriptor.native_handle();
+    entry.address.value := IBC_GETADDR(@PTR .buffer.data);
+    entry.length := async_transfer_size(@size .buffer.size);
+    entry.offset := .offset;
+  }
+
+  DOC <$ Receives the completion of the request on the consumer thread. $>
+  .on_notify FUNCTION(@completion io_uring_completion_result) MUT
+  {
+    IF (completion.result >= 0)
+    {
+      .outcome.succeeded := TRUE;
+      .outcome.size := completion.result AS ASSUME SZ;
+    }
+    ELSE { .outcome.error := (0 - completion.result) AS ASSUME U32; }
+    .completion.finish();
+  }
+
+  DOC <$ Submits the transfer once. TRUE reports that the result is available without waiting, which occurs when the descriptor, the offset or the submission is rejected. $>
+  .start FUNCTION() MUT: BOOL
+  {
+    IF (.descriptor.is_valid() == FALSE) { .outcome.error := 9; RETURN TRUE; } // EBADF
+    IF (.offset > 9223372036854775807) { .outcome.error := 22; RETURN TRUE; } // EINVAL
+    .completion.begin();
+    TRY { .completion.runtime().backend.submit(@operation THIS); }
+    CATCH failure CONST& io_uring_error
+    {
+      .completion.abandon();
+      .outcome.error := 11; // EAGAIN: the kernel did not accept the request.
+      RETURN TRUE;
+    }
+    CATCH DEFAULT { .completion.abandon(); RETHROW; }
+    RETURN FALSE;
+  }
+
+  DOC <$ Registers the continuation that completion notifies. FALSE reports that the transfer completed first. $>
+  .suspend FUNCTION(@continuation MUT->std::async_continuation) MUT: BOOL
+  { RETURN .completion.suspend(@continuation continuation); }
+
+  DOC <$ Returns the outcome of the completed transfer. $>
+  .result FUNCTION() MUT: transfer_result { RETURN .outcome; }
+
+  DOC <$ Starts the transfer. $>
+  .AWAIT_READY FUNCTION() MUT: BOOL { RETURN .start(); }
+  DOC <$ Registers the awaiting coroutine. $>
+  .AWAIT_SUSPEND FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) MUT: BOOL
+  { RETURN .completion.suspend(@continuation CONTROLLER.continuation()); }
+  DOC <$ Returns the outcome after resumption. $>
+  .AWAIT_RESUME FUNCTION() MUT: transfer_result { RETURN .outcome; }
+  DOC <$ A started transfer runs to completion. $>
+  .TRY_CANCEL FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) CONST NOEXCEPT: BOOL { RETURN FALSE; }
+}

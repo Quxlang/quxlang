@@ -105,14 +105,16 @@ mark them as broken on a JVM target; see
 | `io::io_descriptor_ref` | Yes | Yes | Yes | No |
 | Asynchronous `read` and `write` members of `io::file` | Yes | Yes | Yes | No |
 | `io::async_runtime`, `io::async_context`, `io::async_file`, `io::thread_pool` | Yes | Yes | Yes | No |
+| [`io::async_runtime2`](../standard-modules/io/async-runtime2.md) and caller-owned transfers | Yes | Yes | Yes | No |
+| [`io::kqueue_processor`](../standard-modules/io/kqueue-processor.md) | No | Yes | No | No |
 | `io::io_uring_processor` and the `io_uring` submission types | Yes | No | No | No |
 | `io::epoll_processor` and the `epoll` registration types | Yes | No | No | No |
 | `io::overlapped_processor` and its handle, request, and completion types | No | No | Yes | No |
 
 The module contains no function that opens a file by path on Windows. A
-Windows program constructs an `io::file_ref` from a native handle. The Windows
-file test in the test bundle operates on a null handle only, so synchronous
-Windows file transfers have no test that reads or writes data.
+Windows program constructs an `io::file_ref` from a native handle. The
+`async_runtime2` cursor test writes and reads through a synchronous handle,
+and its positioned tests use an overlapped handle.
 
 ### Asynchronous I/O mechanism
 
@@ -126,21 +128,22 @@ Windows file transfers have no test that reads or writes data.
 | Windows | `io::overlapped_async_runtime` | Overlapped I/O completion |
 
 `io::io_uring_processor` and `io::epoll_processor` are available on Linux.
-`io::overlapped_processor` is available on Windows. Each standalone processor
+`io::kqueue_processor` is available on macOS and `io::overlapped_processor`
+is available on Windows. Each standalone processor
 has unit tests on its target. The `io::async_runtime` unit tests cover Linux,
 macOS, and Windows. Its positioned round-trip test covers Linux and macOS.
 
 ## Module `net`
 
-The `net` module selects its implementation with `STATIC_IF` chains over
-`OS_LINUX`, `OS_MACOS`, and `OS_WINDOWS`. The module contains no JVM
-implementation.
+The `net` module provides socket transport on Linux, macOS, and Windows.
+The target selects the native asynchronous transport at compile time.
 
 | Facility | Linux | macOS | Windows | JVM |
 | --- | --- | --- | --- | --- |
 | `net::ipv4_address`, `net::ipv6_address`, `net::ip_address`, `net::endpoint`, `net::error` | Yes | Yes | Yes | Declared; no socket operation is available |
 | `net::tcp_connection`, `net::tcp_listener`, `net::udp_session` | Yes | Yes | Yes | No |
 | Asynchronous socket operations through `io::async_runtime` | Yes (`io_uring` or `epoll`) | Yes (`kqueue`) | Yes (overlapped I/O) | No |
+| Asynchronous TCP and UDP socket operations through `io::async_runtime2` | Yes (`io_uring` or `epoll`) | Yes (`kqueue` readiness) | Yes (overlapped I/O on the runtime's completion port) | No |
 
 The socket tests in `main_test_net_sockets.qxs` carry no target condition and
 are part of the unit-test suite of every target in the test bundle.

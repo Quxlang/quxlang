@@ -1,0 +1,325 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT net;
+IMPORT std;
+
+::async_sockets INCLUDE_IF(OS_MACOS || OS_LINUX || OS_WINDOWS) NAMESPACE
+{
+  DOC <$ Runs a datagram receive under the controller selected by the benchmark. $>
+  ::receive_datagram COROUTINE(@socket net::udp_session_ref, @buffer io::buffer_ref): net::datagram_result
+  { RETURN socket.receive(@buffer buffer); }
+
+  DOC <$ Receives count datagrams in a single coroutine and returns the total payload size. $>
+  ::receive_datagrams COROUTINE(@socket net::udp_session_ref, @buffer io::buffer_ref, @count SZ): SZ
+  {
+    VAR total SZ;
+    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(count) DO
+    {
+      VAR result net::datagram_result := socket.receive(@buffer buffer);
+      total += result.size;
+    };
+    RETURN total;
+  }
+
+  PRIVATE(MODULE)
+  {
+    DOC <$ Reuses two bound IPv4 loopback sockets and distinct source and destination buffers for each sample. $>
+    ::datagram_pair STRUCT ROOTED
+    {
+      .sender VAR net::udp_session;
+      .receiver VAR net::udp_session;
+      .destination VAR net::endpoint;
+      .source_port VAR U16;
+      .outgoing VAR [64]BYTE;
+      .incoming VAR [64]BYTE;
+      .result VAR net::datagram_result;
+
+      .CONSTRUCTOR FUNCTION()
+      {
+        VAR loopback net::ipv4_address;
+        loopback.data[0] := 127;
+        loopback.data[3] := 1;
+        VAR local net::endpoint;
+        local.address := net::ip_address(@OTHER loopback);
+        .sender := net::udp_session(@address local.address);
+        .receiver := net::udp_session(@address local.address);
+        .sender.bind(@endpoint local);
+        .receiver.bind(@endpoint local);
+        .destination := .receiver.local_endpoint();
+        .source_port := .sender.local_endpoint().port;
+        .outgoing[0] := 83;
+      }
+
+      .send FUNCTION() MUT
+      {
+        VAR buffer io::buffer_ref :(@data .outgoing[&0], @size .outgoing.SIZE());
+        IF (.sender.send(@buffer buffer, @destination .destination) != .outgoing.SIZE()) { THROW (1 AS I32); }
+      }
+
+      .receive FUNCTION(@runtime MUT& AUTO, @prequeued BOOL, @coroutine BOOL) MUT
+      {
+        VAR buffer io::buffer_ref :(@data .incoming[&0], @size .incoming.SIZE());
+        VAR result std::future#net::datagram_result;
+        IF (coroutine)
+        { result := ON(runtime) RUN receive_datagram(@socket .receiver.reference(), @buffer buffer); }
+        ELSE { result := .receiver.async_receive(@runtime runtime, @buffer buffer); }
+        IF (prequeued == FALSE) { .send(); }
+        .result := result.get();
+      }
+
+      .verify FUNCTION() MUT
+      {
+        IF (.result.truncated || .result.size != .outgoing.SIZE() || .result.source.port != .source_port || .incoming[0] != 83)
+        { THROW (2 AS I32); }
+        .incoming[0] := 0;
+      }
+    }
+  }
+
+  DOC <$ Measures legacy future and coroutine receives with one datagram already queued on the socket. $>
+  ::legacy_udp BENCHMARK(@coroutine BOOL)
+    CASE("ready-future", @coroutine FALSE)
+    CASE("ready-coroutine", @coroutine TRUE)
+  BODY
+  {
+    VAR pair datagram_pair;
+    VAR runtime io::async_runtime :(@workers 1, @file_workers 2, @completion_workers 1, @entries 256);
+    BENCHMARK_LOOP
+    {
+      pair.send();
+      MEASURE { pair.receive(@runtime runtime, @prequeued TRUE, @coroutine coroutine); }
+      pair.verify();
+    }
+  }
+
+  DOC <$ Measures prequeued future and coroutine receives on async_runtime2. The pending case submits a receive on an empty socket and times the send that completes it. $>
+  ::runtime2_udp BENCHMARK(@prequeued BOOL, @coroutine BOOL)
+    CASE("ready-future", @prequeued TRUE, @coroutine FALSE)
+    CASE("pending-future", @prequeued FALSE, @coroutine FALSE)
+    CASE("ready-coroutine", @prequeued TRUE, @coroutine TRUE)
+  BODY
+  {
+    VAR pair datagram_pair;
+    VAR runtime io::async_runtime2 :(@workers 1, @file_workers 2, @entries 256);
+    BENCHMARK_LOOP
+    {
+      IF (prequeued) { pair.send(); }
+      MEASURE { pair.receive(@runtime runtime, @prequeued prequeued, @coroutine coroutine); }
+      pair.verify();
+    }
+  }
+
+  DOC <$ Measures receives issued one after another by a single coroutine. Every datagram is queued on the socket before the coroutine starts, so the result isolates the cost of a coroutine I/O call. $>
+  ::runtime2_udp_loop BENCHMARK(@count SZ, @workers SZ)
+    CASE("count16-workers1", @count 16, @workers 1)
+    CASE("count16-workers4", @count 16, @workers 4)
+  BODY
+  {
+    VAR pair datagram_pair;
+    VAR runtime io::async_runtime2 :(@workers workers, @file_workers 2, @entries 256);
+    BENCHMARK_LOOP
+    {
+      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(count) DO { pair.send(); };
+      VAR total SZ;
+      MEASURE COUNT(count)
+      {
+        VAR buffer io::buffer_ref :(@data pair.incoming[&0], @size pair.incoming.SIZE());
+        VAR result := ON(runtime) RUN receive_datagrams(@socket pair.receiver.reference(), @buffer buffer, @count count);
+        total := result.get();
+      }
+      IF (total != count * pair.outgoing.SIZE()) { THROW (3 AS I32); }
+    }
+  }
+
+  PRIVATE(MODULE)
+  {
+    ::parallel_count STATIC SZ := 16;
+
+    DOC <$ Runs one receiving coroutine per socket pair at the same time and waits for all of them. Every datagram is queued before the coroutines start. $>
+    ::receive_in_parallel FUNCTION(@runtime MUT& AUTO, @pairs MUT& [8]datagram_pair, @active SZ): SZ
+    {
+      VAR results [8]std::future#SZ;
+      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(active) DO
+      {
+        VAR buffer io::buffer_ref :(@data pairs[index].incoming[&0], @size pairs[index].incoming.SIZE());
+        results[index] := ON(runtime) RUN receive_datagrams(@socket pairs[index].receiver.reference(), @buffer buffer, @count parallel_count);
+      };
+      VAR total SZ;
+      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(active) DO { total += results[index].get(); };
+      RETURN total;
+    }
+
+    DOC <$ Queues the datagrams that one parallel sample receives. $>
+    ::fill_pairs FUNCTION(@pairs MUT& [8]datagram_pair, @active SZ)
+    {
+      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(active) DO
+      {
+        LOOP VALUE(message) FROM(0 AS SZ) UNTIL(parallel_count) DO { pairs[index].send(); };
+      };
+    }
+  }
+
+  DOC <$ Measures sixteen receives on each of several sockets, with one coroutine per socket running at the same time on async_runtime2. $>
+  ::runtime2_udp_parallel BENCHMARK(@active SZ, @workers SZ)
+    CASE("sockets4-workers1", @active 4, @workers 1)
+    CASE("sockets4-workers4", @active 4, @workers 4)
+    CASE("sockets8-workers4", @active 8, @workers 4)
+  BODY
+  {
+    VAR pairs [8]datagram_pair;
+    VAR runtime io::async_runtime2 :(@workers workers, @file_workers 2, @entries 256);
+    BENCHMARK_LOOP
+    {
+      fill_pairs(@pairs pairs, @active active);
+      VAR total SZ;
+      MEASURE COUNT(active * parallel_count) { total := receive_in_parallel(@runtime runtime, @pairs pairs, @active active); }
+      IF (total != active * parallel_count * 64) { THROW (4 AS I32); }
+    }
+  }
+
+  DOC <$ Measures the same parallel receives on async_runtime for comparison. $>
+  ::legacy_udp_parallel BENCHMARK(@active SZ, @workers SZ)
+    CASE("sockets4-workers1", @active 4, @workers 1)
+    CASE("sockets4-workers4", @active 4, @workers 4)
+    CASE("sockets8-workers4", @active 8, @workers 4)
+  BODY
+  {
+    VAR pairs [8]datagram_pair;
+    VAR runtime io::async_runtime :(@workers workers, @file_workers 2, @completion_workers 1, @entries 256);
+    BENCHMARK_LOOP
+    {
+      fill_pairs(@pairs pairs, @active active);
+      VAR total SZ;
+      MEASURE COUNT(active * parallel_count) { total := receive_in_parallel(@runtime runtime, @pairs pairs, @active active); }
+      IF (total != active * parallel_count * 64) { THROW (4 AS I32); }
+    }
+  }
+
+  DOC <$ Reads available bytes from a TCP connection under the controller selected by the benchmark. $>
+  ::read_stream COROUTINE(@socket net::tcp_connection_ref, @buffer io::buffer_ref): SZ
+  { RETURN socket.read(@buffer buffer); }
+
+  PRIVATE(MODULE)
+  {
+    DOC <$ Owns ten thousand TCP connections over the IPv4 loopback address. Each connection has a client end that the benchmark thread writes and a server end that one coroutine reads into a one-byte buffer. $>
+    ::connection_fleet STRUCT ROOTED
+    {
+      ::capacity STATIC SZ := 10000;
+      .clients VAR [capacity]net::tcp_connection;
+      .servers VAR [capacity]net::tcp_connection;
+      .incoming VAR [capacity]BYTE;
+      .results VAR [capacity]std::future#SZ;
+      .outgoing VAR [1]BYTE;
+
+      DOC <$ Connects and accepts each connection in turn, so the listener's backlog holds at most one connection. $>
+      .CONSTRUCTOR FUNCTION()
+      {
+        VAR loopback net::ipv4_address;
+        loopback.data[0] := 127;
+        loopback.data[3] := 1;
+        VAR local net::endpoint;
+        local.address := net::ip_address(@OTHER loopback);
+        VAR listener net::tcp_listener :(@address local.address);
+        listener.bind(@endpoint local);
+        listener.listen();
+        local := listener.local_endpoint();
+        .outgoing[0] := 83;
+        LOOP VALUE(index) FROM(0 AS SZ) UNTIL(capacity) DO
+        {
+          .clients[index] := net::tcp_connection(@address local.address);
+          .clients[index].connect(@endpoint local);
+          .servers[index] := listener.accept();
+        };
+      }
+
+      DOC <$ Writes one byte to every connection. $>
+      .write_all FUNCTION() MUT
+      {
+        VAR buffer io::buffer_ref :(@data .outgoing[&0], @size 1);
+        LOOP VALUE(index) FROM(0 AS SZ) UNTIL(capacity) DO
+        {
+          IF (.clients[index].write(@buffer buffer) != 1) { THROW (5 AS I32); }
+        };
+      }
+
+      DOC <$ Starts one reading coroutine for every connection. $>
+      .read_all FUNCTION(@runtime MUT& AUTO) MUT
+      {
+        LOOP VALUE(index) FROM(0 AS SZ) UNTIL(capacity) DO
+        {
+          VAR buffer io::buffer_ref :(@data .incoming[&index], @size 1);
+          .results[index] := ON(runtime) RUN read_stream(@socket .servers[index].reference(), @buffer buffer);
+        };
+      }
+
+      DOC <$ Waits for every read and checks its byte. $>
+      .collect FUNCTION() MUT
+      {
+        LOOP VALUE(index) FROM(0 AS SZ) UNTIL(capacity) DO
+        {
+          IF (.results[index].get() != 1 || .incoming[index] != 83) { THROW (6 AS I32); }
+          .incoming[index] := 0;
+        };
+      }
+
+      DOC <$ Runs one sample. A queued sample writes every byte before any coroutine starts. A waiting sample starts every coroutine first, so each read waits for its byte. $>
+      .sample FUNCTION(@runtime MUT& AUTO, @queued BOOL) MUT
+      {
+        IF (queued) { .write_all(); }
+        .read_all(@runtime runtime);
+        IF (queued == FALSE) { .write_all(); }
+        .collect();
+      }
+    }
+  }
+
+  PRIVATE(MODULE)
+  {
+    DOC <$ Refers to the fleet that every case of a benchmark process shares, or holds null before the first case. $>
+    ::shared_fleet VAR MUT->connection_fleet;
+
+    DOC <$ Returns the shared fleet, which the first call connects. The connections stay open until the process exits, so no case waits for released ports. $>
+    ::open_fleet FUNCTION(): MUT->connection_fleet
+    {
+      IF (shared_fleet!?) { shared_fleet := NEW connection_fleet; }
+      RETURN shared_fleet;
+    }
+  }
+
+  DOC <$ Measures one read on each of ten thousand TCP connections through async_runtime2, with one coroutine per connection. The measured time includes starting the coroutines and writing the bytes. $>
+  ::runtime2_tcp_fleet BENCHMARK(@queued BOOL, @workers SZ)
+    CASE("waiting-workers1", @queued FALSE, @workers 1)
+    CASE("waiting-workers4", @queued FALSE, @workers 4)
+    CASE("waiting-workers8", @queued FALSE, @workers 8)
+    CASE("queued-workers1", @queued TRUE, @workers 1)
+    CASE("queued-workers4", @queued TRUE, @workers 4)
+    CASE("queued-workers8", @queued TRUE, @workers 8)
+  BODY
+  {
+    VAR fleet MUT->connection_fleet := open_fleet();
+    VAR runtime io::async_runtime2 :(@workers workers, @file_workers 2, @entries 256);
+    BENCHMARK_LOOP
+    {
+      MEASURE COUNT(connection_fleet::capacity) { fleet->.sample(@runtime runtime, @queued queued); }
+    }
+  }
+
+  DOC <$ Measures the same ten thousand reads through async_runtime for comparison. $>
+  ::legacy_tcp_fleet BENCHMARK(@queued BOOL, @workers SZ)
+    CASE("waiting-workers1", @queued FALSE, @workers 1)
+    CASE("waiting-workers4", @queued FALSE, @workers 4)
+    CASE("waiting-workers8", @queued FALSE, @workers 8)
+    CASE("queued-workers1", @queued TRUE, @workers 1)
+    CASE("queued-workers4", @queued TRUE, @workers 4)
+    CASE("queued-workers8", @queued TRUE, @workers 8)
+  BODY
+  {
+    VAR fleet MUT->connection_fleet := open_fleet();
+    VAR runtime io::async_runtime :(@workers workers, @file_workers 2, @completion_workers 1, @entries 256);
+    BENCHMARK_LOOP
+    {
+      MEASURE COUNT(connection_fleet::capacity) { fleet->.sample(@runtime runtime, @queued queued); }
+    }
+  }
+}

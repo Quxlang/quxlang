@@ -6,17 +6,26 @@ IMPORT syscall;
 
 PRIVATE(MODULE)
 {
-  DOC <$ The encoded_endpoint type stores a native socket address and its separate ABI byte length. $>
-  ::encoded_endpoint STRUCT
-  {
-    .address VAR syscall::socket_address_storage;
-    .length VAR U32;
-  }
-
   DOC <$ The native_socket_ref type matches the native socket handle representation on Windows. $>
   ::native_socket_ref INCLUDE_IF(OS_WINDOWS) ALIAS UINTPTR;
   DOC <$ The native_socket_ref type matches the native socket descriptor representation on POSIX targets. $>
   ::native_socket_ref INCLUDE_IF(OS_LINUX || OS_MACOS) ALIAS I32;
+
+  DOC <$ Retains the open-handle identity while a Windows socket operation can access it. $>
+  ::socket_operation_handle INCLUDE_IF(OS_WINDOWS) ALIAS io::io_descriptor_ref;
+  ::socket_operation_handle INCLUDE_IF(OS_LINUX || OS_MACOS) ALIAS native_socket_ref;
+
+  DOC <$ Returns the socket value accepted by the platform transport ABI. $>
+  ::native_socket_value FUNCTION(@source CONST& socket_operation_handle): native_socket_ref
+  {
+    STATIC_IF(OS_WINDOWS)
+    {
+      VAR handle ADDRESS := source.native_handle();
+      IF (handle == NULL) { RETURN invalid_socket_handle(); }
+      RETURN handle - (NULL AS ADDRESS);
+    }
+    STATIC_ELSE { RETURN source; }
+  }
 
   DOC <$ The native_ipv6_family function returns the native IPv6 address-family identifier. $>
   ::native_ipv6_family FUNCTION(): I32
@@ -45,19 +54,20 @@ PRIVATE(MODULE)
     RETURN native_ipv6_family();
   }
 
-  DOC <$ The encode_socket_endpoint function encodes address fields explicitly in the target socket ABI. $>
-  ::encode_socket_endpoint FUNCTION(@endpoint CONST& endpoint): encoded_endpoint
+  DOC <$ Holds an IPv4 or IPv6 socket address with the alignment of sockaddr_in6. $>
+  ::internet_address_storage IBC_STRUCT { .words VAR [7]U32; }
+
+  DOC <$ Encodes the endpoint in zero-initialized native socket address storage and returns its ABI length. $>
+  ::encode_socket_address FUNCTION(@address:storage MUT& AUTO, @endpoint CONST& endpoint): U32
   {
-    VAR encoded encoded_endpoint;
-    VAR bytes IBC MUT=>>BYTE := IBC_PUN#(IBC MUT=>>BYTE)(@ADDR IBC_GETADDR(@PTR encoded.address<-));
-    VAR family IBC MUT->U16 := IBC_PUN#(IBC MUT->U16)(@ADDR IBC_GETADDR(@PTR encoded.address<-));
+    VAR bytes IBC MUT=>>BYTE := IBC_PUN#(IBC MUT=>>BYTE)(@ADDR IBC_GETADDR(@PTR storage<-));
+    VAR family IBC MUT->U16 := IBC_PUN#(IBC MUT->U16)(@ADDR IBC_GETADDR(@PTR storage<-));
     bytes[2] := (endpoint.port #-- 8) AS CHECKED U8 AS BYTE;
     bytes[3] := endpoint.port AS PARTIAL U8 AS BYTE;
     MATCH endpoint.address AS address
     {
       TYPE ipv4_address
       {
-        encoded.length := 16;
         STATIC_IF(OS_MACOS)
         {
           bytes[0] := 16; bytes[1] := 2;
@@ -70,10 +80,10 @@ PRIVATE(MODULE)
         {
           bytes[index + 4] := address.data[index] AS BYTE;
         };
+        RETURN 16;
       }
       TYPE ipv6_address
       {
-        encoded.length := 28;
         STATIC_IF(OS_MACOS)
         {
           bytes[0] := 28; bytes[1] := 30;
@@ -86,21 +96,32 @@ PRIVATE(MODULE)
         {
           bytes[index + 8] := address.data[index] AS BYTE;
         };
-        VAR scope IBC MUT->U32 := IBC_PUN#(IBC MUT->U32)(@ADDR IBC_GETADDR(@PTR encoded.address<-) + (24 AS SZ));
+        VAR scope IBC MUT->U32 := IBC_PUN#(IBC MUT->U32)(@ADDR IBC_GETADDR(@PTR storage<-) + (24 AS SZ));
         scope-> := endpoint.scope_id;
+        RETURN 28;
       }
     }
-    RETURN encoded;
   }
 
-  DOC <$ The decode_socket_endpoint function decodes a kernel-provided native endpoint after checking its family and length. $>
-  ::decode_socket_endpoint FUNCTION(@encoded CONST& encoded_endpoint): endpoint
+  DOC <$ Provides sockaddr_storage and its length for typed native socket interfaces. $>
+  ::encoded_endpoint STRUCT
   {
-    IF (encoded.length < 2)
+    .address VAR syscall::socket_address_storage;
+    .length VAR U32;
+
+    .CONSTRUCTOR FUNCTION() {}
+    .CONSTRUCTOR FUNCTION(@endpoint CONST& endpoint)
+    { .length := encode_socket_address(@address .address, @endpoint endpoint); }
+  }
+
+  DOC <$ Decodes a kernel-provided socket address after checking its family and length. $>
+  ::decode_socket_address FUNCTION(@address:storage CONST& AUTO, @length U32): endpoint
+  {
+    IF (length < 2)
     {
       THROW error::invalid_argument;
     }
-    VAR bytes IBC CONST=>>BYTE := IBC_PUN#(IBC CONST=>>BYTE)(@ADDR IBC_GETADDR(@PTR encoded.address<-));
+    VAR bytes IBC CONST=>>BYTE := IBC_PUN#(IBC CONST=>>BYTE)(@ADDR IBC_GETADDR(@PTR storage<-));
     VAR family I32;
     STATIC_IF(OS_MACOS)
     {
@@ -108,11 +129,11 @@ PRIVATE(MODULE)
     }
     STATIC_ELSE
     {
-      VAR native_family IBC CONST->U16 := IBC_PUN#(IBC CONST->U16)(@ADDR IBC_GETADDR(@PTR encoded.address<-));
+      VAR native_family IBC CONST->U16 := IBC_PUN#(IBC CONST->U16)(@ADDR IBC_GETADDR(@PTR storage<-));
       family := native_family-> AS I32;
     }
     VAR result endpoint;
-    IF (family == 2 && encoded.length >= 16)
+    IF (family == 2 && length >= 16)
     {
       VAR address ipv4_address;
       LOOP VALUE(index SZ) FROM(0) UNTIL(4) DO
@@ -121,14 +142,14 @@ PRIVATE(MODULE)
       };
       result.address := ip_address(@OTHER address);
     }
-    ELSE IF (family == native_ipv6_family() && encoded.length >= 28)
+    ELSE IF (family == native_ipv6_family() && length >= 28)
     {
       VAR address ipv6_address;
       LOOP VALUE(index SZ) FROM(0) UNTIL(16) DO
       {
         address.data[index] := bytes[index + 8] AS U8;
       };
-      VAR scope IBC CONST->U32 := IBC_PUN#(IBC CONST->U32)(@ADDR IBC_GETADDR(@PTR encoded.address<-) + (24 AS SZ));
+      VAR scope IBC CONST->U32 := IBC_PUN#(IBC CONST->U32)(@ADDR IBC_GETADDR(@PTR storage<-) + (24 AS SZ));
       result.scope_id := scope->;
       result.address := ip_address(@OTHER address);
     }
@@ -145,18 +166,10 @@ PRIVATE(MODULE)
   {
     STATIC_IF(OS_WINDOWS)
     {
-      VAR code I64;
-      VAR close := -< [=handle, code]: BOOL
-      {
-        IF (syscall::windows::socket_close(@socket handle) == 0) { RETURN TRUE; }
-        code := syscall::windows::socket_last_error() AS I64;
-        RETURN FALSE;
-      };
-      IF (io::close_windows_async_handle(@handle (NULL AS ADDRESS) + (handle AS SZ), @close close))
-      {
-        syscall::windows::socket_cleanup();
-      }
-      RETURN code;
+      IF (syscall::windows::socket_close(@socket handle) != 0)
+      { RETURN syscall::windows::socket_last_error() AS I64; }
+      syscall::windows::socket_cleanup();
+      RETURN 0;
     }
     STATIC_ELSE STATIC_IF(OS_LINUX)
     {

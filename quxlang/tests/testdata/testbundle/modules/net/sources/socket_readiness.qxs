@@ -26,6 +26,10 @@ PRIVATE(MODULE)
     };
   }
 
+  DOC <$ Reports a synchronous Winsock call that returned WSAEWOULDBLOCK. $>
+  ::wait_socket INCLUDE_IF(OS_WINDOWS) FUNCTION(@handle native_socket_ref, @writing BOOL)
+  { THROW error::would_block; }
+
   DOC <$ Reports the final status of a nonblocking connection after writable readiness. $>
   ::finish_socket_connect INCLUDE_IF(OS_LINUX || OS_MACOS) FUNCTION(@handle native_socket_ref)
   {

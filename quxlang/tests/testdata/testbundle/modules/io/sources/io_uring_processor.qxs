@@ -40,30 +40,6 @@ DOC <$ Identifies a live submission in its originating processor. The identity e
 
 PRIVATE(MODULE)
 {
-  DOC <$ Maps one shared ring region and reports native mapping failures. The 32-bit mmap2 ABI receives page offsets. $>
-  ::map_uring_region INCLUDE_IF(OS_LINUX) FUNCTION(@descriptor I32, @size SZ, @offset SZ): ADDRESS
-  {
-    STATIC_IF(SIZEOF(UINTPTR) == 4) { offset := offset / 4096; }
-    VAR address ADDRESS := syscall::linux::mmap(@addr NULL, @len size,
-      @prot syscall::linux::prot_flags::read #|| syscall::linux::prot_flags::write,
-      @flags syscall::linux::mmap_flags::shared, @fd descriptor, @off offset);
-    VAR first_error ADDRESS := (NULL AS ADDRESS) - (4095 AS SZ);
-    IF (address >= first_error) { THROW io_uring_error::initialization_failed; }
-    RETURN address;
-  }
-
-  DOC <$ Resolves a typed ABI field at a kernel-provided offset in the shared ring mapping. $>
-  ::uring_field INCLUDE_IF(OS_LINUX) TEMPLATE(@T TYPE AUTO)
-    FUNCTION(@ring ADDRESS, @offset U32): T
-  {
-    RETURN IBC_PUN#T(@ADDR ring + (offset AS SZ));
-  }
-
-  DOC <$ Stores the raw Linux EINTR result for interrupted system calls. $>
-  ::uring_interrupted_result STATIC I32 := -4;
-  DOC <$ Stores the raw Linux ETIME result for expired completion waits. $>
-  ::uring_timeout_result STATIC I32 := -62;
-
   DOC <$ Retains a borrowed operation at a stable address used by kernel completion records. $>
   ::uring_registration INCLUDE_IF(OS_LINUX) STRUCT
   {
@@ -96,111 +72,34 @@ DOC <$
 {
   PRIVATE(MODULE)
   {
-    .descriptor VAR I32;
-    .ring VAR ADDRESS;
-    .ring_size VAR SZ;
-    .submission_entries_size VAR SZ;
-    .submission_entries VAR IBC MUT=>>syscall::linux::io_uring_submission_entry;
-    .submission_head VAR IBC MUT->ATOMIC#U32;
-    .submission_tail VAR IBC MUT->ATOMIC#U32;
-    .submission_flags VAR IBC MUT->ATOMIC#U32;
-    .submission_mask VAR U32;
-    .submission_array VAR IBC MUT=>>U32;
-    .completion_head VAR IBC MUT->ATOMIC#U32;
-    .completion_tail VAR IBC MUT->ATOMIC#U32;
-    .completion_mask VAR U32;
-    .completion_entries VAR IBC MUT=>>syscall::linux::io_uring_completion_entry;
+    .ring VAR linux_uring_ring;
     .outstanding VAR ATOMIC#SZ;
 
-    DOC <$ Releases both mappings and the descriptor after construction failure or quiescent destruction. Every acquired resource is released once. $>
-    .release FUNCTION() MUT
-    {
-      VAR failed BOOL;
-      IF (.submission_entries??)
-      {
-        failed := syscall::linux::munmap(@addr IBC_GETADDR(@PTR .submission_entries),
-          @len .submission_entries_size) != 0;
-      }
-      IF (.ring != NULL)
-      {
-        IF (syscall::linux::munmap(@addr .ring, @len .ring_size) != 0) { failed := TRUE; }
-      }
-      IF (.descriptor >= 0)
-      {
-        IF (syscall::linux::close(@fd .descriptor) != 0) { failed := TRUE; }
-      }
-      IF (failed) { THROW io_uring_error::resource_release_failed; }
-    }
-
     DOC <$ Registers a prepared entry without entering the kernel or dispatching callbacks. Failure retains no operation reference. $>
-    .enqueue_entry FUNCTION(@entry io_uring_submission_entry, @operation io_uring_operation_ref,
+    .enqueue_entry FUNCTION(@entry CONST& io_uring_submission_entry, @operation io_uring_operation_ref,
       @cancellation_target MUT->uring_registration DEFAULT(NULL)) MUT: io_uring_submission_id
     {
-      // Skipped completions cannot satisfy the registration lifetime contract.
-      IF ((entry.flags #&& 64) != 0)
-      { THROW io_uring_error::invalid_submission; }
-      VAR head U32 := .submission_head->.LOAD#ATOMIC_ACQUIRE();
-      VAR tail U32 := .submission_tail->.LOAD#ATOMIC_RELAXED();
-      IF (tail - head > .submission_mask) { THROW io_uring_error::queue_full; }
+      VAR tail U32 := .ring.submission_slot(@flags entry.flags);
       VAR registration MUT->uring_registration := NEW uring_registration :(@operation operation);
       registration->.cancellation_target := cancellation_target;
       // Pending cancellations retain the target identity after its terminal notification.
       IF (cancellation_target??) { cancellation_target->.references.ADD#ATOMIC_ACQREL(1); }
       VAR identity io_uring_submission_id;
       identity.address := IBC_GETADDR(@PTR registration);
-      entry.user_data.value := identity.address;
-      STATIC_IF(BITS(SZ) == 32) { entry.user_data.padding := 0; }
-      VAR index U32 := tail #&& .submission_mask;
-      .submission_entries[index AS SZ] := entry;
-      .submission_array[index AS SZ] := index;
       .outstanding.ADD#ATOMIC_ACQREL(1);
-      .submission_tail->.STORE#ATOMIC_RELEASE(tail + 1);
+      .ring.publish(@entry entry, @identity identity.address, @tail tail);
       RETURN identity;
     }
   }
 
   DOC <$ Creates a ring with named queue capacities. Single-issuer mode binds submission to the creating thread. Setup requires a shared submission/completion mapping and kernel completion-overflow retention. $>
   .CONSTRUCTOR FUNCTION(@submission_entries U32 DEFAULT(256), @completion_entries U32 DEFAULT(512), @single_issuer BOOL DEFAULT(TRUE))
-  {
-    .descriptor := -1;
-    VAR initialized BOOL;
-    DEFER { IF (initialized == FALSE) { .release(); } }
-    VAR parameters syscall::linux::io_uring_parameters;
-    parameters.flags := 8; // IORING_SETUP_CQSIZE
-    parameters.completion_entries := completion_entries;
-    IF (single_issuer) { parameters.flags := parameters.flags #|| 4096; }
-    .descriptor := syscall::linux::io_uring_setup(@entries submission_entries, @parameters parameters<-);
-    IF (.descriptor < 0) { THROW io_uring_error::initialization_failed; }
-    // IORING_FEAT_SINGLE_MMAP and IORING_FEAT_NODROP define the required ring layout and retention contract.
-    IF ((parameters.features #&& 3) != 3) { THROW io_uring_error::initialization_failed; }
-
-    .ring_size := (parameters.submission_offsets.array AS SZ) + (parameters.submission_entries AS SZ) * SIZEOF(U32);
-    VAR completion_size SZ := (parameters.completion_offsets.completions AS SZ)
-      + (parameters.completion_entries AS SZ) * SIZEOF(syscall::linux::io_uring_completion_entry);
-    IF (.ring_size < completion_size) { .ring_size := completion_size; }
-    .submission_entries_size := (parameters.submission_entries AS SZ) * SIZEOF(io_uring_submission_entry);
-    .ring := map_uring_region(@descriptor .descriptor, @size .ring_size, @offset 0);
-    .submission_entries := IBC_PUN#(IBC MUT=>>syscall::linux::io_uring_submission_entry)(
-      @ADDR map_uring_region(@descriptor .descriptor, @size .submission_entries_size, @offset 268435456));
-
-    .submission_head := uring_field#(IBC MUT->ATOMIC#U32)(@ring .ring, @offset parameters.submission_offsets.head);
-    .submission_tail := uring_field#(IBC MUT->ATOMIC#U32)(@ring .ring, @offset parameters.submission_offsets.tail);
-    .submission_flags := uring_field#(IBC MUT->ATOMIC#U32)(@ring .ring, @offset parameters.submission_offsets.flags);
-    .submission_mask := parameters.submission_entries - 1;
-    .submission_array := uring_field#(IBC MUT=>>U32)(@ring .ring, @offset parameters.submission_offsets.array);
-    .completion_head := uring_field#(IBC MUT->ATOMIC#U32)(@ring .ring, @offset parameters.completion_offsets.head);
-    .completion_tail := uring_field#(IBC MUT->ATOMIC#U32)(@ring .ring, @offset parameters.completion_offsets.tail);
-    .completion_mask := parameters.completion_entries - 1;
-    .completion_entries := uring_field#(IBC MUT=>>syscall::linux::io_uring_completion_entry)(
-      @ring .ring, @offset parameters.completion_offsets.completions);
-    initialized := TRUE;
-  }
+    :> .ring:(@submission_entries submission_entries, @completion_entries completion_entries, @single_issuer single_issuer) {}
 
   DOC <$ Releases a quiescent ring. Destroying a processor with queued or outstanding operations violates its lifetime contract. $>
   .DESTRUCTOR FUNCTION()
   {
     IF (.outstanding.LOAD#ATOMIC_ACQUIRE() != 0) { PANIC "io_uring processor destroyed with outstanding operations."; }
-    .release();
   }
 
   DOC <$ Prepares and queues one operation. Preparation may execute before queue exhaustion is reported. The processor reserves user_data and excludes skipped CQEs and externally injected messages. $>
@@ -211,28 +110,36 @@ DOC <$
     RETURN .enqueue_entry(@entry entry, @operation operation);
   }
 
-  DOC <$ Submits all currently queued entries. A failure preserves unconsumed entries for a later retry. $>
-  .flush FUNCTION() MUT
+  DOC <$
+    Prepares one operation and submits it to the kernel before returning. The
+    submission queue holds no other entry: a producer uses either submit or the
+    enqueue and flush pair. A failure withdraws the entry and retains no
+    operation reference. The notification may begin on the consumer thread
+    before this method returns.
+    $>
+  .submit FUNCTION(@operation io_uring_operation_ref) MUT: io_uring_submission_id
   {
-    LOOP DO
+    VAR entry io_uring_submission_entry;
+    operation.prepare(@entry entry);
+    VAR registration MUT->uring_registration := NEW uring_registration :(@operation operation);
+    VAR identity io_uring_submission_id;
+    identity.address := IBC_GETADDR(@PTR registration);
+    .outstanding.ADD#ATOMIC_ACQREL(1);
+    TRY { .ring.submit(@entry entry, @identity identity.address); }
+    CATCH DEFAULT
     {
-      VAR head U32 := .submission_head->.LOAD#ATOMIC_ACQUIRE();
-      VAR tail U32 := .submission_tail->.LOAD#ATOMIC_ACQUIRE();
-      IF (head == tail) { RETURN; }
-      VAR result I32 := syscall::linux::io_uring_enter(@descriptor .descriptor,
-        @submission_count tail - head, @minimum_completion_count 0, @flags 0,
-        @signal_mask NULL, @signal_mask_size 0);
-      IF (result < 0 && result != uring_interrupted_result) { THROW io_uring_error::submission_failed; }
-      IF (result == 0) { THROW io_uring_error::submission_failed; }
-    };
+      .outstanding.SUBTRACT#ATOMIC_ACQREL(1);
+      DELETE registration;
+      RETHROW;
+    }
+    RETURN identity;
   }
 
+  DOC <$ Submits all currently queued entries. A failure preserves unconsumed entries for a later retry. $>
+  .flush FUNCTION() MUT { .ring.flush(); }
+
   DOC <$ Returns an advisory snapshot of published completion availability. The result does not consume records or execute callbacks. $>
-  .has_completions FUNCTION() CONST: BOOL
-  {
-    RETURN .completion_head->.LOAD#ATOMIC_ACQUIRE() != .completion_tail->.LOAD#ATOMIC_ACQUIRE()
-      || (.submission_flags->.LOAD#ATOMIC_ACQUIRE() #&& 2) != 0;
-  }
+  .has_completions FUNCTION() CONST: BOOL { RETURN .ring.has_completions(); }
 
   DOC <$ Returns the number of queued or submitted registrations that have not finished terminal notification. $>
   .pending_count FUNCTION() CONST: SZ { RETURN .outstanding.LOAD#ATOMIC_ACQUIRE(); }
@@ -245,26 +152,10 @@ DOC <$
     $>
   .process_completions FUNCTION(@maximum SZ) MUT: SZ
   {
-    VAR processed SZ;
-    LOOP WHILE(processed < maximum) DO
+    VAR outstanding MUT->ATOMIC#SZ := .outstanding<-;
+    AUTO notify := -< [=outstanding] (@identity ADDRESS, @completion io_uring_completion_result): BOOL
     {
-      VAR head U32 := .completion_head->.LOAD#ATOMIC_RELAXED();
-      VAR tail U32 := .completion_tail->.LOAD#ATOMIC_ACQUIRE();
-      IF (head == tail)
-      {
-        // Overflow records are retained by the kernel until a completion-enter call.
-        IF ((.submission_flags->.LOAD#ATOMIC_ACQUIRE() #&& 2) == 0) { BREAK; }
-        .wait(@minimum 0, @timeout_nanoseconds -1);
-        tail := .completion_tail->.LOAD#ATOMIC_ACQUIRE();
-        IF (head == tail) { BREAK; }
-      }
-      VAR entry syscall::linux::io_uring_completion_entry := .completion_entries[(head #&& .completion_mask) AS SZ];
-      .completion_head->.STORE#ATOMIC_RELEASE(head + 1);
-      VAR registration MUT->uring_registration := IBC_PUN#(MUT->uring_registration)(@ADDR entry.user_data.value);
-      VAR completion io_uring_completion_result;
-      completion.result := entry.result;
-      completion.flags := entry.flags;
-      completion.is_final := (entry.flags #&& 2) == 0;
+      VAR registration MUT->uring_registration := IBC_PUN#(MUT->uring_registration)(@ADDR identity);
       DEFER
       {
         IF (completion.is_final)
@@ -272,54 +163,30 @@ DOC <$
           VAR target MUT->uring_registration := registration->.cancellation_target;
           IF (target??) { release_uring_registration(@registration target); }
           release_uring_registration(@registration registration);
-          .outstanding.SUBTRACT#ATOMIC_ACQREL(1);
+          outstanding->.SUBTRACT#ATOMIC_ACQREL(1);
         }
       }
       registration->.operation.on_notify(@completion completion);
-      processed := processed + 1;
+      RETURN TRUE;
+    };
+    VAR processed SZ;
+    LOOP WHILE(processed < maximum) DO
+    {
+      VAR count SZ := .ring.dispatch_batch(@maximum maximum - processed, @notify notify);
+      IF (count == 0) { BREAK; }
+      processed := processed + count;
     };
     RETURN processed;
   }
 
   DOC <$ Waits for minimum completions without submitting entries or dispatching callbacks. A negative timeout_nanoseconds waits indefinitely. FALSE denotes timeout or signal interruption. The caller serializes waits with completion processing. $>
-  .wait FUNCTION(@minimum U32 DEFAULT(1), @timeout_nanoseconds I64 DEFAULT(-1)) MUT: BOOL
-  {
-    VAR timeout syscall::timespec64;
-    VAR arguments syscall::linux::io_uring_wait_arguments;
-    VAR flags U32 := 1;
-    VAR address CONST=>>BYTE;
-    VAR size SZ;
-    IF (timeout_nanoseconds >= 0)
-    {
-      timeout.seconds := timeout_nanoseconds / 1000000000;
-      timeout.nanoseconds := timeout_nanoseconds % 1000000000;
-      arguments.timeout.value := IBC_GETADDR(@PTR timeout<-);
-      address := IBC_PUN#(CONST=>>BYTE)(@ADDR IBC_GETADDR(@PTR arguments<-));
-      flags := flags #|| 8;
-      size := SIZEOF(syscall::linux::io_uring_wait_arguments);
-    }
-    VAR result I32 := syscall::linux::io_uring_enter(@descriptor .descriptor,
-      @submission_count 0, @minimum_completion_count minimum, @flags flags,
-      @signal_mask address, @signal_mask_size size);
-    IF (result == uring_timeout_result || result == uring_interrupted_result) { RETURN FALSE; }
-    IF (result < 0) { THROW io_uring_error::wait_failed; }
-    RETURN TRUE;
-  }
+  .wait FUNCTION(@minimum U32 DEFAULT(1), @timeout_nanoseconds I64 DEFAULT(-1)) MUT: BOOL { RETURN .ring.wait(@minimum minimum, @timeout_nanoseconds timeout_nanoseconds); }
 
   DOC <$ Registers a borrowed eventfd for completion notifications observed by other threads. Registration changes require exclusive processor access. $>
-  .register_completion_event FUNCTION(@descriptor I32) MUT
-  {
-    IF (syscall::linux::io_uring_register(@descriptor .descriptor, @operation 4,
-      @argument IBC_GETADDR(@PTR descriptor<-), @count 1) < 0)
-    { THROW io_uring_error::registration_failed; }
-  }
+  .register_completion_event FUNCTION(@descriptor I32) MUT { .ring.register_completion_event(@descriptor descriptor); }
 
   DOC <$ Removes the completion eventfd registration under exclusive processor access. $>
-  .unregister_completion_event FUNCTION() MUT
-  {
-    IF (syscall::linux::io_uring_register(@descriptor .descriptor, @operation 5,
-      @argument NULL, @count 0) < 0) { THROW io_uring_error::registration_failed; }
-  }
+  .unregister_completion_event FUNCTION() MUT { .ring.unregister_completion_event(); }
 
   DOC <$ Queues cancellation of a live identity from this processor. The notification receives the cancellation request's independent result; its prepare method is not invoked. The original operation survives until its own final notification. $>
   .enqueue_cancel FUNCTION(@submission io_uring_submission_id, @notification io_uring_operation_ref) MUT: io_uring_submission_id

@@ -1,0 +1,176 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT syscall;
+
+DOC <$ Borrows an overlapped file associated with one async_runtime2 completion port. The file and runtime outlive transfers through the binding. $>
+::async_file_binding2 INCLUDE_IF(OS_WINDOWS) STRUCT NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  PRIVATE(MODULE)
+  {
+    .handle VAR ADDRESS;
+    .port VAR CONST->windows_completion_port;
+    .CONSTRUCTOR FUNCTION(@handle ADDRESS, @port CONST->windows_completion_port)
+    { .handle := handle; .port := port; }
+  }
+}
+
+DOC <$ Stores the Windows request header and borrows the receiver of its terminal transfer result. Windows returns the address of the first field in the completion packet. $>
+::transfer_request2 INCLUDE_IF(OS_WINDOWS) IBC_STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  PRIVATE(MODULE)
+  {
+    .native VAR syscall::windows::overlapped;
+    .receiver VAR transfer_receiver2;
+    .issue VAR windows_completion_issue;
+
+    DOC <$ Delivers the transfer result after Windows releases the file buffer. A read at end of file completes with zero bytes. $>
+    .on_notify FUNCTION(@completion overlapped_completion_result) MUT NOEXCEPT
+    {
+      VAR result transfer_result;
+      IF (completion.error == 0)
+      {
+        result.succeeded := TRUE;
+        result.size := completion.transferred AS SZ;
+      }
+      ELSE { result.succeeded := completion.error == windows_end_of_file; }
+      VAR receiver transfer_receiver2 := .receiver AS MUT& transfer_receiver2;
+      receiver.complete(@result result);
+    }
+  }
+
+  DOC <$ Binds the completion receiver for the lifetime of this request. $>
+  .CONSTRUCTOR FUNCTION(@completion transfer_receiver2) :> .receiver:(@OTHER completion) {}
+}
+
+DOC <$ Owns the Windows OVERLAPPED header used by an async_runtime2 native operation. A registered operation keeps this submission and its receiver alive until completion. $>
+::native_submission2 INCLUDE_IF(OS_WINDOWS) IBC_STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  PRIVATE(MODULE)
+  {
+    .native VAR syscall::windows::overlapped;
+    .completion VAR native_receiver2;
+    .runtime VAR MUT->async_runtime2;
+    .issue VAR windows_completion_issue;
+
+    .on_notify FUNCTION(@completion overlapped_completion_result) MUT NOEXCEPT
+    {
+      VAR receiver native_receiver2 := .completion AS MUT& native_receiver2;
+      receiver.on_native_result(@size completion.transferred AS SZ, @error completion.error);
+    }
+  }
+
+  .CONSTRUCTOR FUNCTION(@runtime MUT& async_runtime2, @completion native_receiver2)
+    :> .completion:(@OTHER completion) { .runtime := runtime<-; }
+
+  DOC <$ Verifies association of the open socket with the operation's completion port. $>
+  .associate FUNCTION(@descriptor CONST& io_descriptor_ref) CONST
+  { .runtime->.backend.associate_socket(@descriptor descriptor); }
+
+  DOC <$ Returns the native header for the Windows socket operation being issued. $>
+  .overlapped FUNCTION() MUT: MUT->syscall::windows::overlapped { RETURN .native<- AS MUT->syscall::windows::overlapped; }
+
+  DOC <$ Accounts for the operation during submission. TRUE reports inline completion, and FALSE transfers ownership to the completion port. $>
+  .start FUNCTION(@operation MUT& AUTO) MUT: BOOL
+  {
+    VAR runtime MUT->async_runtime2 := .runtime;
+    VAR issue MUT& windows_completion_issue := .issue AS MUT& windows_completion_issue;
+    .native := syscall::windows::overlapped();
+    issue.state.STORE#ATOMIC_RELAXED(1);
+    runtime->.outstanding.ADD#ATOMIC_RELAXED(1);
+    VAR pending BOOL;
+    DEFER { IF (pending == FALSE) { runtime->.retire(@count 1); } }
+    pending := operation.start(@submission THIS) == FALSE;
+    IF (pending) { runtime->.backend.port.finish_issue(@issue issue, @native .overlapped(), @key windows_socket_completion_key); }
+    RETURN pending == FALSE;
+  }
+}
+
+PRIVATE(MODULE)
+{
+  ::runtime2_event_batch INCLUDE_IF(OS_WINDOWS) ALIAS [overlapped_batch_capacity]syscall::windows::overlapped_entry;
+
+  ::windows_end_of_file INCLUDE_IF(OS_WINDOWS) STATIC U32 := 38;
+  ::windows_socket_completion_key INCLUDE_IF(OS_WINDOWS) STATIC UINTPTR := 1;
+
+  DOC <$ Issues positioned file transfers to the single consumer's completion port. $>
+  ::runtime2_backend INCLUDE_IF(OS_WINDOWS) STRUCT ROOTED
+  {
+    .port VAR windows_completion_port;
+
+    .CONSTRUCTOR FUNCTION(@entries U32, @file_workers SZ) :> .port:(@concurrency 1) {}
+
+    DOC <$ Associates the descriptor once and returns the handle used for subsequent submissions. $>
+    .bind FUNCTION(@descriptor CONST& io_descriptor_ref) MUT: async_file_binding2
+    {
+      VAR error U32 := .port.associate(@descriptor descriptor, @key 0);
+      IF (error != 0) { THROW overlapped_error(@code error); }
+      RETURN async_file_binding2(@handle descriptor.native_handle(), @port .port<-);
+    }
+
+    DOC <$ Uses the socket completion key for sockets submitted through this runtime. $>
+    .associate_socket FUNCTION(@descriptor CONST& io_descriptor_ref) MUT
+    {
+      IF (.port.associate(@descriptor descriptor, @key windows_socket_completion_key) != 0)
+      { THROW async_error::submission_failed; }
+    }
+
+    DOC <$ Issues one positioned Windows transfer. A synchronous end-of-file read posts its zero-byte result to the consumer. $>
+    .transfer TEMPLATE(@writing VALUE BOOL)
+      FUNCTION(@file async_file_binding2, @request MUT& transfer_request2, @buffer CONST& buffer_ref, @offset U64) MUT
+    {
+      IF (file.port != .port<-) { THROW overlapped_error(@code 87); } // ERROR_INVALID_PARAMETER
+      VAR data MUT=>>BYTE := buffer.data;
+      VAR count U32 := windows_transfer_size(@size buffer.size);
+      AUTO start := -< [=data, =count] (@handle ADDRESS, @overlapped MUT->syscall::windows::overlapped): U32
+      {
+        VAR success I32;
+        STATIC_IF(writing)
+        {
+          success := syscall::windows::write_file(@handle handle, @buffer data, @count count,
+            @transferred NULL, @overlapped overlapped);
+        }
+        STATIC_ELSE
+        {
+          success := syscall::windows::read_file(@handle handle, @buffer data, @count count,
+            @transferred NULL, @overlapped overlapped);
+        }
+        IF (success != 0) { RETURN 0; }
+        RETURN syscall::windows::get_last_error();
+      };
+      VAR native MUT& syscall::windows::overlapped := request.native AS MUT& syscall::windows::overlapped;
+      VAR issue MUT& windows_completion_issue := request.issue AS MUT& windows_completion_issue;
+      VAR code U32 := issue_windows_overlapped(@handle file.handle, @native native, @issue issue, @offset offset, @start start);
+      IF (code == 0 || code == windows_io_pending)
+      { .port.finish_issue(@issue issue, @native native<-, @key 0); RETURN; }
+      STATIC_IF(writing == FALSE)
+      {
+        IF (code == windows_end_of_file)
+        {
+          issue.state.STORE#ATOMIC_RELAXED(0);
+          .port.post(@native native<-, @transferred 0);
+          RETURN;
+        }
+      }
+      THROW overlapped_error(@code code);
+    }
+
+    DOC <$ Issues each Windows transfer individually and returns the accepted prefix if a later operation fails. $>
+    .submit_batch FUNCTION(@operations CONST=>>positioned_transfer2, @count SZ) MUT: SZ
+    { RETURN submit_transfers_individually2(@backend THIS, @operations operations, @count count); }
+
+    DOC <$ Waits for the first completion and dispatches up to maximum transfers. The runtime retires the returned number of credits. $>
+    .process FUNCTION(@events MUT& runtime2_event_batch, @maximum SZ) MUT: SZ
+    {
+      AUTO notify := -< [] (@entry CONST& syscall::windows::overlapped_entry): BOOL
+      {
+        IF (entry.completion_key == windows_socket_completion_key)
+        { RETURN deliver_windows_completion#native_submission2(@entry entry); }
+        RETURN deliver_windows_completion#transfer_request2(@entry entry);
+      };
+      RETURN .port.dispatch_batch(@maximum maximum, @timeout_milliseconds -1, @batch events, @notify notify);
+    }
+
+    DOC <$ Releases the completion consumer from its native wait after shutdown has drained every transfer. $>
+    .wake FUNCTION() MUT { .port.post(@native NULL, @transferred 0); }
+  }
+}

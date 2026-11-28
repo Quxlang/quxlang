@@ -4,9 +4,8 @@ Module `io` · source file `filesystem.qxs`
 
 `io::file_ref` is a non-owning reference to an open native file. The type
 provides synchronous cursor-based transfers, an explicit `close` operation, and
-coroutine overloads that suspend the calling coroutine while an
-[`io::async_runtime`](async-runtime.md) performs the transfer. Copies refer to
-the same native file, and destruction performs no native operation.
+coroutine overloads on `io::async_runtime` and `io::async_runtime2`. Copies
+refer to the same native file, and destruction performs no native operation.
 [`io::file`](file.md) is the corresponding owner that closes the file
 automatically, and [`io::io_descriptor_ref`](io-descriptor-ref.md) is the
 underlying descriptor reference without transfer operations.
@@ -89,9 +88,10 @@ The native value is available as `descriptor.native_handle()`.
 .is_valid FUNCTION() CONST: BOOL
 ```
 
-**Return value**: `descriptor.is_valid()`. The function inspects only the stored
-value. A copy whose native file was closed through another copy continues to
-report `TRUE`.
+Returns `descriptor.is_valid()`. On Windows, a successful close through the
+owner or another copy invalidates this reference. On Linux and macOS, a copy
+retains its original descriptor value after closure.
+[Descriptor validity](io-descriptor-ref.md#is_valid)
 
 ### `read`
 
@@ -153,57 +153,54 @@ Closes the referenced descriptor or handle with one native call.
 empty reference or a descriptor that is already closed returns `FALSE` on Linux
 and macOS.
 
-The function does not modify the reference and does not track other copies.
-After a successful close, this reference and every copy continue to hold the
-closed descriptor value, and `is_valid` continues to return `TRUE`. Using any
-copy after the close is a lifetime violation: the operating system can assign
-the same descriptor value to an unrelated resource.
+On Windows, successful closure invalidates all references sharing the
+descriptor's open-handle record. A failed close preserves that record. On
+Linux and macOS, every copy retains the old numeric descriptor and can report
+`is_valid() == TRUE` after closure. The operating system may reuse its value
+for another file. The caller finishes all operations before closing the file.
+[Windows descriptor closure](io-descriptor-ref.md#close_windows_handle)
 
 ### `read` and `write` coroutines
 
-```quxlang
-.read COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)    // (1)
-.write COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)   // (2)
-.read COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @result WRITE& transfer_result)                 // (3)
-.write COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @result WRITE& transfer_result)                // (4)
-```
+`ON(runtime) RUN` selects the file coroutine overloads when `runtime` is
+an `io::async_runtime` or an `io::async_runtime2`. Nested calls use the same
+runtime. Each member takes a `buffer_ref` by constant reference and stores
+its outcome in a writable `transfer_result`.
 
-The coroutine overloads are selected for calls made from a coroutine whose
-controller is an [`io::async_controller`](async-controller.md), which is the
-controller of every coroutine launched with `ON(runtime) RUN` on an
-[`io::async_runtime`](async-runtime.md) and of the coroutines that such a
-coroutine calls. Each overload submits the transfer to the runtime of the
-controller, suspends the calling coroutine, and stores the transfer outcome in
-`result` when the coroutine resumes.
+| Call | Operation |
+| --- | --- |
+| `file.read(@buffer buffer, @offset offset, @result result)` | Reads at byte offset `offset` and preserves the file cursor. |
+| `file.write(@buffer buffer, @offset offset, @result result)` | Writes at byte offset `offset` and preserves the file cursor. |
+| `file.read(@buffer buffer, @result result)` | Reads at the shared cursor on a file worker. |
+| `file.write(@buffer buffer, @result result)` | Writes at the shared cursor on a file worker. |
 
-1. Submits a positioned read at byte offset `offset` to the native completion
-   queue of the runtime. The file position of the descriptor is not used.
-2. Submits a positioned write at byte offset `offset`.
-3. Schedules a cursor-based read on a file worker of the runtime. The file
-   worker performs the synchronous [`read`](#read); the operating system manages
-   the shared file position.
-4. Schedules a cursor-based write on a file worker of the runtime.
+On `async_runtime2` a positioned call submits a request held in the coroutine
+frame and awaits its completion. A cursor call awaits the future of the
+synchronous operation on the blocking file pool. Both allow other coroutines
+to run on the scheduler worker while the transfer is pending.
+[File member coroutines](async-runtime2.md#file-member-coroutines)
 
-**Result**: a rejected submission and a failed native transfer both produce
-`result.succeeded` equal to `FALSE` with `result.size` equal to zero for
-overloads (1) and (2). Overloads (3) and (4) report the result of the
-synchronous function. The overloads do not throw for transfer failures.
+A rejected positioned submission or a failed positioned transfer produces
+`succeeded == FALSE` and `size == 0`. A successful read at end of file
+produces `succeeded == TRUE` and `size == 0`. The offset has type `U64`.
+`async_runtime2` reports an unsuccessful result for an offset greater than
+`2⁶³ − 1` on every native target. The macOS backend of `async_runtime`
+also reports larger offsets as failed transfers. A cursor transfer reports
+the result of the corresponding synchronous member.
 
-**Preconditions**: the native file and the storage that `buffer` designates
-remain valid until the coroutine resumes. Concurrent operations that use
-overlapping buffer storage require external synchronization. On macOS, `offset`
-does not exceed 9,223,372,036,854,775,807 for overloads (1) and (2); a larger
-offset is reported as a failed transfer.
+The file descriptor and the storage designated by `buffer` must stay valid
+through resumption. Concurrent operations that use overlapping buffer
+storage require external synchronization. On Windows, positioned calls
+require a handle opened with `FILE_FLAG_OVERLAPPED`. The handle becomes
+associated with one runtime's completion port and subsequent positioned
+calls on it must use that runtime. With `async_runtime2`, synchronous
+success must generate a completion packet. A cursor call requires a
+synchronous handle. Platform details appear in the two runtime references.
+[Platform implementations](async-context.md#platform-implementations) and
+[runtime2 dispatch](async-runtime2.md#platform-storage-and-dispatch).
 
-**Target restrictions**: on Windows, overloads (1) and (2) require a handle
-opened with `FILE_FLAG_OVERLAPPED`, and the handle becomes associated with the
-completion port of the runtime that first performs a positioned transfer on it.
-The mechanism behind positioned transfers on each target is specified in
-[Platform implementations](async-context.md#platform-implementations).
-
-An ordinary function, or a coroutine that runs under a controller other than
-`io::async_controller`, selects the synchronous [`read`](#read) and
-[`write`](#write) functions for the argument lists of overloads (3) and (4).
+In an ordinary function, the call forms without an offset perform the
+synchronous cursor operations on the calling thread. [Read](#read) and [write](#write).
 
 ## JVM targets
 
@@ -276,4 +273,5 @@ Output on macOS ARM64:
 - [`io::buffer_ref` and `io::transfer_result`](buffer-ref.md)
 - [Path-based file opening](filesystem.md)
 - [`io::async_runtime`](async-runtime.md)
+- [`io::async_runtime2`](async-runtime2.md#file-member-coroutines)
 - [`std::buffered_writer` and `std::buffered_reader`](../std/buffered-io.md)

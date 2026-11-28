@@ -62,14 +62,12 @@ reference type and forwards the call to its owned reference.
 
 ## Operation forms
 
-`send` and `receive` each exist in three forms, which
-[Socket operations](socket-operations.md) specifies in full: a synchronous
-function that blocks the calling thread, a function with the prefix `async_`
-that submits the operation to an
-[`io::async_runtime`](../io/async-runtime.md) and returns a
-[`std::future`](../std/future.md), and a coroutine with the name of the
-synchronous function, which a coroutine that runs on an `io::async_runtime`
-selects and which suspends the calling coroutine.
+An ordinary call to `send` or `receive` blocks the calling thread.
+`async_send` and `async_receive` take a mutable `io::async_runtime2` or
+`io::async_runtime` and return a future. A coroutine running on either
+runtime can call `send` or `receive` directly and suspend until completion.
+On `io::async_runtime2`, the pending datagram operation occupies storage in
+the socket coroutine's frame. [Socket operations](socket-operations.md)
 
 ## Member functions
 
@@ -78,9 +76,11 @@ selects and which suspends the calling coroutine.
 ```quxlang
 .send INCLUDE_IF(kind == socket_kind::datagram) FUNCTION(@buffer CONST& io::buffer_ref, @destination CONST& endpoint) CONST: SZ      // (1)
 .async_send INCLUDE_IF(kind == socket_kind::datagram)
-  FUNCTION(@runtime MUT& io::async_runtime, @buffer CONST& io::buffer_ref, @destination CONST& endpoint) CONST: std::future#SZ      // (2)
+  FUNCTION(@runtime MUT& AUTO(runtime_type), @buffer CONST& io::buffer_ref, @destination CONST& endpoint) CONST
+  ENABLE_IF(SAME_TYPES(runtime_type, io::async_runtime) || SAME_TYPES(runtime_type, io::async_runtime2)): std::future#SZ  // (2)
 .send INCLUDE_IF(kind == socket_kind::datagram)
-  COROUTINE(@CONTROLLER io::async_controller#AUTO(result_type), @buffer CONST& io::buffer_ref, @destination CONST& endpoint) CONST: SZ   // (3)
+  COROUTINE(@CONTROLLER AUTO(controller_type), @buffer CONST& io::buffer_ref, @destination CONST& endpoint) CONST
+  ENABLE_IF(TYPE_HAS_MEMBER(controller_type, "submit")): SZ  // (3)
 ```
 
 Sends the bytes that `buffer` designates as one message to `destination`. A
@@ -114,9 +114,11 @@ operation completes. No other sending operation is in progress on the socket.
 ```quxlang
 .receive INCLUDE_IF(kind == socket_kind::datagram) FUNCTION(@buffer CONST& io::buffer_ref) CONST: datagram_result                  // (1)
 .async_receive INCLUDE_IF(kind == socket_kind::datagram)
-  FUNCTION(@runtime MUT& io::async_runtime, @buffer CONST& io::buffer_ref) CONST: std::future#datagram_result                     // (2)
+  FUNCTION(@runtime MUT& AUTO(runtime_type), @buffer CONST& io::buffer_ref) CONST
+  ENABLE_IF(SAME_TYPES(runtime_type, io::async_runtime) || SAME_TYPES(runtime_type, io::async_runtime2)): std::future#datagram_result  // (2)
 .receive INCLUDE_IF(kind == socket_kind::datagram)
-  COROUTINE(@CONTROLLER io::async_controller#AUTO(result_type), @buffer CONST& io::buffer_ref) CONST: datagram_result             // (3)
+  COROUTINE(@CONTROLLER AUTO(controller_type), @buffer CONST& io::buffer_ref) CONST
+  ENABLE_IF(TYPE_HAS_MEMBER(controller_type, "submit")): datagram_result  // (3)
 ```
 
 Waits for one message, removes it from the receive queue of the socket, copies
@@ -190,3 +192,4 @@ Output on macOS ARM64:
 - [`net::error`](error.md)
 - [`io::buffer_ref`](../io/buffer-ref.md)
 - [`io::async_runtime`](../io/async-runtime.md)
+- [`io::async_runtime2`](../io/async-runtime2.md)

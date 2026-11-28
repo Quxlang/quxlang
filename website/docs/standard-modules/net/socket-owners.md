@@ -138,10 +138,11 @@ performs no native call.
 **Return value**: a copy of the owned reference. The owner retains the closing
 obligation. A closed owner returns an invalid reference.
 
-The returned reference is usable until the owner closes the socket. Calling
-`close` on the returned reference closes the socket without the knowledge of
-the owner; the owner then closes the same handle value a second time, which
-violates the lifetime contract.
+The returned reference borrows the socket. On Windows, successful closure
+through any reference invalidates all copies, including the owner's reference.
+On Linux and macOS, the owner and its references retain their descriptor number
+after another reference closes it. The owner normally closes the socket or
+transfers that obligation through `release()`.
 
 ### `is_open`
 
@@ -208,14 +209,19 @@ Calls [`bind`](socket-references.md#bind) of the owned reference.
 
 ## Stability during coroutine operations
 
-The coroutine operations of an owner (`connect`, `accept`, `read`, `write`,
-`send`, `receive` under an [`io::async_controller`](../io/async-controller.md))
-take the owner by reference. The owner object remains alive and at its address,
-and is neither moved, released, nor closed, until the coroutine operation
-completes. The functions that return a future (`async_connect` and the other
-`async_` functions) copy the socket handle into the operation at the call; for
-these functions, the socket itself remains open until the future is ready, and
-the owner object can be moved in the meantime.
+The coroutine forms of `connect`, `accept`, `read`, `write`, `send`, and
+`receive` borrow the owner. On both `io::async_runtime2` and
+`io::async_runtime`, the caller keeps the owner open and at a stable address
+until the call returns. On `io::async_runtime2`, the socket coroutine keeps
+the operation and its waiter in the coroutine frame.
+
+The `async_` members submit a borrowed socket descriptor. The owner can move
+while the future is pending. Its socket and the referenced buffers must stay
+alive through completion. On Windows the operation retains its own copy of the descriptor, which
+keeps the open-handle record alive. Moving the owner preserves the socket's
+completion-port association. Successful
+closure invalidates all references sharing the record.
+[Socket operations](socket-operations.md#lifetime-and-concurrency-contract)
 
 ## Target restrictions
 

@@ -3,9 +3,9 @@
 Module `net` · source file `socket_refs.qxs`
 
 `net::tcp_connection_ref`, `net::tcp_listener_ref`, and `net::udp_session_ref`
-are non-owning references to one native socket. A reference stores the native
-socket handle and nothing else: a reference has no allocation, no operation
-bookkeeping, and no destructor effect. Copies designate the same socket. The
+are non-owning references to one native socket. On Linux and macOS, a reference contains the native descriptor.
+On Windows, copies share the open socket's descriptor record and completion-port
+association. A reference borrows the socket. The
 corresponding [socket owner types](socket-owners.md) add exclusive ownership
 and close the socket automatically. This page specifies the members that the
 three reference types share; the operations of each transport are specified in
@@ -28,15 +28,19 @@ the transport-specific members of each specialization with
 [`INCLUDE_IF`](../../reference/availability-and-targets.md) conditions on
 `kind`, so a member such as `listen` exists only in `tcp_listener_ref`.
 
-The structure carries no struct modifier and is copyable. Every member function
-is declared `CONST`: an operation acts on the socket and leaves the reference
-unchanged.
+The structure is copyable. Its `CONST` members operate on the referenced socket.
 
 | Reference type | Owner type | Transport | Transport-specific members |
 | --- | --- | --- | --- |
 | `tcp_connection_ref` | [`tcp_connection`](tcp-connection.md) | TCP stream | `connect`, `read`, `write`, `shutdown`, `async_connect`, `async_read`, `async_write` |
 | `tcp_listener_ref` | [`tcp_listener`](tcp-listener.md) | TCP listening socket | `listen`, `accept`, `async_accept` |
 | `udp_session_ref` | [`udp_session`](udp-session.md) | UDP | `send`, `receive`, `async_send`, `async_receive` |
+
+The six `async_` members accept a mutable `io::async_runtime2` or
+`io::async_runtime` and return a future. In a coroutine launched on either
+runtime, the corresponding `connect`, `accept`, `read`, `write`, `send`,
+or `receive` member suspends until the operation completes.
+[Socket operations](socket-operations.md)
 
 ## Member summary
 
@@ -64,10 +68,13 @@ that another interface produced.
 - A reference does not extend the lifetime of its socket. The socket is closed
   exactly once, by its owner or by one call of [`close`](#close), after every
   pending operation on the socket has completed.
-- After the socket has been closed, every remaining copy of the reference is
-  dangling. The copies still store the handle value, and the operating system
-  can assign the same value to an unrelated resource. Using a dangling copy
-  violates the lifetime contract.
+- On Windows, successful closure through any reference or the owner invalidates
+  every copy and releases the port identity held by the socket. On Linux and
+  macOS, old references retain the closed descriptor number. The operating
+  system can reuse that number for an unrelated resource.
+- On Windows, an outstanding socket operation retains one copy of the
+  descriptor. The operation keeps the record alive through deferred start
+  and completion. The caller keeps the socket open through completion.
 - The caller serializes the operations of each direction. One receiving
   operation (`read`, `receive`, `accept`) and one sending operation (`write`,
   `send`, `connect`) can be in progress on one socket at the same time; two
@@ -81,8 +88,8 @@ that another interface produced.
 .CONSTRUCTOR FUNCTION()
 ```
 
-Creates an invalid reference, which stores the invalid socket value of the
-target: `-1` on Linux and macOS, and the all-ones handle value on Windows.
+Creates an invalid reference. Linux and macOS store descriptor `-1`.
+On Windows the reference has no open-handle record.
 
 ### `is_valid`
 
@@ -90,9 +97,10 @@ target: `-1` on Linux and macOS, and the all-ones handle value on Windows.
 .is_valid FUNCTION() CONST: BOOL
 ```
 
-**Return value**: `TRUE` when the stored handle differs from the invalid socket
-value. The function inspects only the stored value: a copy whose socket was
-closed through another copy or through the owner continues to return `TRUE`.
+On Windows, the function returns `FALSE` for an empty reference or a record
+closed through the socket owner or a reference. On Linux and macOS, it checks
+the stored descriptor against `-1`. A POSIX reference can therefore continue
+to report `TRUE` after closure.
 
 ### `local_endpoint`
 
@@ -147,20 +155,18 @@ Closes the referenced socket with one native call.
 without a native call for an invalid reference. `FALSE` when the native close
 fails.
 
-The function does not modify the reference, which continues to store the closed
-handle value, and does not track other copies.
-
-**Preconditions**: no operation on the socket is pending. The socket has not
-already been closed through another copy or through an owner.
-
-**Target restrictions**: on Windows, the function also releases the Winsock
-initialization reference that the socket holds.
+The caller finishes all operations and has exclusive access to the socket
+during closure. On Windows, a successful close clears the handle and the
+completion-port association in the shared record and releases its Winsock
+initialization reference. All copies then report `is_valid() == FALSE`.
+A failed native close preserves the record. On Linux and macOS, the caller
+discards every copy after a successful close.
 
 ## Target restrictions
 
-The reference types are usable on Linux, macOS, and Windows. The stored handle
-is an `I32` descriptor on Linux and macOS and a `UINTPTR` socket handle on
-Windows; the module declares the handle type for these targets only.
+The reference types are declared on Linux, macOS, and Windows. The socket
+ABI uses `I32` descriptors on Linux and macOS and `UINTPTR` handles on Windows.
+[Windows open-handle records](../io/io-descriptor-ref.md)
 
 ## Example
 

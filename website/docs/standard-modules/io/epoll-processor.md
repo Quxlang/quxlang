@@ -12,8 +12,8 @@ notification decides whether its operation continues to wait. The processor is i
 of [`io::async_context`](async-context.md),
 [`io::async_runtime`](async-runtime.md), coroutine controllers, and futures; it
 starts no thread. The processor is available on Linux for both values of the
-option [`io::linux_use_io_uring`](index.md#module-options), which selects only
-the backend of `io::async_context`.
+option [`io::linux_use_io_uring`](index.md#module-options), which selects the
+Linux backends of `io::async_context` and `io::async_runtime2`.
 
 ## Declarations
 
@@ -90,7 +90,7 @@ consume the readiness.
 
 | Role | Member functions | Requirement |
 | --- | --- | --- |
-| Producer | [`add`](#add) | Any thread. Several producers can run concurrently with each other and with the consumer. |
+| Producer | [`add`](#add), [`wake`](#wake) | Any thread. Several producers can run concurrently with each other and with the consumer. |
 | Consumer | [`process_events`](#process_events), [`remove`](#remove) | One serialized consumer. A notification runs in the consumer role and can call `add` and `remove`. |
 | Exclusive | Construction, destruction | No other access to the processor. |
 
@@ -127,6 +127,7 @@ snapshot.
 | Member | Description |
 | --- | --- |
 | [`process_events`](#process_events) | Waits for a bounded number of readiness events and notifies the operations that they select. |
+| [`wake`](#wake) | Returns one thread from its wait in `process_events` without a notification. |
 
 ## Member functions
 
@@ -240,6 +241,24 @@ its interest list. The borrow is valid during the processor's lifetime.
 ```
 
 **Return value**: the number of outstanding registrations.
+
+### `wake`
+
+```quxlang
+.wake FUNCTION() CONST
+```
+
+Returns one thread from its wait in [`process_events`](#process_events). The
+woken call delivers no notification for the wake and counts none. A wake that
+is issued while no thread waits ends the next wait. Each call ends one wait.
+
+The processor owns an event counter for this purpose and watches it with an
+edge-triggered registration, so a wake costs one write and the consumer
+performs no read. A failure to write the counter panics.
+
+A scheduler calls `wake` to interrupt an indefinite wait, for example before
+shutdown. `io::async_runtime2` uses it to stop its consumer thread on a Linux
+kernel without io_uring.
 
 ### `process_events`
 

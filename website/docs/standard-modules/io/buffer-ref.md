@@ -7,8 +7,8 @@ bytes. `io::transfer_result` reports the outcome of one transfer into or out of
 such a range. Every read and write operation of the `io` module and of the
 [`net`](../net/index.md) module accepts a `buffer_ref`. The file operations of
 [`io::file_ref`](file-ref.md), [`io::file`](file.md),
-[`io::async_context`](async-context.md), and
-[`io::async_runtime`](async-runtime.md) report a `transfer_result`.
+[`io::async_context`](async-context.md), [`io::async_runtime`](async-runtime.md),
+and [`io::async_runtime2`](async-runtime2.md) report a `transfer_result`.
 
 ## Declaration
 

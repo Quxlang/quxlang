@@ -65,18 +65,16 @@ below are those of both types.
 
 1. A synchronous function that blocks the calling thread until the operation
    completes and throws [`net::error`](error.md) on failure.
-2. A function with the prefix `async_` that takes an
-   [`io::async_runtime`](../io/async-runtime.md), submits the operation, and
-   returns a [`std::future`](../std/future.md) that delivers the result or the
-   exception.
-3. A coroutine with the name of the synchronous function. A call made from a
-   coroutine that runs on an `io::async_runtime` selects this form and suspends
-   the calling coroutine until the operation completes.
+2. `async_connect`, `async_read`, and `async_write` submit the operation to
+   the supplied `io::async_runtime2` or `io::async_runtime` and return a
+   single-consumer future.
+3. `connect`, `read`, and `write` suspend a coroutine running on either I/O
+   runtime until completion. The `io::async_runtime2` form borrows the operation
+   from the socket coroutine's frame.
 
 The result of an operation and the `net::error` values that report its native
-failures are the same in all three forms. Forms (2) and (3) additionally fail
-with [`io::async_error::submission_failed`](../io/async-context.md#ioasync_error)
-when the completion queue of the runtime rejects the operation.
+failures are the same in all three forms. Forms (2) and (3) also propagate
+submission errors from the selected runtime.
 
 ## Member functions
 
@@ -85,9 +83,11 @@ when the completion queue of the runtime rejects the operation.
 ```quxlang
 .connect INCLUDE_IF(kind == socket_kind::connection) FUNCTION(@endpoint CONST& endpoint) CONST: VOID                         // (1)
 .async_connect INCLUDE_IF(kind == socket_kind::connection)
-  FUNCTION(@runtime MUT& io::async_runtime, @endpoint CONST& endpoint) CONST: std::future#VOID                              // (2)
+  FUNCTION(@runtime MUT& AUTO(runtime_type), @endpoint CONST& endpoint) CONST
+  ENABLE_IF(SAME_TYPES(runtime_type, io::async_runtime) || SAME_TYPES(runtime_type, io::async_runtime2)): std::future#VOID  // (2)
 .connect INCLUDE_IF(kind == socket_kind::connection)
-  COROUTINE(@CONTROLLER io::async_controller#AUTO(result_type), @endpoint CONST& endpoint) CONST: VOID                     // (3)
+  COROUTINE(@CONTROLLER AUTO(controller_type), @endpoint CONST& endpoint) CONST
+  ENABLE_IF(TYPE_HAS_MEMBER(controller_type, "submit")): VOID  // (3)
 ```
 
 Connects the socket to the remote endpoint `endpoint`. The operation completes
@@ -122,9 +122,11 @@ preserved.
 ```quxlang
 .read INCLUDE_IF(kind == socket_kind::connection) FUNCTION(@buffer CONST& io::buffer_ref) CONST: SZ                         // (1)
 .async_read INCLUDE_IF(kind == socket_kind::connection)
-  FUNCTION(@runtime MUT& io::async_runtime, @buffer CONST& io::buffer_ref) CONST: std::future#SZ                           // (2)
+  FUNCTION(@runtime MUT& AUTO(runtime_type), @buffer CONST& io::buffer_ref) CONST
+  ENABLE_IF(SAME_TYPES(runtime_type, io::async_runtime) || SAME_TYPES(runtime_type, io::async_runtime2)): std::future#SZ  // (2)
 .read INCLUDE_IF(kind == socket_kind::connection)
-  COROUTINE(@CONTROLLER io::async_controller#AUTO(result_type), @buffer CONST& io::buffer_ref) CONST: SZ                   // (3)
+  COROUTINE(@CONTROLLER AUTO(controller_type), @buffer CONST& io::buffer_ref) CONST
+  ENABLE_IF(TYPE_HAS_MEMBER(controller_type, "submit")): SZ  // (3)
 ```
 
 Receives at most `buffer.size` bytes from the connection into the storage that
@@ -159,9 +161,11 @@ connection.
 ```quxlang
 .write INCLUDE_IF(kind == socket_kind::connection) FUNCTION(@buffer CONST& io::buffer_ref) CONST: SZ                        // (1)
 .async_write INCLUDE_IF(kind == socket_kind::connection)
-  FUNCTION(@runtime MUT& io::async_runtime, @buffer CONST& io::buffer_ref) CONST: std::future#SZ                           // (2)
+  FUNCTION(@runtime MUT& AUTO(runtime_type), @buffer CONST& io::buffer_ref) CONST
+  ENABLE_IF(SAME_TYPES(runtime_type, io::async_runtime) || SAME_TYPES(runtime_type, io::async_runtime2)): std::future#SZ  // (2)
 .write INCLUDE_IF(kind == socket_kind::connection)
-  COROUTINE(@CONTROLLER io::async_controller#AUTO(result_type), @buffer CONST& io::buffer_ref) CONST: SZ                   // (3)
+  COROUTINE(@CONTROLLER AUTO(controller_type), @buffer CONST& io::buffer_ref) CONST
+  ENABLE_IF(TYPE_HAS_MEMBER(controller_type, "submit")): SZ  // (3)
 ```
 
 Sends at most `buffer.size` bytes from the storage that `buffer` designates.
@@ -238,3 +242,4 @@ Output on macOS ARM64:
 - [`net::error`](error.md)
 - [`io::buffer_ref`](../io/buffer-ref.md)
 - [`io::async_runtime`](../io/async-runtime.md)
+- [`io::async_runtime2`](../io/async-runtime2.md)

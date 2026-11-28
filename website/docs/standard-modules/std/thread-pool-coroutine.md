@@ -8,7 +8,7 @@ callables. `std::thread_pool_cort_runtime` owns the worker threads and an
 unbounded ready queue, and is the operand of `ON(runtime) RUN`. Each scheduled
 invocation is allocated separately and delivers its result through a
 [`std::future`](future.md). `std::thread_pool_cort_controller` is the
-controller that the pool supplies to every coroutine that it runs, and
+default controller supplied by the pool, and
 `std::cort_yield` is an awaiter that returns the current invocation to the
 ready queue. The language rules for `RUN`, `GO`, coroutine calls, and callable
 capture are specified in
@@ -45,6 +45,7 @@ cancels submitted work.
 | [`DESTRUCTOR`](#thread_pool_cort_runtimedestructor) | Waits for outstanding work and joins the workers. |
 | [`drain`](#thread_pool_cort_runtimedrain) | Waits until all submitted work has completed. |
 | [`CO_RUN`](#thread_pool_cort_runtimeco_run) | Schedules a coroutine and returns its future. |
+| [`launch_with_controller`](#thread_pool_cort_runtimelaunch_with_controller) | Schedules a selected coroutine with a concrete controller and returns its future. |
 | [`post`](#thread_pool_cort_runtimepost) | Queues a synchronous callable. |
 
 ### `thread_pool_cort_runtime::CONSTRUCTOR`
@@ -133,6 +134,30 @@ publishes the staged result to the promise and deletes the invocation.
 **Return value**: A `std::future#T`. Destruction of the future does not cancel
 or wait for the invocation.
 
+### `thread_pool_cort_runtime::launch_with_controller`
+
+```quxlang
+.launch_with_controller TEMPLATE(@T:descriptor_type TYPE AUTO)
+  FUNCTION(@controller AUTO& AUTO(controller_type), @ARGUMENTS:arguments ...,
+    @group MUT->task_group DEFAULT(NULL)) MUT: future#descriptor_type::RETURN_TYPE
+```
+
+Schedules a selected coroutine descriptor on the pool with the supplied
+controller. If `T` is the descriptor's return type, `controller_type` must
+be `thread_pool_cort_controller#T` or have an unambiguous base of that type.
+The descriptor must accept `controller_type` as its concrete `CONTROLLER`.
+
+The invocation constructs its controller from the forwarded argument and
+connects the scheduling base to its continuation and result producer. The
+same allocation contains the controller and the coroutine frame. The pool
+captures the arguments, registers the optional task group, and publishes the
+result after frame cleanup as specified for `CO_RUN`. Objects borrowed by a
+controller, such as an owning I/O runtime, must outlive the invocation.
+
+Module `io` uses this entry point to schedule a frame with an
+`io::async_controller2#T` that submits native work on the owning
+`io::async_runtime2`. [Asynchronous I/O runtime](../io/async-runtime2.md)
+
 ### `thread_pool_cort_runtime::post`
 
 ```quxlang
@@ -160,10 +185,9 @@ throw.
 ```
 
 `T` is the declared return type of the coroutine that the controller serves.
-The pool constructs one controller inside each scheduled invocation; the
-controller connects the coroutine to its pool, to the promise that receives
-its result, and to the notification target of the invocation. Program code
-does not construct a controller. The compiler calls the `CO_` hooks for the
+Each scheduled invocation owns a controller whose scheduling base connects the
+coroutine to its pool, result promise and notification target. The compiler
+calls the `CO_` hooks for the
 corresponding constructs in the coroutine body, and an awaiter receives the
 controller as the `CONTROLLER` argument of `AWAIT_SUSPEND`.
 
@@ -174,6 +198,7 @@ controller as the `CONTROLLER` argument of `AWAIT_SUSPEND`.
 | [`CO_RETURN`](#thread_pool_cort_controllerco_return) | `RETURN` | Stages the result. |
 | [`CO_EXCEPTION`](#thread_pool_cort_controllerco_exception) | An unhandled exception | Stages the exception. |
 | [`CO_GO`](#thread_pool_cort_controllerco_go) | `GO callable(arguments...)` with an optional `USING` clause | Schedules a coroutine or a function and returns its future. |
+| [`launch_function`](#thread_pool_cort_controllerlaunch_function) | Controller implementations | Schedules a synchronous overload and returns its future. |
 | [`CO_COROUTINE_CALL`](#thread_pool_cort_controllerco_coroutine_call) | A coroutine call | Schedules the child and returns a task that the caller awaits. |
 | [`CO_CALL_CTOR`](#thread_pool_cort_controllerco_call_ctor) | A coroutine constructor | Schedules the constructor against the destination object. |
 | [`CO_CALL_DTOR`](#thread_pool_cort_controllerco_call_dtor) | A coroutine destructor | Schedules the destructor. |
@@ -255,6 +280,22 @@ describes group lifetime and scope exit.
 selected coroutine or function. A function that returns no value produces a
 `std::future#VOID`. An exception thrown by the function or the coroutine is
 delivered through the future.
+
+### `thread_pool_cort_controller::launch_function`
+
+```quxlang
+.launch_function FUNCTION(@child AUTO, @ARGUMENTS:arguments ...,
+  @group MUT->task_group DEFAULT(NULL)): AUTO
+```
+
+Resolves the supplied binding as a synchronous function with `BIND_CALL`.
+The argument pack can include a `RECEIVER` for a member function. The call
+captures arguments on the submitting thread and executes the function on a
+worker. The returned `future#U` carries the function's return value or
+exception. A supplied task group tracks the invocation through cleanup.
+
+A derived controller can use this function after checking for coroutine
+overloads that accept its own controller type.
 
 ### `thread_pool_cort_controller::CO_COROUTINE_CALL`
 

@@ -1,0 +1,55 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+IMPORT syscall;
+
+PRIVATE(MODULE)
+{
+  DOC <$ Identifies one completion port and serializes its first associations. Bound descriptors retain its identity after the native port closes. $>
+  ::windows_port_identity INCLUDE_IF(OS_WINDOWS) STRUCT ROOTED
+  {
+    .enrollment VAR std::unfair_mutex;
+  }
+
+  DOC <$ Represents an unpublished association. The processors use completion keys zero and one. $>
+  ::windows_unbound_completion_key INCLUDE_IF(OS_WINDOWS) STATIC UINTPTR := (0 AS UINTPTR) #!!;
+
+  DOC <$ Stores the native handle and its immutable completion association for one imported open handle. $>
+  ::windows_open_handle INCLUDE_IF(OS_WINDOWS) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    .handle VAR ADDRESS;
+    .port VAR std::shared_ptr#windows_port_identity;
+    .key VAR ATOMIC#UINTPTR;
+
+    .CONSTRUCTOR FUNCTION(@handle ADDRESS)
+    { .handle := handle; .key.STORE#ATOMIC_RELAXED(windows_unbound_completion_key); }
+  }
+
+  DOC <$ Associates an open handle on first use. The native call arbitrates initial submissions from competing completion ports. $>
+  ::associate_windows_handle INCLUDE_IF(OS_WINDOWS)
+    FUNCTION(@port ADDRESS, @identity CONST& std::shared_ptr#windows_port_identity,
+      @descriptor CONST& io_descriptor_ref, @completion_key UINTPTR): U32
+  {
+    VAR handle ADDRESS := descriptor.native_handle();
+    IF (handle == NULL || handle == (NULL AS ADDRESS) - (1 AS SZ)) { RETURN 6; } // ERROR_INVALID_HANDLE
+    VAR state MUT& windows_open_handle := descriptor.state.get()->;
+    VAR key UINTPTR := state.key.LOAD#ATOMIC_ACQUIRE();
+    IF (key == windows_unbound_completion_key)
+    {
+      identity->.enrollment.lock();
+      DEFER { identity->.enrollment.unlock(); }
+      key := state.key.LOAD#ATOMIC_ACQUIRE();
+      IF (key == windows_unbound_completion_key)
+      {
+        VAR bound ADDRESS := syscall::windows::create_io_completion_port(@file_handle handle,
+          @existing_completion_port port, @completion_key completion_key, @concurrent_threads 0);
+        IF (bound!?) { RETURN syscall::windows::get_last_error(); }
+        state.port := identity;
+        state.key.STORE#ATOMIC_RELEASE(completion_key);
+        RETURN 0;
+      }
+    }
+    IF (key == completion_key && state.port == identity) { RETURN 0; }
+    RETURN 87; // ERROR_INVALID_PARAMETER
+  }
+}

@@ -7,15 +7,6 @@ IMPORT syscall;
 
 PRIVATE(MODULE)
 {
-  DOC <$ Protects completion-port bindings and native handle closure. $>
-  ::windows_completion_bindings_mutex INCLUDE_IF(OS_WINDOWS) VAR std::ordering_mutex;
-
-  DOC <$ Maps each open handle to the identity of its completion port. $>
-  ::windows_completion_bindings INCLUDE_IF(OS_WINDOWS) VAR std::map#(@INDEX SZ, @VALUE U64);
-
-  DOC <$ Assigns distinct identities even when Windows reuses a closed port's handle value. $>
-  ::windows_completion_last_identity INCLUDE_IF(OS_WINDOWS) VAR U64;
-
   DOC <$
     Owns one Windows I/O completion port.
     $>
@@ -23,7 +14,7 @@ PRIVATE(MODULE)
     STRUCT MOVE_ONLY
   {
     .completion_port VAR ADDRESS;
-    .identity VAR U64;
+    .identity VAR std::shared_ptr#windows_port_identity;
   }
 
   DOC <$
@@ -37,6 +28,7 @@ PRIVATE(MODULE)
   {
     VAR null_address ADDRESS;
     VAR invalid_file_handle ADDRESS := null_address - (1 AS SZ);
+    state.identity := std::make_shared#windows_port_identity();
     state.completion_port := syscall::windows::create_io_completion_port(
       @file_handle invalid_file_handle,
       @existing_completion_port null_address,
@@ -44,43 +36,15 @@ PRIVATE(MODULE)
       @concurrent_threads concurrency
     );
     IF (state.completion_port!?) { RETURN FALSE; }
-    windows_completion_bindings_mutex.lock();
-    windows_completion_last_identity++;
-    state.identity := windows_completion_last_identity;
-    windows_completion_bindings_mutex.unlock();
     RETURN TRUE;
   }
 
-  DOC <$
-    Associates an overlapped handle once per open lifetime. An existing binding
-    succeeds only when it names this completion port.
-    $>
+  DOC <$ Associates an overlapped file with the context for the descriptor's open lifetime. $>
   ::associate_windows_async_file INCLUDE_IF(OS_WINDOWS)
-    FUNCTION(
-      @state CONST& windows_async_context_state,
-      @descriptor io_descriptor_ref
-    ): BOOL
+    FUNCTION(@state MUT& windows_async_context_state, @descriptor CONST& io_descriptor_ref): BOOL
   {
-    IF (descriptor.is_valid() == FALSE) { RETURN FALSE; }
-    VAR handle ADDRESS := descriptor.native_handle();
-    VAR key SZ := handle - (NULL AS ADDRESS);
-    windows_completion_bindings_mutex.lock();
-    DEFER { windows_completion_bindings_mutex.unlock(); }
-    VAR binding MUT& U64 := windows_completion_bindings[key];
-    IF (binding != 0) { RETURN binding == state.identity; }
-    VAR associated ADDRESS := syscall::windows::create_io_completion_port(
-      @file_handle handle,
-      @existing_completion_port state.completion_port,
-      @completion_key 0,
-      @concurrent_threads 0
-    );
-    IF (associated != state.completion_port)
-    {
-      windows_completion_bindings.erase(@key key);
-      RETURN FALSE;
-    }
-    binding := state.identity;
-    RETURN TRUE;
+    RETURN associate_windows_handle(@port state.completion_port, @identity state.identity,
+      @descriptor descriptor, @completion_key 0) == 0;
   }
 
   DOC <$
@@ -123,7 +87,7 @@ PRIVATE(MODULE)
   ::submit_async_read INCLUDE_IF(OS_WINDOWS)
     FUNCTION(
       @request MUT->async_request,
-      @descriptor io_descriptor_ref,
+      @descriptor CONST& io_descriptor_ref,
       @buffer CONST& buffer_ref,
       @offset U64
     ): BOOL
@@ -148,7 +112,7 @@ PRIVATE(MODULE)
   ::submit_async_write INCLUDE_IF(OS_WINDOWS)
     FUNCTION(
       @request MUT->async_request,
-      @descriptor io_descriptor_ref,
+      @descriptor CONST& io_descriptor_ref,
       @buffer CONST& buffer_ref,
       @offset U64
     ): BOOL
@@ -257,20 +221,4 @@ PRIVATE(MODULE)
     control->.windows.completion_port := null_port;
     control->.valid := FALSE;
   }
-}
-
-DOC <$
-  Closes a Windows handle under the completion-port binding lock. close performs
-  the native close operation for handle and returns true on success. All I/O on
-  the handle has completed before this call. A failed close preserves the binding.
-  $>
-::close_windows_async_handle INCLUDE_IF(OS_WINDOWS)
-  FUNCTION(@handle ADDRESS, @close AUTO& AUTO): BOOL
-{
-  windows_completion_bindings_mutex.lock();
-  DEFER { windows_completion_bindings_mutex.unlock(); }
-  IF (close() == FALSE) { RETURN FALSE; }
-  VAR key SZ := handle - (NULL AS ADDRESS);
-  windows_completion_bindings.erase(@key key);
-  RETURN TRUE;
 }

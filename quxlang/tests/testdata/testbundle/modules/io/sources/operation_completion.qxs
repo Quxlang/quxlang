@@ -1,0 +1,128 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+DOC <$
+  Connects one started operation to its runtime and to the single continuation
+  that waits for it. The runtime counts the operation as outstanding from begin
+  until finish or abandon. An operation embeds its completion at a stable address.
+  $>
+::operation_completion INCLUDE_IF(OS_LINUX || OS_MACOS) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  PRIVATE(MODULE)
+  {
+    .owner VAR MUT->async_runtime2;
+    DOC <$ Holds null before completion and registration, the registered continuation while the operation is pending, and the address of this object after completion. $>
+    .slot VAR ATOMIC#(MUT->VOID);
+  }
+
+  DOC <$ Binds the runtime that issues the operation. The runtime outlives the operation. $>
+  .CONSTRUCTOR FUNCTION(@runtime MUT& async_runtime2) { .owner := runtime<-; }
+
+  DOC <$ Returns the runtime that issues the operation. $>
+  .runtime FUNCTION() CONST: MUT& async_runtime2 { RETURN .owner->; }
+
+  DOC <$ Counts the operation as outstanding. The operation calls begin before it hands itself to a kernel queue or a worker. $>
+  .begin FUNCTION() MUT { .owner->.outstanding.ADD#ATOMIC_RELAXED(1); }
+
+  DOC <$ Withdraws an outstanding count after the hand-off was rejected. The operation then reports its result without a completion. $>
+  .abandon FUNCTION() MUT { .owner->.retire(@count 1); }
+
+  DOC <$
+    Publishes completion, notifies a registered continuation, and retires the
+    outstanding count. The operation stores its result before this call and
+    does not access its own storage afterwards, because the notified
+    continuation may release it.
+    $>
+  .finish FUNCTION() MUT NOEXCEPT
+  {
+    VAR runtime MUT->async_runtime2 := .owner;
+    VAR previous := .slot.EXCHANGE#ATOMIC_ACQREL(THIS<- AS REINTERPRET MUT->VOID);
+    IF (previous??)
+    {
+      VAR continuation := previous AS REINTERPRET MUT->std::async_continuation;
+      continuation->.notify(@context continuation->.context);
+    }
+    runtime->.retire(@count 1);
+  }
+
+  DOC <$ Reports whether finish has published completion. $>
+  .is_finished FUNCTION() CONST: BOOL
+  { RETURN IBC_GETADDR(@PTR .slot.LOAD#ATOMIC_ACQUIRE()) == IBC_GETADDR(@PTR THIS<-); }
+
+  DOC <$ Registers the continuation that finish notifies. FALSE reports that completion was published first, in which case the continuation receives no notification. $>
+  .suspend FUNCTION(@continuation MUT->std::async_continuation) MUT: BOOL
+  {
+    VAR empty MUT->VOID;
+    RETURN .slot.COMPARE_EXCHANGE#(@SUCCESS ATOMIC_ACQREL, @FAILURE ATOMIC_ACQUIRE)(
+      @EXPECTED empty, @DESIRED continuation AS REINTERPRET MUT->VOID);
+  }
+}
+
+PRIVATE(MODULE)
+{
+  DOC <$
+    Owns one operation together with the producer of its future. The operation
+    type supplies value_type, start, suspend and result. Completion publishes
+    the result or the exception that result throws, and releases this object.
+    The rooted operation keeps the owner at its allocated address.
+    $>
+  ::future_operation INCLUDE_IF(OS_LINUX || OS_MACOS) TEMPLATE(@T:operation_type TYPE AUTO) STRUCT MOVE_ONLY
+  {
+    .operation VAR operation_type;
+    .producer VAR std::promise#(operation_type::value_type);
+    .continuation VAR std::async_continuation;
+
+    DOC <$ Constructs the operation in place from the forwarded arguments. $>
+    .CONSTRUCTOR FUNCTION(%...values TT, @KWARGS ...)
+      :> .operation:(...FORWARD PACK(values), ...FORWARD PACK(KWARGS))
+    {
+      .continuation.context := THIS<- AS REINTERPRET MUT->VOID;
+      .continuation.notify := completed<-;
+    }
+
+    DOC <$ Publishes the operation's outcome and releases the owner. $>
+    .publish FUNCTION() MUT
+    {
+      TRY
+      {
+        STATIC_IF(SAME_TYPES(operation_type::value_type, VOID))
+        { .operation.result(); .producer.set_value(); }
+        STATIC_ELSE { .producer.set_value(@value .operation.result()); }
+      }
+      CATCH DEFAULT { .producer.set_exception(@error CURRENT_EXCEPTION()); }
+      VAR owner MUT->future_operation#operation_type := THIS<-;
+      DELETE owner;
+    }
+
+    DOC <$ Receives the completion notification of a pending operation. $>
+    ::completed FUNCTION(@context MUT->VOID)
+    {
+      VAR owner := context AS REINTERPRET MUT->future_operation#operation_type;
+      owner->.publish();
+    }
+  }
+}
+
+DOC <$
+  Starts an operation of operation_type constructed from the forwarded arguments
+  and returns the future of its result. The runtime owns the operation until its
+  result is published. A failure to start is delivered through the future.
+  $>
+::submit_operation INCLUDE_IF(OS_LINUX || OS_MACOS) TEMPLATE(@T:operation_type TYPE AUTO)
+  FUNCTION(%...values TT, @KWARGS ...): std::future#(operation_type::value_type)
+{
+  VAR owner MUT->future_operation#operation_type := NEW future_operation#operation_type :(
+    ...FORWARD PACK(values), ...FORWARD PACK(KWARGS));
+  VAR result := owner->.producer.get_future();
+  VAR pending BOOL;
+  TRY { pending := owner->.operation.start() == FALSE && owner->.operation.suspend(@continuation owner->.continuation<-); }
+  CATCH DEFAULT
+  {
+    owner->.producer.set_exception(@error CURRENT_EXCEPTION());
+    DELETE owner;
+    RETURN MOVE(result);
+  }
+  IF (pending == FALSE) { owner->.publish(); }
+  RETURN MOVE(result);
+}

@@ -68,7 +68,7 @@ IMPORT std;
   }
 
   DOC <$ The tcp_round_trip test exchanges data with one coroutine scheduler worker and verifies EOF, ownership transfer, and explicit futures. $>
-  ::tcp_round_trip UNIT_TEST
+  ::tcp_round_trip_on_runtime FUNCTION(@runtime MUT& AUTO)
   {
     VAR endpoint net::endpoint := loopback();
     VAR listener net::tcp_listener :(@address endpoint.address);
@@ -76,7 +76,6 @@ IMPORT std;
     listener.listen();
     endpoint := listener.local_endpoint();
     TEST_ASSERT(endpoint.port != 0);
-    VAR runtime io::async_runtime :(@workers 1, @file_workers 2);
     VAR accepting := ON(runtime) RUN accept(@listener listener.reference());
     VAR client net::tcp_connection :(@address endpoint.address);
     VAR connecting := ON(runtime) RUN connect(@connection client, @endpoint endpoint);
@@ -121,6 +120,18 @@ IMPORT std;
     runtime.drain();
   }
 
+  ::tcp_round_trip UNIT_TEST
+  {
+    VAR runtime io::async_runtime :(@workers 1, @file_workers 2);
+    tcp_round_trip_on_runtime(@runtime runtime);
+  }
+
+  ::tcp_round_trip_runtime2 UNIT_TEST
+  {
+    VAR runtime io::async_runtime2 :(@workers 1, @file_workers 2);
+    tcp_round_trip_on_runtime(@runtime runtime);
+  }
+
   DOC <$ The send coroutine sends a datagram through the selected coroutine controller. $>
   ::send COROUTINE(@session MUT& net::udp_session, @buffer io::buffer_ref, @destination net::endpoint): SZ
   {
@@ -133,7 +144,7 @@ IMPORT std;
   }
 
   DOC <$ UDP preserves message boundaries, sources, truncation, and zero-length messages across coroutine and future calls. $>
-  ::udp_round_trip UNIT_TEST
+  ::udp_round_trip_on_runtime FUNCTION(@runtime MUT& AUTO)
   {
     VAR endpoint net::endpoint := loopback();
     VAR sender net::udp_session :(@address endpoint.address);
@@ -146,7 +157,6 @@ IMPORT std;
     VAR received [2]BYTE;
     VAR output io::buffer_ref :(@data bytes[&0], @size 4);
     VAR input io::buffer_ref :(@data received[&0], @size 2);
-    VAR runtime io::async_runtime :(@workers 1, @file_workers 2);
     VAR reading := ON(runtime) RUN receive(@session receiver.reference(), @buffer input);
     VAR writing := ON(runtime) RUN send(@session sender, @buffer output, @destination endpoint);
     TEST_ASSERT(writing.get() == 4);
@@ -177,7 +187,19 @@ IMPORT std;
     runtime.drain();
   }
 
-  DOC <$ IPv6 endpoints preserve the address and ephemeral local port. $>
+  ::udp_round_trip UNIT_TEST
+  {
+    VAR runtime io::async_runtime :(@workers 1, @file_workers 2);
+    udp_round_trip_on_runtime(@runtime runtime);
+  }
+
+  ::udp_round_trip_runtime2 UNIT_TEST
+  {
+    VAR runtime io::async_runtime2 :(@workers 1, @file_workers 2);
+    udp_round_trip_on_runtime(@runtime runtime);
+  }
+
+  DOC <$ Synchronous and runtime2 UDP transfers preserve IPv6 endpoints, including the source address returned with a datagram. $>
   ::ipv6_datagram UNIT_TEST
   {
     VAR address net::ipv6_address;
@@ -197,12 +219,27 @@ IMPORT std;
     bytes[0] := 0;
     VAR result net::datagram_result := receiver.receive(@buffer buffer);
     TEST_ASSERT(result.size == 1 && bytes[0] == 97 && result.truncated == FALSE);
+
+    VAR runtime io::async_runtime2 :(@workers 1, @file_workers 1);
+    VAR received [1]BYTE;
+    VAR input io::buffer_ref :(@data received[&0], @size 1);
+    VAR reading := receiver.async_receive(@runtime runtime, @buffer input);
+    bytes[0] := 73;
+    VAR writing := sender.async_send(@runtime runtime, @buffer buffer, @destination endpoint);
+    endpoint.port := 0;
+    TEST_ASSERT(writing.get() == 1);
+    result := reading.get();
+    TEST_ASSERT(result.size == 1 && received[0] == 73 && result.truncated == FALSE);
+    TEST_ASSERT(result.source.port == sender.local_endpoint().port && result.source.scope_id == 0);
+    TEST_ASSERT(result.source.address ISA net::ipv6_address);
+    VAR source CONST& net::ipv6_address := UNWRAP result.source.address INTO net::ipv6_address;
+    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(16 AS SZ) DO
+    { TEST_ASSERT(source.data[index] == address.data[index]); };
   }
 
   DOC <$ Native failures propagate through futures and nested coroutine calls as portable networking errors. $>
-  ::invalid_socket UNIT_TEST
+  ::invalid_socket_on_runtime FUNCTION(@runtime MUT& AUTO)
   {
-    VAR runtime io::async_runtime :(@workers 1);
     VAR connection net::tcp_connection_ref;
     VAR bytes [1]BYTE;
     VAR buffer io::buffer_ref :(@data bytes[&0], @size 1);
@@ -216,6 +253,12 @@ IMPORT std;
     {
       caught := failure == net::error::closed;
     }
+    TEST_ASSERT(caught);
+    caught := FALSE;
+    VAR empty io::buffer_ref :(@data bytes[&0], @size 0);
+    VAR writing := connection.async_write(@runtime runtime, @buffer empty);
+    TRY { writing.get(); }
+    CATCH failure CONST& net::error { caught := failure == net::error::closed; }
     TEST_ASSERT(caught);
     caught := FALSE;
     VAR reading := ON(runtime) RUN nested_read(@connection connection, @buffer buffer);
@@ -241,14 +284,25 @@ IMPORT std;
     TEST_ASSERT(caught);
     runtime.drain();
   }
+
+  ::invalid_socket UNIT_TEST
+  {
+    VAR runtime io::async_runtime :(@workers 1);
+    invalid_socket_on_runtime(@runtime runtime);
+  }
+
+  ::invalid_socket_runtime2 UNIT_TEST
+  {
+    VAR runtime io::async_runtime2 :(@workers 1);
+    invalid_socket_on_runtime(@runtime runtime);
+  }
   DOC <$ Pending socket receives do not consume file workers or prevent later sends from completing. $>
-  ::pending_receives_progress UNIT_TEST
+  ::pending_receives_progress_on_runtime FUNCTION(@runtime MUT& AUTO)
   {
     VAR endpoint net::endpoint := loopback();
     VAR receivers [8]net::udp_session;
     VAR bytes [8]BYTE;
     VAR results std::dynarr#(std::future#net::datagram_result);
-    VAR runtime io::async_runtime :(@workers 1, @completion_workers 2, @file_workers 1);
     VAR sender net::udp_session :(@address endpoint.address);
     LOOP VALUE(index SZ) FROM(0) UNTIL(8) DO
     {
@@ -272,5 +326,17 @@ IMPORT std;
       VAR result net::datagram_result := results[index].get();
       TEST_ASSERT(result.size == 1 && result.truncated == FALSE && bytes[index] == 113);
     };
+  }
+
+  ::pending_receives_progress UNIT_TEST
+  {
+    VAR runtime io::async_runtime :(@workers 1, @completion_workers 2, @file_workers 1);
+    pending_receives_progress_on_runtime(@runtime runtime);
+  }
+
+  ::pending_receives_progress_runtime2 UNIT_TEST
+  {
+    VAR runtime io::async_runtime2 :(@workers 1, @file_workers 1);
+    pending_receives_progress_on_runtime(@runtime runtime);
   }
 }

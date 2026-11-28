@@ -1,0 +1,253 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT syscall;
+
+PRIVATE(MODULE)
+{
+  DOC <$ Keeps the native peer address live until the connect request completes. $>
+  ::connect_operation INCLUDE_IF(OS_LINUX && io::linux_use_io_uring) STRUCT MOVE_ONLY NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    ::value_type ALIAS VOID;
+    .socket VAR I32;
+    .peer VAR internet_address_storage;
+    .length VAR U32;
+
+    .CONSTRUCTOR FUNCTION(@socket CONST& socket_operation_handle, @endpoint CONST& endpoint)
+    {
+      .socket := socket;
+      .length := encode_socket_address(@address .peer, @endpoint endpoint);
+    }
+
+    .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
+    {
+      IF (.socket < 0) { THROW error::closed; }
+      VAR entry syscall::linux::io_uring_submission_entry;
+      entry.opcode := 16; // IORING_OP_CONNECT
+      entry.descriptor := .socket;
+      entry.address.value := IBC_GETADDR(@PTR .peer<-);
+      entry.offset := .length AS U64;
+      submission.submit(@entry entry);
+      RETURN FALSE;
+    }
+
+    .complete FUNCTION(@submission AUTO& AUTO, @size SZ, @error U32) MUT: BOOL
+    {
+      IF (error != 0) { THROW translate_socket_error(@code error AS I64); }
+      RETURN TRUE;
+    }
+
+    .result FUNCTION() MUT {}
+  }
+
+  DOC <$ Retains ownership of the accepted socket until the caller takes its result. $>
+  ::accept_operation INCLUDE_IF(OS_LINUX && io::linux_use_io_uring) STRUCT MOVE_ONLY NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    ::value_type ALIAS tcp_connection;
+    .listener VAR I32;
+    .accepted VAR tcp_connection;
+
+    .CONSTRUCTOR FUNCTION(@socket CONST& socket_operation_handle) { .listener := socket; }
+
+    .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
+    {
+      IF (.listener < 0) { THROW error::closed; }
+      VAR entry syscall::linux::io_uring_submission_entry;
+      entry.opcode := 13; // IORING_OP_ACCEPT
+      entry.descriptor := .listener;
+      entry.operation_flags := 526336; // SOCK_NONBLOCK | SOCK_CLOEXEC
+      submission.submit(@entry entry);
+      RETURN FALSE;
+    }
+
+    .complete FUNCTION(@submission AUTO& AUTO, @size SZ, @error U32) MUT: BOOL
+    {
+      IF (error == 4) { RETURN .start(@submission submission); }
+      IF (error != 0) { THROW translate_socket_error(@code error AS I64); }
+      .accepted := tcp_connection(@reference tcp_connection_ref(@handle size AS CHECKED I32));
+      RETURN TRUE;
+    }
+
+    .result FUNCTION() MUT: tcp_connection
+    {
+      VAR accepted MUT& tcp_connection := .accepted;
+      RETURN MOVE(accepted);
+    }
+  }
+
+  DOC <$ Issues a single-buffer TCP transfer. A zero-length transfer completes inline on an open socket. $>
+  ::submit_uring_stream INCLUDE_IF(OS_LINUX && io::linux_use_io_uring)
+    FUNCTION(@submission AUTO& AUTO, @socket I32, @data ADDRESS, @size U32, @opcode U8, @flags U32): BOOL
+  {
+    IF (socket < 0) { THROW error::closed; }
+    IF (size == 0) { RETURN TRUE; }
+    VAR entry syscall::linux::io_uring_submission_entry;
+    entry.descriptor := socket;
+    entry.opcode := opcode;
+    entry.operation_flags := flags;
+    entry.address.value := data;
+    entry.length := size;
+    submission.submit(@entry entry);
+    RETURN FALSE;
+  }
+
+  DOC <$ Receives a TCP prefix and replaces the requested byte count with the completed count. $>
+  ::read_operation INCLUDE_IF(OS_LINUX && io::linux_use_io_uring) STRUCT MOVE_ONLY NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    ::value_type ALIAS SZ;
+    .socket VAR I32;
+    .size VAR U32;
+    .data VAR ADDRESS;
+
+    .CONSTRUCTOR FUNCTION(@socket CONST& socket_operation_handle, @buffer CONST& io::buffer_ref)
+    {
+      .socket := socket;
+      .size := socket_transfer_size(@size buffer.size);
+      .data := IBC_GETADDR(@PTR buffer.data);
+    }
+
+    .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
+    {
+      RETURN submit_uring_stream(@submission submission, @socket .socket, @data .data,
+        @size .size, @opcode 27, @flags 0); // IORING_OP_RECV
+    }
+
+    .complete FUNCTION(@submission AUTO& AUTO, @size SZ, @error U32) MUT: BOOL
+    {
+      IF (error == 4) { RETURN .start(@submission submission); }
+      IF (error != 0) { THROW translate_socket_error(@code error AS I64); }
+      .size := size AS CHECKED U32;
+      RETURN TRUE;
+    }
+
+    .result FUNCTION() MUT: SZ { RETURN .size AS SZ; }
+  }
+
+  DOC <$ Sends a TCP prefix and replaces the requested byte count with the completed count. $>
+  ::write_operation INCLUDE_IF(OS_LINUX && io::linux_use_io_uring) STRUCT MOVE_ONLY NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    ::value_type ALIAS SZ;
+    .socket VAR I32;
+    .size VAR U32;
+    .data VAR ADDRESS;
+
+    .CONSTRUCTOR FUNCTION(@socket CONST& socket_operation_handle, @buffer CONST& io::buffer_ref)
+    {
+      .socket := socket;
+      .size := socket_transfer_size(@size buffer.size);
+      .data := IBC_GETADDR(@PTR buffer.data);
+    }
+
+    .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
+    {
+      RETURN submit_uring_stream(@submission submission, @socket .socket, @data .data,
+        @size .size, @opcode 26, @flags 16384); // IORING_OP_SEND, MSG_NOSIGNAL
+    }
+
+    .complete FUNCTION(@submission AUTO& AUTO, @size SZ, @error U32) MUT: BOOL
+    {
+      IF (error == 4) { RETURN .start(@submission submission); }
+      IF (error != 0) { THROW translate_socket_error(@code error AS I64); }
+      .size := size AS CHECKED U32;
+      RETURN TRUE;
+    }
+
+    .result FUNCTION() MUT: SZ { RETURN .size AS SZ; }
+  }
+
+  DOC <$ Links the message header to its address and vector after the operation reaches stable storage, then submits it. $>
+  ::submit_uring_datagram INCLUDE_IF(OS_LINUX && io::linux_use_io_uring)
+    FUNCTION(@submission AUTO& AUTO, @socket I32, @address MUT& internet_address_storage,
+      @vector MUT& syscall::datagram_vector, @message MUT& syscall::datagram_message, @opcode U8, @flags U32): BOOL
+  {
+    message.name := IBC_GETADDR(@PTR address<-);
+    message.vectors := IBC_GETADDR(@PTR vector<-);
+    message.vector_count := 1;
+    VAR entry syscall::linux::io_uring_submission_entry;
+    entry.descriptor := socket;
+    entry.opcode := opcode;
+    entry.operation_flags := flags;
+    entry.address.value := IBC_GETADDR(@PTR message<-);
+    entry.length := 1;
+    submission.submit(@entry entry);
+    RETURN FALSE;
+  }
+
+  DOC <$ Sends one UDP datagram with a single native address and iovec. The completed byte count replaces the iovec length. $>
+  ::send_operation INCLUDE_IF(OS_LINUX && io::linux_use_io_uring) STRUCT MOVE_ONLY NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    ::value_type ALIAS SZ;
+    .socket VAR I32;
+    .destination VAR internet_address_storage;
+    .vector VAR syscall::datagram_vector;
+    .message VAR syscall::datagram_message;
+
+    .CONSTRUCTOR FUNCTION(@socket CONST& socket_operation_handle, @buffer CONST& io::buffer_ref, @destination CONST& endpoint)
+    {
+      .socket := socket;
+      .vector.address := IBC_GETADDR(@PTR buffer.data);
+      .vector.length := buffer.size;
+      .message.name_length := encode_socket_address(@address .destination, @endpoint destination);
+    }
+
+    .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
+    {
+      IF (.socket < 0) { THROW error::closed; }
+      IF (.vector.length > 2147483647) { THROW error::message_too_large; }
+      RETURN submit_uring_datagram(@submission submission, @socket .socket, @address .destination,
+        @vector .vector, @message .message, @opcode 9, @flags 16384); // IORING_OP_SENDMSG, MSG_NOSIGNAL
+    }
+
+    .complete FUNCTION(@submission AUTO& AUTO, @size SZ, @error U32) MUT: BOOL
+    {
+      IF (error == 4) { RETURN .start(@submission submission); }
+      IF (error != 0) { THROW translate_socket_error(@code error AS I64); }
+      .vector.length := size;
+      RETURN TRUE;
+    }
+
+    .result FUNCTION() MUT: SZ { RETURN .vector.length; }
+  }
+
+  DOC <$ Receives one UDP message. Linux reports discarded bytes through MSG_TRUNC even with a zero-length iovec. $>
+  ::receive_operation INCLUDE_IF(OS_LINUX && io::linux_use_io_uring) STRUCT MOVE_ONLY NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    ::value_type ALIAS datagram_result;
+    .socket VAR I32;
+    .source VAR internet_address_storage;
+    .vector VAR syscall::datagram_vector;
+    .message VAR syscall::datagram_message;
+
+    .CONSTRUCTOR FUNCTION(@socket CONST& socket_operation_handle, @buffer CONST& io::buffer_ref)
+    {
+      .socket := socket;
+      .vector.address := IBC_GETADDR(@PTR buffer.data);
+      .vector.length := socket_transfer_size(@size buffer.size) AS SZ;
+    }
+
+    .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
+    {
+      IF (.socket < 0) { THROW error::closed; }
+      .message.name_length := SIZEOF(internet_address_storage) AS CHECKED U32;
+      RETURN submit_uring_datagram(@submission submission, @socket .socket, @address .source,
+        @vector .vector, @message .message, @opcode 10, @flags 0); // IORING_OP_RECVMSG
+    }
+
+    .complete FUNCTION(@submission AUTO& AUTO, @size SZ, @error U32) MUT: BOOL
+    {
+      IF (error == 4) { RETURN .start(@submission submission); }
+      IF (error != 0) { THROW translate_socket_error(@code error AS I64); }
+      .vector.length := size;
+      RETURN TRUE;
+    }
+
+    .result FUNCTION() MUT: datagram_result
+    {
+      VAR result datagram_result;
+      result.size := .vector.length;
+      result.truncated := (.message.flags #&& 32) != 0;
+      result.source := decode_socket_address(@address .source, @length .message.name_length);
+      RETURN result;
+    }
+  }
+}

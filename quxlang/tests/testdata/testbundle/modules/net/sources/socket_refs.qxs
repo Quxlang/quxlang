@@ -13,33 +13,42 @@ PRIVATE(MODULE)
   {
     PRIVATE(MODULE)
     {
-      .handle VAR native_socket_ref;
-      DOC <$ The constructor references a socket whose native transport matches kind. $>
+      .handle VAR socket_operation_handle;
+      DOC <$ Returns the socket value consumed by native transport calls. $>
+      .native_socket FUNCTION() CONST: native_socket_ref { RETURN native_socket_value(@source .handle); }
+
+      DOC <$ Imports a newly opened socket whose native transport matches kind. Failure to allocate Windows association state closes the socket. $>
       .CONSTRUCTOR FUNCTION(@handle native_socket_ref)
       {
-        .handle := handle;
+        STATIC_IF(OS_WINDOWS)
+        {
+          TRY { .handle := io::io_descriptor_ref(@native_handle (NULL AS ADDRESS) + (handle AS SZ)); }
+          CATCH DEFAULT { close_native_socket(@handle handle); RETHROW; }
+        }
+        STATIC_ELSE { .handle := handle; }
       }
     }
 
     DOC <$ The constructor creates an invalid socket reference. $>
     .CONSTRUCTOR FUNCTION()
     {
-      .handle := invalid_socket_handle();
+      STATIC_IF(OS_LINUX || OS_MACOS) { .handle := invalid_socket_handle(); }
     }
     DOC <$ The is_valid function reports whether this reference contains a socket. External closure invalidates every copy. $>
     .is_valid FUNCTION() CONST: BOOL
     {
-      RETURN .handle != invalid_socket_handle();
+      STATIC_IF(OS_WINDOWS) { RETURN .handle.is_valid(); }
+      STATIC_ELSE { RETURN .handle != invalid_socket_handle(); }
     }
     DOC <$ The local_endpoint function returns the bound address and port. $>
     .local_endpoint FUNCTION() CONST: endpoint
     {
-      RETURN socket_local_endpoint(@handle .handle);
+      RETURN socket_local_endpoint(@handle .native_socket());
     }
     DOC <$ The bind function binds the socket to a local endpoint. Port zero selects an ephemeral port. $>
     .bind FUNCTION(@endpoint CONST& endpoint) CONST
     {
-      bind_socket(@handle .handle, @endpoint endpoint);
+      bind_socket(@handle .native_socket(), @endpoint endpoint);
     }
     DOC <$ The close function closes the referenced socket once. Every copy becomes invalid for subsequent operations. An invalid reference succeeds without a native call. $>
     .close FUNCTION() CONST: BOOL
@@ -48,191 +57,431 @@ PRIVATE(MODULE)
       {
         RETURN TRUE;
       }
-      RETURN close_native_socket(@handle .handle) == 0;
+      STATIC_IF(OS_WINDOWS)
+      {
+        RETURN .handle.close_windows_handle(@close -< [] (@handle ADDRESS): BOOL =
+          close_native_socket(@handle handle - (NULL AS ADDRESS)) == 0);
+      }
+      STATIC_ELSE { RETURN close_native_socket(@handle .handle) == 0; }
     }
     DOC <$ The listen function starts accepting connections on a bound listener. $>
     .listen INCLUDE_IF(kind == socket_kind::listener) FUNCTION(@backlog I32 DEFAULT(128)) CONST
     {
-      listen_socket(@handle .handle, @backlog backlog);
+      listen_socket(@handle .native_socket(), @backlog backlog);
     }
     DOC <$ The shutdown function disables the selected connection directions. Shutdown does not close the resource. $>
     .shutdown INCLUDE_IF(kind == socket_kind::connection) FUNCTION(@direction shutdown_direction) CONST
     {
-      shutdown_socket(@handle .handle, @direction direction);
+      shutdown_socket(@handle .native_socket(), @direction direction);
     }
 
     DOC <$ The connect function executes one synchronous connect operation. Socket failures throw net::error. $>
     .connect INCLUDE_IF(kind == socket_kind::connection) FUNCTION(@endpoint CONST& endpoint) CONST: VOID
     {
-      VAR operation connect_operation;
-      operation.handle := .handle;
-      operation.endpoint := endpoint;
-      operation();
+      VAR socket native_socket_ref := .native_socket();
+      IF (connect_socket(@handle socket, @endpoint endpoint) == FALSE)
+      {
+        wait_socket(@handle socket, @writing TRUE);
+        STATIC_IF(OS_LINUX || OS_MACOS) { finish_socket_connect(@handle socket); }
+      }
     }
 
     DOC <$ The async_connect function submits one connect operation and returns its future. The socket and referenced buffers outlive completion. The runtime delivers native completion without occupying a file worker. $>
     .async_connect INCLUDE_IF(kind == socket_kind::connection)
-      FUNCTION(@runtime MUT& io::async_runtime, @endpoint CONST& endpoint) CONST: std::future#VOID
+      FUNCTION(@runtime MUT& AUTO(runtime_type), @endpoint CONST& endpoint) CONST ENABLE_IF(SAME_TYPES(runtime_type, io::async_runtime) || (OS_WINDOWS && SAME_TYPES(runtime_type, io::async_runtime2))): std::future#VOID
     {
-      VAR operation connect_operation;
-      operation.handle := .handle;
-      operation.endpoint := endpoint;
+      VAR operation connect_operation :(@socket .handle, @endpoint endpoint);
       RETURN runtime.submit(@operation MOVE(operation));
     }
 
     DOC <$ The connect coroutine suspends the current I/O coroutine until the connect operation completes. Nested calls preserve the selected runtime. $>
     .connect INCLUDE_IF(kind == socket_kind::connection)
-      COROUTINE(@CONTROLLER io::async_controller#AUTO(result_type), @endpoint CONST& endpoint) CONST: VOID
+      COROUTINE(@CONTROLLER AUTO(controller_type), @endpoint CONST& endpoint) CONST ENABLE_IF(TYPE_HAS_MEMBER(controller_type, "submit") && (OS_WINDOWS || TYPE_HAS_MEMBER(controller_type, "io_runtime") == FALSE)): VOID
     {
-      VAR operation connect_operation;
-      operation.handle := .handle;
-      operation.endpoint := endpoint;
-      AWAIT(CONTROLLER.submit(@operation MOVE(operation)));
+      VAR operation connect_operation :(@socket .handle, @endpoint endpoint);
+      VAR completion socket_completion#(@controller_type controller_type, @operation_type DECLTYPE(operation)) :(
+        @controller CONTROLLER, @operation operation);
+      AWAIT(completion.pending);
     }
 
     DOC <$ The accept function executes one synchronous accept operation. Socket failures throw net::error. $>
     .accept INCLUDE_IF(kind == socket_kind::listener) FUNCTION() CONST: tcp_connection
     {
-      VAR operation accept_operation;
-      operation.handle := .handle;
-      RETURN operation();
+      VAR socket native_socket_ref := .native_socket();
+      VAR result tcp_connection;
+      LOOP WHILE(accept_socket(@handle socket, @result result) == FALSE) DO
+      { wait_socket(@handle socket, @writing FALSE); };
+      RETURN MOVE(result);
     }
 
     DOC <$ The async_accept function submits one accept operation and returns its future. The socket and referenced buffers outlive completion. The runtime delivers native completion without occupying a file worker. $>
     .async_accept INCLUDE_IF(kind == socket_kind::listener)
-      FUNCTION(@runtime MUT& io::async_runtime) CONST: std::future#tcp_connection
+      FUNCTION(@runtime MUT& AUTO(runtime_type)) CONST ENABLE_IF(SAME_TYPES(runtime_type, io::async_runtime) || (OS_WINDOWS && SAME_TYPES(runtime_type, io::async_runtime2))): std::future#tcp_connection
     {
-      VAR operation accept_operation;
-      operation.handle := .handle;
+      VAR operation accept_operation :(@socket .handle);
       RETURN runtime.submit(@operation MOVE(operation));
     }
 
     DOC <$ The accept coroutine suspends the current I/O coroutine until the accept operation completes. Nested calls preserve the selected runtime. $>
     .accept INCLUDE_IF(kind == socket_kind::listener)
-      COROUTINE(@CONTROLLER io::async_controller#AUTO(result_type)) CONST: tcp_connection
+      COROUTINE(@CONTROLLER AUTO(controller_type)) CONST ENABLE_IF(TYPE_HAS_MEMBER(controller_type, "submit") && (OS_WINDOWS || TYPE_HAS_MEMBER(controller_type, "io_runtime") == FALSE)): tcp_connection
     {
-      VAR operation accept_operation;
-      operation.handle := .handle;
-      RETURN AWAIT(CONTROLLER.submit(@operation MOVE(operation)));
+      VAR operation accept_operation :(@socket .handle);
+      VAR completion socket_completion#(@controller_type controller_type, @operation_type DECLTYPE(operation)) :(
+        @controller CONTROLLER, @operation operation);
+      RETURN AWAIT(completion.pending);
     }
 
     DOC <$ The read function executes one synchronous read operation. Socket failures throw net::error. $>
     .read INCLUDE_IF(kind == socket_kind::connection) FUNCTION(@buffer CONST& io::buffer_ref) CONST: SZ
     {
-      VAR operation read_operation;
-      operation.handle := .handle;
-      operation.buffer := buffer;
-      RETURN operation();
+      VAR socket native_socket_ref := .native_socket();
+      VAR result SZ;
+      LOOP WHILE(transfer_socket#(@writing FALSE)(@handle socket, @buffer buffer, @result result) == FALSE) DO
+      { wait_socket(@handle socket, @writing FALSE); };
+      RETURN result;
     }
 
     DOC <$ The async_read function submits one read operation and returns its future. The socket and referenced buffers outlive completion. The runtime delivers native completion without occupying a file worker. $>
     .async_read INCLUDE_IF(kind == socket_kind::connection)
-      FUNCTION(@runtime MUT& io::async_runtime, @buffer CONST& io::buffer_ref) CONST: std::future#SZ
+      FUNCTION(@runtime MUT& AUTO(runtime_type), @buffer CONST& io::buffer_ref) CONST ENABLE_IF(SAME_TYPES(runtime_type, io::async_runtime) || (OS_WINDOWS && SAME_TYPES(runtime_type, io::async_runtime2))): std::future#SZ
     {
-      VAR operation read_operation;
-      operation.handle := .handle;
-      operation.buffer := buffer;
+      VAR operation read_operation :(@socket .handle, @buffer buffer);
       RETURN runtime.submit(@operation MOVE(operation));
     }
 
     DOC <$ The read coroutine suspends the current I/O coroutine until the read operation completes. Nested calls preserve the selected runtime. $>
     .read INCLUDE_IF(kind == socket_kind::connection)
-      COROUTINE(@CONTROLLER io::async_controller#AUTO(result_type), @buffer CONST& io::buffer_ref) CONST: SZ
+      COROUTINE(@CONTROLLER AUTO(controller_type), @buffer CONST& io::buffer_ref) CONST ENABLE_IF(TYPE_HAS_MEMBER(controller_type, "submit") && (OS_WINDOWS || TYPE_HAS_MEMBER(controller_type, "io_runtime") == FALSE)): SZ
     {
-      VAR operation read_operation;
-      operation.handle := .handle;
-      operation.buffer := buffer;
-      RETURN AWAIT(CONTROLLER.submit(@operation MOVE(operation)));
+      VAR operation read_operation :(@socket .handle, @buffer buffer);
+      VAR completion socket_completion#(@controller_type controller_type, @operation_type DECLTYPE(operation)) :(
+        @controller CONTROLLER, @operation operation);
+      RETURN AWAIT(completion.pending);
     }
 
     DOC <$ The write function executes one synchronous write operation. Socket failures throw net::error. $>
     .write INCLUDE_IF(kind == socket_kind::connection) FUNCTION(@buffer CONST& io::buffer_ref) CONST: SZ
     {
-      VAR operation write_operation;
-      operation.handle := .handle;
-      operation.buffer := buffer;
-      RETURN operation();
+      VAR socket native_socket_ref := .native_socket();
+      VAR result SZ;
+      LOOP WHILE(transfer_socket#(@writing TRUE)(@handle socket, @buffer buffer, @result result) == FALSE) DO
+      { wait_socket(@handle socket, @writing TRUE); };
+      RETURN result;
     }
 
     DOC <$ The async_write function submits one write operation and returns its future. The socket and referenced buffers outlive completion. The runtime delivers native completion without occupying a file worker. $>
     .async_write INCLUDE_IF(kind == socket_kind::connection)
-      FUNCTION(@runtime MUT& io::async_runtime, @buffer CONST& io::buffer_ref) CONST: std::future#SZ
+      FUNCTION(@runtime MUT& AUTO(runtime_type), @buffer CONST& io::buffer_ref) CONST ENABLE_IF(SAME_TYPES(runtime_type, io::async_runtime) || (OS_WINDOWS && SAME_TYPES(runtime_type, io::async_runtime2))): std::future#SZ
     {
-      VAR operation write_operation;
-      operation.handle := .handle;
-      operation.buffer := buffer;
+      VAR operation write_operation :(@socket .handle, @buffer buffer);
       RETURN runtime.submit(@operation MOVE(operation));
     }
 
     DOC <$ The write coroutine suspends the current I/O coroutine until the write operation completes. Nested calls preserve the selected runtime. $>
     .write INCLUDE_IF(kind == socket_kind::connection)
-      COROUTINE(@CONTROLLER io::async_controller#AUTO(result_type), @buffer CONST& io::buffer_ref) CONST: SZ
+      COROUTINE(@CONTROLLER AUTO(controller_type), @buffer CONST& io::buffer_ref) CONST ENABLE_IF(TYPE_HAS_MEMBER(controller_type, "submit") && (OS_WINDOWS || TYPE_HAS_MEMBER(controller_type, "io_runtime") == FALSE)): SZ
     {
-      VAR operation write_operation;
-      operation.handle := .handle;
-      operation.buffer := buffer;
-      RETURN AWAIT(CONTROLLER.submit(@operation MOVE(operation)));
+      VAR operation write_operation :(@socket .handle, @buffer buffer);
+      VAR completion socket_completion#(@controller_type controller_type, @operation_type DECLTYPE(operation)) :(
+        @controller CONTROLLER, @operation operation);
+      RETURN AWAIT(completion.pending);
     }
 
     DOC <$ The send function executes one synchronous send operation. Socket failures throw net::error. $>
     .send INCLUDE_IF(kind == socket_kind::datagram) FUNCTION(@buffer CONST& io::buffer_ref, @destination CONST& endpoint) CONST: SZ
     {
-      VAR operation send_operation;
-      operation.handle := .handle;
-      operation.buffer := buffer;
-      operation.destination := destination;
-      RETURN operation();
+      VAR socket native_socket_ref := .native_socket();
+      VAR result SZ;
+      LOOP WHILE(send_datagram(@handle socket, @buffer buffer, @destination destination, @result result) == FALSE) DO
+      { wait_socket(@handle socket, @writing TRUE); };
+      RETURN result;
     }
 
     DOC <$ The async_send function submits one send operation and returns its future. The socket and referenced buffers outlive completion. The runtime delivers native completion without occupying a file worker. $>
     .async_send INCLUDE_IF(kind == socket_kind::datagram)
-      FUNCTION(@runtime MUT& io::async_runtime, @buffer CONST& io::buffer_ref, @destination CONST& endpoint) CONST: std::future#SZ
+      FUNCTION(@runtime MUT& AUTO(runtime_type), @buffer CONST& io::buffer_ref, @destination CONST& endpoint) CONST ENABLE_IF(SAME_TYPES(runtime_type, io::async_runtime) || (OS_WINDOWS && SAME_TYPES(runtime_type, io::async_runtime2))): std::future#SZ
     {
-      VAR operation send_operation;
-      operation.handle := .handle;
-      operation.buffer := buffer;
-      operation.destination := destination;
+      VAR operation send_operation :(@socket .handle, @buffer buffer, @destination destination);
       RETURN runtime.submit(@operation MOVE(operation));
     }
 
     DOC <$ The send coroutine suspends the current I/O coroutine until the send operation completes. Nested calls preserve the selected runtime. $>
     .send INCLUDE_IF(kind == socket_kind::datagram)
-      COROUTINE(@CONTROLLER io::async_controller#AUTO(result_type), @buffer CONST& io::buffer_ref, @destination CONST& endpoint) CONST: SZ
+      COROUTINE(@CONTROLLER AUTO(controller_type), @buffer CONST& io::buffer_ref, @destination CONST& endpoint) CONST ENABLE_IF(TYPE_HAS_MEMBER(controller_type, "submit") && (OS_WINDOWS || TYPE_HAS_MEMBER(controller_type, "io_runtime") == FALSE)): SZ
     {
-      VAR operation send_operation;
-      operation.handle := .handle;
-      operation.buffer := buffer;
-      operation.destination := destination;
-      RETURN AWAIT(CONTROLLER.submit(@operation MOVE(operation)));
+      VAR operation send_operation :(@socket .handle, @buffer buffer, @destination destination);
+      VAR completion socket_completion#(@controller_type controller_type, @operation_type DECLTYPE(operation)) :(
+        @controller CONTROLLER, @operation operation);
+      RETURN AWAIT(completion.pending);
     }
 
     DOC <$ The receive function executes one synchronous receive operation. Socket failures throw net::error. $>
     .receive INCLUDE_IF(kind == socket_kind::datagram) FUNCTION(@buffer CONST& io::buffer_ref) CONST: datagram_result
     {
-      VAR operation receive_operation;
-      operation.handle := .handle;
-      operation.buffer := buffer;
-      RETURN operation();
+      VAR socket native_socket_ref := .native_socket();
+      VAR result datagram_result;
+      LOOP WHILE(receive_datagram(@handle socket, @buffer buffer, @result result) == FALSE) DO
+      { wait_socket(@handle socket, @writing FALSE); };
+      RETURN result;
     }
 
     DOC <$ The async_receive function submits one receive operation and returns its future. The socket and referenced buffers outlive completion. The runtime delivers native completion without occupying a file worker. $>
     .async_receive INCLUDE_IF(kind == socket_kind::datagram)
-      FUNCTION(@runtime MUT& io::async_runtime, @buffer CONST& io::buffer_ref) CONST: std::future#datagram_result
+      FUNCTION(@runtime MUT& AUTO(runtime_type), @buffer CONST& io::buffer_ref) CONST ENABLE_IF(SAME_TYPES(runtime_type, io::async_runtime) || (OS_WINDOWS && SAME_TYPES(runtime_type, io::async_runtime2))): std::future#datagram_result
     {
-      VAR operation receive_operation;
-      operation.handle := .handle;
-      operation.buffer := buffer;
+      VAR operation receive_operation :(@socket .handle, @buffer buffer);
       RETURN runtime.submit(@operation MOVE(operation));
     }
 
     DOC <$ The receive coroutine suspends the current I/O coroutine until the receive operation completes. Nested calls preserve the selected runtime. $>
     .receive INCLUDE_IF(kind == socket_kind::datagram)
-      COROUTINE(@CONTROLLER io::async_controller#AUTO(result_type), @buffer CONST& io::buffer_ref) CONST: datagram_result
+      COROUTINE(@CONTROLLER AUTO(controller_type), @buffer CONST& io::buffer_ref) CONST ENABLE_IF(TYPE_HAS_MEMBER(controller_type, "submit") && (OS_WINDOWS || TYPE_HAS_MEMBER(controller_type, "io_runtime") == FALSE)): datagram_result
     {
-      VAR operation receive_operation;
-      operation.handle := .handle;
-      operation.buffer := buffer;
-      RETURN AWAIT(CONTROLLER.submit(@operation MOVE(operation)));
+      VAR operation receive_operation :(@socket .handle, @buffer buffer);
+      VAR completion socket_completion#(@controller_type controller_type, @operation_type DECLTYPE(operation)) :(
+        @controller CONTROLLER, @operation operation);
+      RETURN AWAIT(completion.pending);
+    }
+
+    DOC <$ The async_connect function starts one connect operation on the runtime and returns its future. The socket and referenced buffers outlive completion. $>
+    .async_connect INCLUDE_IF(kind == socket_kind::connection && OS_MACOS)
+      FUNCTION(@runtime MUT& io::async_runtime2, @endpoint CONST& endpoint) CONST: std::future#VOID
+    {
+      RETURN io::submit_operation#kqueue_socket_connect(@runtime runtime, @socket .handle, @endpoint endpoint);
+    }
+
+    DOC <$ The async_connect function starts one connect operation on the runtime and returns its future. The operation type matches the mechanism that the runtime selected for the running kernel. The socket and referenced buffers outlive completion. $>
+    .async_connect INCLUDE_IF(kind == socket_kind::connection && OS_LINUX)
+      FUNCTION(@runtime MUT& io::async_runtime2, @endpoint CONST& endpoint) CONST: std::future#VOID
+    {
+      IF (runtime.uses_io_uring())
+      { RETURN io::submit_operation#io_uring_socket_connect(@runtime runtime, @socket .handle, @endpoint endpoint); }
+      RETURN io::submit_operation#epoll_socket_connect(@runtime runtime, @socket .handle, @endpoint endpoint);
+    }
+
+    DOC <$ The connect coroutine awaits one connect operation in its own frame on the async_runtime2 of the calling coroutine. $>
+    .connect INCLUDE_IF(kind == socket_kind::connection && OS_MACOS)
+      COROUTINE(@CONTROLLER io::async_controller2#AUTO(result_type), @endpoint CONST& endpoint) CONST: VOID
+    {
+      VAR operation kqueue_socket_connect :(@runtime CONTROLLER.io_runtime(), @socket .handle, @endpoint endpoint);
+      AWAIT(operation);
+    }
+
+    DOC <$ The connect coroutine awaits one connect operation in its own frame on the async_runtime2 of the calling coroutine. The operation type matches the mechanism that the runtime selected for the running kernel. $>
+    .connect INCLUDE_IF(kind == socket_kind::connection && OS_LINUX)
+      COROUTINE(@CONTROLLER io::async_controller2#AUTO(result_type), @endpoint CONST& endpoint) CONST: VOID
+    {
+      IF (CONTROLLER.io_runtime().uses_io_uring())
+      {
+        VAR ring_operation io_uring_socket_connect :(@runtime CONTROLLER.io_runtime(), @socket .handle, @endpoint endpoint);
+        AWAIT(ring_operation);
+      }
+      ELSE
+      {
+        VAR ready_operation epoll_socket_connect :(@runtime CONTROLLER.io_runtime(), @socket .handle, @endpoint endpoint);
+        AWAIT(ready_operation);
+      }
+    }
+
+    DOC <$ The async_accept function starts one accept operation on the runtime and returns its future. The socket and referenced buffers outlive completion. $>
+    .async_accept INCLUDE_IF(kind == socket_kind::listener && OS_MACOS)
+      FUNCTION(@runtime MUT& io::async_runtime2) CONST: std::future#tcp_connection
+    {
+      RETURN io::submit_operation#kqueue_socket_accept(@runtime runtime, @socket .handle);
+    }
+
+    DOC <$ The async_accept function starts one accept operation on the runtime and returns its future. The operation type matches the mechanism that the runtime selected for the running kernel. The socket and referenced buffers outlive completion. $>
+    .async_accept INCLUDE_IF(kind == socket_kind::listener && OS_LINUX)
+      FUNCTION(@runtime MUT& io::async_runtime2) CONST: std::future#tcp_connection
+    {
+      IF (runtime.uses_io_uring())
+      { RETURN io::submit_operation#io_uring_socket_accept(@runtime runtime, @socket .handle); }
+      RETURN io::submit_operation#epoll_socket_accept(@runtime runtime, @socket .handle);
+    }
+
+    DOC <$ The accept coroutine awaits one accept operation in its own frame on the async_runtime2 of the calling coroutine. $>
+    .accept INCLUDE_IF(kind == socket_kind::listener && OS_MACOS)
+      COROUTINE(@CONTROLLER io::async_controller2#AUTO(result_type)) CONST: tcp_connection
+    {
+      VAR operation kqueue_socket_accept :(@runtime CONTROLLER.io_runtime(), @socket .handle);
+      RETURN AWAIT(operation);
+    }
+
+    DOC <$ The accept coroutine awaits one accept operation in its own frame on the async_runtime2 of the calling coroutine. The operation type matches the mechanism that the runtime selected for the running kernel. $>
+    .accept INCLUDE_IF(kind == socket_kind::listener && OS_LINUX)
+      COROUTINE(@CONTROLLER io::async_controller2#AUTO(result_type)) CONST: tcp_connection
+    {
+      IF (CONTROLLER.io_runtime().uses_io_uring())
+      {
+        VAR ring_operation io_uring_socket_accept :(@runtime CONTROLLER.io_runtime(), @socket .handle);
+        RETURN AWAIT(ring_operation);
+      }
+      ELSE
+      {
+        VAR ready_operation epoll_socket_accept :(@runtime CONTROLLER.io_runtime(), @socket .handle);
+        RETURN AWAIT(ready_operation);
+      }
+    }
+
+    DOC <$ The async_read function starts one read operation on the runtime and returns its future. The socket and referenced buffers outlive completion. $>
+    .async_read INCLUDE_IF(kind == socket_kind::connection && OS_MACOS)
+      FUNCTION(@runtime MUT& io::async_runtime2, @buffer CONST& io::buffer_ref) CONST: std::future#SZ
+    {
+      RETURN io::submit_operation#kqueue_socket_read(@runtime runtime, @socket .handle, @buffer buffer);
+    }
+
+    DOC <$ The async_read function starts one read operation on the runtime and returns its future. The operation type matches the mechanism that the runtime selected for the running kernel. The socket and referenced buffers outlive completion. $>
+    .async_read INCLUDE_IF(kind == socket_kind::connection && OS_LINUX)
+      FUNCTION(@runtime MUT& io::async_runtime2, @buffer CONST& io::buffer_ref) CONST: std::future#SZ
+    {
+      IF (runtime.uses_io_uring())
+      { RETURN io::submit_operation#io_uring_socket_read(@runtime runtime, @socket .handle, @buffer buffer); }
+      RETURN io::submit_operation#epoll_socket_read(@runtime runtime, @socket .handle, @buffer buffer);
+    }
+
+    DOC <$ The read coroutine awaits one read operation in its own frame on the async_runtime2 of the calling coroutine. $>
+    .read INCLUDE_IF(kind == socket_kind::connection && OS_MACOS)
+      COROUTINE(@CONTROLLER io::async_controller2#AUTO(result_type), @buffer CONST& io::buffer_ref) CONST: SZ
+    {
+      VAR operation kqueue_socket_read :(@runtime CONTROLLER.io_runtime(), @socket .handle, @buffer buffer);
+      RETURN AWAIT(operation);
+    }
+
+    DOC <$ The read coroutine awaits one read operation in its own frame on the async_runtime2 of the calling coroutine. The operation type matches the mechanism that the runtime selected for the running kernel. $>
+    .read INCLUDE_IF(kind == socket_kind::connection && OS_LINUX)
+      COROUTINE(@CONTROLLER io::async_controller2#AUTO(result_type), @buffer CONST& io::buffer_ref) CONST: SZ
+    {
+      IF (CONTROLLER.io_runtime().uses_io_uring())
+      {
+        VAR ring_operation io_uring_socket_read :(@runtime CONTROLLER.io_runtime(), @socket .handle, @buffer buffer);
+        RETURN AWAIT(ring_operation);
+      }
+      ELSE
+      {
+        VAR ready_operation epoll_socket_read :(@runtime CONTROLLER.io_runtime(), @socket .handle, @buffer buffer);
+        RETURN AWAIT(ready_operation);
+      }
+    }
+
+    DOC <$ The async_write function starts one write operation on the runtime and returns its future. The socket and referenced buffers outlive completion. $>
+    .async_write INCLUDE_IF(kind == socket_kind::connection && OS_MACOS)
+      FUNCTION(@runtime MUT& io::async_runtime2, @buffer CONST& io::buffer_ref) CONST: std::future#SZ
+    {
+      RETURN io::submit_operation#kqueue_socket_write(@runtime runtime, @socket .handle, @buffer buffer);
+    }
+
+    DOC <$ The async_write function starts one write operation on the runtime and returns its future. The operation type matches the mechanism that the runtime selected for the running kernel. The socket and referenced buffers outlive completion. $>
+    .async_write INCLUDE_IF(kind == socket_kind::connection && OS_LINUX)
+      FUNCTION(@runtime MUT& io::async_runtime2, @buffer CONST& io::buffer_ref) CONST: std::future#SZ
+    {
+      IF (runtime.uses_io_uring())
+      { RETURN io::submit_operation#io_uring_socket_write(@runtime runtime, @socket .handle, @buffer buffer); }
+      RETURN io::submit_operation#epoll_socket_write(@runtime runtime, @socket .handle, @buffer buffer);
+    }
+
+    DOC <$ The write coroutine awaits one write operation in its own frame on the async_runtime2 of the calling coroutine. $>
+    .write INCLUDE_IF(kind == socket_kind::connection && OS_MACOS)
+      COROUTINE(@CONTROLLER io::async_controller2#AUTO(result_type), @buffer CONST& io::buffer_ref) CONST: SZ
+    {
+      VAR operation kqueue_socket_write :(@runtime CONTROLLER.io_runtime(), @socket .handle, @buffer buffer);
+      RETURN AWAIT(operation);
+    }
+
+    DOC <$ The write coroutine awaits one write operation in its own frame on the async_runtime2 of the calling coroutine. The operation type matches the mechanism that the runtime selected for the running kernel. $>
+    .write INCLUDE_IF(kind == socket_kind::connection && OS_LINUX)
+      COROUTINE(@CONTROLLER io::async_controller2#AUTO(result_type), @buffer CONST& io::buffer_ref) CONST: SZ
+    {
+      IF (CONTROLLER.io_runtime().uses_io_uring())
+      {
+        VAR ring_operation io_uring_socket_write :(@runtime CONTROLLER.io_runtime(), @socket .handle, @buffer buffer);
+        RETURN AWAIT(ring_operation);
+      }
+      ELSE
+      {
+        VAR ready_operation epoll_socket_write :(@runtime CONTROLLER.io_runtime(), @socket .handle, @buffer buffer);
+        RETURN AWAIT(ready_operation);
+      }
+    }
+
+    DOC <$ The async_send function starts one send operation on the runtime and returns its future. The socket and referenced buffers outlive completion. $>
+    .async_send INCLUDE_IF(kind == socket_kind::datagram && OS_MACOS)
+      FUNCTION(@runtime MUT& io::async_runtime2, @buffer CONST& io::buffer_ref, @destination CONST& endpoint) CONST: std::future#SZ
+    {
+      RETURN io::submit_operation#kqueue_socket_send(@runtime runtime, @socket .handle, @buffer buffer, @destination destination);
+    }
+
+    DOC <$ The async_send function starts one send operation on the runtime and returns its future. The operation type matches the mechanism that the runtime selected for the running kernel. The socket and referenced buffers outlive completion. $>
+    .async_send INCLUDE_IF(kind == socket_kind::datagram && OS_LINUX)
+      FUNCTION(@runtime MUT& io::async_runtime2, @buffer CONST& io::buffer_ref, @destination CONST& endpoint) CONST: std::future#SZ
+    {
+      IF (runtime.uses_io_uring())
+      { RETURN io::submit_operation#io_uring_socket_send(@runtime runtime, @socket .handle, @buffer buffer, @destination destination); }
+      RETURN io::submit_operation#epoll_socket_send(@runtime runtime, @socket .handle, @buffer buffer, @destination destination);
+    }
+
+    DOC <$ The send coroutine awaits one send operation in its own frame on the async_runtime2 of the calling coroutine. $>
+    .send INCLUDE_IF(kind == socket_kind::datagram && OS_MACOS)
+      COROUTINE(@CONTROLLER io::async_controller2#AUTO(result_type), @buffer CONST& io::buffer_ref, @destination CONST& endpoint) CONST: SZ
+    {
+      VAR operation kqueue_socket_send :(@runtime CONTROLLER.io_runtime(), @socket .handle, @buffer buffer, @destination destination);
+      RETURN AWAIT(operation);
+    }
+
+    DOC <$ The send coroutine awaits one send operation in its own frame on the async_runtime2 of the calling coroutine. The operation type matches the mechanism that the runtime selected for the running kernel. $>
+    .send INCLUDE_IF(kind == socket_kind::datagram && OS_LINUX)
+      COROUTINE(@CONTROLLER io::async_controller2#AUTO(result_type), @buffer CONST& io::buffer_ref, @destination CONST& endpoint) CONST: SZ
+    {
+      IF (CONTROLLER.io_runtime().uses_io_uring())
+      {
+        VAR ring_operation io_uring_socket_send :(@runtime CONTROLLER.io_runtime(), @socket .handle, @buffer buffer, @destination destination);
+        RETURN AWAIT(ring_operation);
+      }
+      ELSE
+      {
+        VAR ready_operation epoll_socket_send :(@runtime CONTROLLER.io_runtime(), @socket .handle, @buffer buffer, @destination destination);
+        RETURN AWAIT(ready_operation);
+      }
+    }
+
+    DOC <$ The async_receive function starts one receive operation on the runtime and returns its future. The socket and referenced buffers outlive completion. $>
+    .async_receive INCLUDE_IF(kind == socket_kind::datagram && OS_MACOS)
+      FUNCTION(@runtime MUT& io::async_runtime2, @buffer CONST& io::buffer_ref) CONST: std::future#datagram_result
+    {
+      RETURN io::submit_operation#kqueue_socket_receive(@runtime runtime, @socket .handle, @buffer buffer);
+    }
+
+    DOC <$ The async_receive function starts one receive operation on the runtime and returns its future. The operation type matches the mechanism that the runtime selected for the running kernel. The socket and referenced buffers outlive completion. $>
+    .async_receive INCLUDE_IF(kind == socket_kind::datagram && OS_LINUX)
+      FUNCTION(@runtime MUT& io::async_runtime2, @buffer CONST& io::buffer_ref) CONST: std::future#datagram_result
+    {
+      IF (runtime.uses_io_uring())
+      { RETURN io::submit_operation#io_uring_socket_receive(@runtime runtime, @socket .handle, @buffer buffer); }
+      RETURN io::submit_operation#epoll_socket_receive(@runtime runtime, @socket .handle, @buffer buffer);
+    }
+
+    DOC <$ The receive coroutine awaits one receive operation in its own frame on the async_runtime2 of the calling coroutine. $>
+    .receive INCLUDE_IF(kind == socket_kind::datagram && OS_MACOS)
+      COROUTINE(@CONTROLLER io::async_controller2#AUTO(result_type), @buffer CONST& io::buffer_ref) CONST: datagram_result
+    {
+      VAR operation kqueue_socket_receive :(@runtime CONTROLLER.io_runtime(), @socket .handle, @buffer buffer);
+      RETURN AWAIT(operation);
+    }
+
+    DOC <$ The receive coroutine awaits one receive operation in its own frame on the async_runtime2 of the calling coroutine. The operation type matches the mechanism that the runtime selected for the running kernel. $>
+    .receive INCLUDE_IF(kind == socket_kind::datagram && OS_LINUX)
+      COROUTINE(@CONTROLLER io::async_controller2#AUTO(result_type), @buffer CONST& io::buffer_ref) CONST: datagram_result
+    {
+      IF (CONTROLLER.io_runtime().uses_io_uring())
+      {
+        VAR ring_operation io_uring_socket_receive :(@runtime CONTROLLER.io_runtime(), @socket .handle, @buffer buffer);
+        RETURN AWAIT(ring_operation);
+      }
+      ELSE
+      {
+        VAR ready_operation epoll_socket_receive :(@runtime CONTROLLER.io_runtime(), @socket .handle, @buffer buffer);
+        RETURN AWAIT(ready_operation);
+      }
     }
   }
 }

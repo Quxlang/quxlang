@@ -1,0 +1,351 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT syscall;
+
+PRIVATE(MODULE)
+{
+  DOC <$ Holds the completion records that one consumer releases before invoking their callbacks. $>
+  ::uring_completion_batch INCLUDE_IF(OS_LINUX) ALIAS [16]syscall::linux::io_uring_completion_entry;
+
+  DOC <$ Maps one shared ring region and reports native mapping failures. The 32-bit mmap2 ABI receives page offsets. $>
+  ::map_uring_region INCLUDE_IF(OS_LINUX) FUNCTION(@descriptor I32, @size SZ, @offset SZ): ADDRESS
+  {
+    STATIC_IF(SIZEOF(UINTPTR) == 4) { offset := offset / 4096; }
+    VAR address ADDRESS := syscall::linux::mmap(@addr NULL, @len size,
+      @prot syscall::linux::prot_flags::read #|| syscall::linux::prot_flags::write,
+      @flags syscall::linux::mmap_flags::shared, @fd descriptor, @off offset);
+    VAR first_error ADDRESS := (NULL AS ADDRESS) - (4095 AS SZ);
+    IF (address >= first_error) { THROW io_uring_error::initialization_failed; }
+    RETURN address;
+  }
+
+  DOC <$ Resolves a typed ABI field at a kernel-provided offset in the shared ring mapping. $>
+  ::uring_field INCLUDE_IF(OS_LINUX) TEMPLATE(@T TYPE AUTO)
+    FUNCTION(@ring ADDRESS, @offset U32): T
+  {
+    RETURN IBC_PUN#T(@ADDR ring + (offset AS SZ));
+  }
+
+  DOC <$ Stores the raw Linux EINTR result for interrupted system calls. $>
+  ::uring_interrupted_result STATIC I32 := -4;
+  DOC <$ Stores the raw Linux ETIME result for expired completion waits. $>
+  ::uring_timeout_result STATIC I32 := -62;
+  DOC <$ Selects direct submission queue indexing on kernels that support IORING_SETUP_NO_SQARRAY. $>
+  ::uring_no_submission_array STATIC U32 := 65536;
+
+  DOC <$ Owns the native Linux submission and completion queues. Each client selects its completion identity and dispatch policy. $>
+  ::linux_uring_ring INCLUDE_IF(OS_LINUX) STRUCT ROOTED
+  {
+    PRIVATE(MODULE)
+    {
+      .descriptor VAR I32;
+      .ring VAR ADDRESS;
+      .ring_size VAR SZ;
+      .submission_entries VAR IBC MUT=>>syscall::linux::io_uring_submission_entry;
+      .submission_head VAR IBC MUT->ATOMIC#U32;
+      .submission_tail VAR IBC MUT->ATOMIC#U32;
+      .submission_flags VAR IBC MUT->ATOMIC#U32;
+      .submission_mask VAR U32;
+      .completion_head VAR IBC MUT->ATOMIC#U32;
+      .completion_tail VAR IBC MUT->ATOMIC#U32;
+      .completion_mask VAR U32;
+      .completion_entries VAR IBC MUT=>>syscall::linux::io_uring_completion_entry;
+
+      DOC <$ Releases both mappings and the descriptor after construction failure or quiescent destruction. Every acquired resource is released once. $>
+      .release FUNCTION() MUT
+      {
+        VAR failed BOOL;
+        IF (.submission_entries??)
+        {
+          failed := syscall::linux::munmap(@addr IBC_GETADDR(@PTR .submission_entries),
+            @len ((.submission_mask + 1) AS SZ) * SIZEOF(io_uring_submission_entry)) != 0;
+        }
+        IF (.ring != NULL)
+        {
+          IF (syscall::linux::munmap(@addr .ring, @len .ring_size) != 0) { failed := TRUE; }
+        }
+        IF (.descriptor >= 0)
+        {
+          IF (syscall::linux::close(@fd .descriptor) != 0) { failed := TRUE; }
+        }
+        IF (failed) { THROW io_uring_error::resource_release_failed; }
+      }
+    }
+
+    DOC <$ Creates a ring with named queue capacities. Single-issuer mode binds submission to the creating thread. Setup requires a shared submission/completion mapping and kernel completion-overflow retention. $>
+    .CONSTRUCTOR FUNCTION(@submission_entries U32 DEFAULT(256), @completion_entries U32 DEFAULT(512), @single_issuer BOOL DEFAULT(TRUE))
+    {
+      .descriptor := -1;
+      VAR initialized BOOL;
+      DEFER { IF (initialized == FALSE) { .release(); } }
+      VAR parameters syscall::linux::io_uring_parameters;
+      VAR flags U32 := 8; // IORING_SETUP_CQSIZE
+      IF (single_issuer) { flags := flags #|| 4096; }
+      parameters.flags := flags #|| uring_no_submission_array;
+      parameters.completion_entries := completion_entries;
+      .descriptor := syscall::linux::io_uring_setup(@entries submission_entries, @parameters parameters<-);
+      IF (.descriptor == -22) // Older kernels reject unknown setup flags with EINVAL.
+      {
+        parameters := syscall::linux::io_uring_parameters();
+        parameters.flags := flags;
+        parameters.completion_entries := completion_entries;
+        .descriptor := syscall::linux::io_uring_setup(@entries submission_entries, @parameters parameters<-);
+      }
+      IF (.descriptor < 0) { THROW io_uring_error::initialization_failed; }
+      // IORING_FEAT_SINGLE_MMAP and IORING_FEAT_NODROP define the required ring layout and retention contract.
+      IF ((parameters.features #&& 3) != 3) { THROW io_uring_error::initialization_failed; }
+
+      .ring_size := (parameters.completion_offsets.completions AS SZ)
+        + (parameters.completion_entries AS SZ) * SIZEOF(syscall::linux::io_uring_completion_entry);
+      IF ((parameters.flags #&& uring_no_submission_array) == 0)
+      {
+        VAR array_end SZ := (parameters.submission_offsets.array AS SZ) + (parameters.submission_entries AS SZ) * SIZEOF(U32);
+        IF (.ring_size < array_end) { .ring_size := array_end; }
+      }
+      .submission_mask := parameters.submission_entries - 1;
+      .ring := map_uring_region(@descriptor .descriptor, @size .ring_size, @offset 0);
+      .submission_entries := IBC_PUN#(IBC MUT=>>syscall::linux::io_uring_submission_entry)(
+        @ADDR map_uring_region(@descriptor .descriptor,
+          @size (parameters.submission_entries AS SZ) * SIZEOF(io_uring_submission_entry), @offset 268435456));
+
+      .submission_head := uring_field#(IBC MUT->ATOMIC#U32)(@ring .ring, @offset parameters.submission_offsets.head);
+      .submission_tail := uring_field#(IBC MUT->ATOMIC#U32)(@ring .ring, @offset parameters.submission_offsets.tail);
+      .submission_flags := uring_field#(IBC MUT->ATOMIC#U32)(@ring .ring, @offset parameters.submission_offsets.flags);
+      IF ((parameters.flags #&& uring_no_submission_array) == 0)
+      {
+        VAR submission_array IBC MUT=>>U32 := uring_field#(IBC MUT=>>U32)(@ring .ring, @offset parameters.submission_offsets.array);
+        LOOP VALUE(index) FROM(0 AS U32) UNTIL(parameters.submission_entries) DO
+        { submission_array[index AS SZ] := index; };
+      }
+      .completion_head := uring_field#(IBC MUT->ATOMIC#U32)(@ring .ring, @offset parameters.completion_offsets.head);
+      .completion_tail := uring_field#(IBC MUT->ATOMIC#U32)(@ring .ring, @offset parameters.completion_offsets.tail);
+      .completion_mask := parameters.completion_entries - 1;
+      .completion_entries := uring_field#(IBC MUT=>>syscall::linux::io_uring_completion_entry)(
+        @ring .ring, @offset parameters.completion_offsets.completions);
+      initialized := TRUE;
+    }
+
+    .DESTRUCTOR FUNCTION() { .release(); }
+
+    DOC <$ Returns the number of submission slots available to the serialized producer. $>
+    .submission_space FUNCTION(@tail U32) CONST: U32
+    {
+      VAR head U32 := .submission_head->.LOAD#ATOMIC_ACQUIRE();
+      RETURN (.submission_mask + 1) - (tail - head);
+    }
+
+    DOC <$ Checks completion delivery and reserves the current tail for the serialized producer. $>
+    .submission_slot FUNCTION(@flags U8) CONST: U32
+    {
+      IF ((flags #&& 64) != 0) { THROW io_uring_error::invalid_submission; }
+      VAR tail U32 := .submission_tail->.LOAD#ATOMIC_RELAXED();
+      IF (.submission_space(@tail tail) == 0) { THROW io_uring_error::queue_full; }
+      RETURN tail;
+    }
+
+    DOC <$ Borrows a kernel submission slot for its serialized producer. $>
+    .submission_entry FUNCTION(@tail U32) MUT: IBC MUT& io_uring_submission_entry
+    { RETURN .submission_entries[(tail #&& .submission_mask) AS SZ]; }
+
+    DOC <$ Copies an arbitrary prepared entry into its mapped slot and assigns the ring's completion identity. $>
+    .stage FUNCTION(@entry CONST& io_uring_submission_entry, @identity ADDRESS, @tail U32) MUT
+    {
+      VAR destination IBC MUT& io_uring_submission_entry := .submission_entry(@tail tail);
+      destination := entry;
+      destination.user_data.value := identity;
+      STATIC_IF(BITS(SZ) == 32) { destination.user_data.padding := 0; }
+    }
+
+    DOC <$ Publishes a prepared entry for a later flush by the serialized producer. $>
+    .publish FUNCTION(@entry CONST& io_uring_submission_entry, @identity ADDRESS, @tail U32) MUT
+    {
+      .stage(@entry entry, @identity identity, @tail tail);
+      .submission_tail->.STORE#ATOMIC_RELEASE(tail + 1);
+    }
+
+    DOC <$ Submits pending entries through a fixed producer tail. A full submission returns directly. Interrupted or partial submissions retry the unconsumed suffix. $>
+    .enter_submissions FUNCTION(@tail U32, @remaining U32) MUT
+    {
+      LOOP WHILE (remaining != 0) DO
+      {
+        VAR result I32 := syscall::linux::io_uring_enter(@descriptor .descriptor,
+          @submission_count remaining, @minimum_completion_count 0, @flags 0,
+          @signal_mask NULL, @signal_mask_size 0);
+        IF (result == (remaining AS ASSUME I32)) { RETURN; }
+        IF (result != uring_interrupted_result && result <= 0) { THROW io_uring_error::submission_failed; }
+        remaining := tail - .submission_head->.LOAD#ATOMIC_ACQUIRE();
+      };
+    }
+
+    DOC <$ Publishes and submits the producer's staged entries on an otherwise empty submission queue. On failure, the producer withdraws the unconsumed suffix and reports the accepted prefix. $>
+    .submit_staged FUNCTION(@tail U32, @count U32) MUT: SZ
+    {
+      VAR end U32 := tail + count;
+      .submission_tail->.STORE#ATOMIC_RELEASE(end);
+      TRY { .enter_submissions(@tail end, @remaining count); }
+      CATCH DEFAULT
+      {
+        // With synchronous SQ submission only this producer can advance the head.
+        VAR head U32 := .submission_head->.LOAD#ATOMIC_ACQUIRE();
+        VAR unconsumed U32 := end - head;
+        IF (unconsumed >= count)
+        {
+          .submission_tail->.STORE#ATOMIC_RELEASE(tail);
+          RETHROW;
+        }
+        .submission_tail->.STORE#ATOMIC_RELEASE(head);
+        RETURN (count - unconsumed) AS SZ;
+      }
+      RETURN count AS SZ;
+    }
+
+    DOC <$ Submits one external entry on an otherwise empty submission queue. The direct producer always flushes or withdraws its staged slots before releasing the queue. $>
+    .submit FUNCTION(@entry CONST& io_uring_submission_entry, @identity ADDRESS) MUT
+    {
+      IF ((entry.flags #&& 64) != 0) { THROW io_uring_error::invalid_submission; }
+      VAR tail U32 := .submission_tail->.LOAD#ATOMIC_RELAXED();
+      .stage(@entry entry, @identity identity, @tail tail);
+      .submit_staged(@tail tail, @count 1);
+    }
+
+    DOC <$ Encodes a prefix directly in the slots of an otherwise empty submission queue, publishes its tail once, and submits the batch. $>
+    .submit_batch FUNCTION(@count SZ, @prepare AUTO& AUTO) MUT: SZ
+    {
+      IF (count == 0) { RETURN 0; }
+      VAR tail U32 := .submission_tail->.LOAD#ATOMIC_RELAXED();
+      VAR queued U32 := .submission_mask + 1;
+      IF (count < (queued AS SZ)) { queued := count AS CHECKED U32; }
+      LOOP VALUE(index) FROM(0 AS U32) UNTIL(queued) DO
+      {
+        prepare(@index index AS SZ, @entry .submission_entry(@tail tail + index));
+      };
+      RETURN .submit_staged(@tail tail, @count queued);
+    }
+
+    DOC <$ Submits all currently queued entries. A failure preserves unconsumed entries for a later retry. $>
+    .flush FUNCTION() MUT
+    {
+      VAR tail U32 := .submission_tail->.LOAD#ATOMIC_RELAXED();
+      .enter_submissions(@tail tail, @remaining tail - .submission_head->.LOAD#ATOMIC_ACQUIRE());
+    }
+
+    DOC <$ Returns an advisory snapshot of published completion availability. The result does not consume records or execute callbacks. $>
+    .has_completions FUNCTION() CONST: BOOL
+    {
+      RETURN .completion_head->.LOAD#ATOMIC_ACQUIRE() != .completion_tail->.LOAD#ATOMIC_ACQUIRE()
+        || (.submission_flags->.LOAD#ATOMIC_ACQUIRE() #&& 2) != 0;
+    }
+
+    DOC <$ Reads the completion count at a consumer head, waiting or retrieving kernel-retained overflow when necessary. $>
+    .completion_count FUNCTION(@head U32, @maximum SZ, @block BOOL) MUT: SZ
+    {
+      IF (maximum == 0) { RETURN 0; }
+      VAR tail U32 := .completion_tail->.LOAD#ATOMIC_ACQUIRE();
+      IF (head == tail)
+      {
+        VAR minimum U32;
+        IF (block) { minimum := 1; }
+        // Nonblocking dispatch enters only to retrieve kernel-retained overflow records.
+        ELSE IF ((.submission_flags->.LOAD#ATOMIC_ACQUIRE() #&& 2) == 0) { RETURN 0; }
+        .wait(@minimum minimum, @timeout_nanoseconds -1);
+        tail := .completion_tail->.LOAD#ATOMIC_ACQUIRE();
+      }
+      VAR count SZ := (tail - head) AS SZ;
+      IF (count > maximum) { count := maximum; }
+      RETURN count;
+    }
+
+    DOC <$ Releases each slot before calling a potentially throwing standalone operation. A thrown callback leaves the following records in the queue. $>
+    .dispatch_batch FUNCTION(@maximum SZ, @notify AUTO& AUTO) MUT: SZ
+    {
+      VAR head U32 := .completion_head->.LOAD#ATOMIC_RELAXED();
+      VAR count SZ := .completion_count(@head head, @maximum maximum, @block FALSE);
+      VAR dispatched SZ;
+      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(count) DO
+      {
+        VAR entry syscall::linux::io_uring_completion_entry := .completion_entries[(head #&& .completion_mask) AS SZ];
+        head := head + 1;
+        .completion_head->.STORE#ATOMIC_RELEASE(head);
+        VAR completion io_uring_completion_result;
+        completion.result := entry.result;
+        completion.flags := entry.flags;
+        completion.is_final := (entry.flags #&& 2) == 0;
+        IF (notify(@identity entry.user_data.value, @completion completion)) { dispatched++; }
+      };
+      RETURN dispatched;
+    }
+
+    DOC <$ Copies single-shot completions before releasing their slots as a group. Nonthrowing runtime callbacks may immediately refill the freed capacity. $>
+    .dispatch_single_shot FUNCTION(@snapshot MUT& uring_completion_batch, @maximum SZ, @notify AUTO& AUTO) MUT: SZ
+    {
+      VAR head U32 := .completion_head->.LOAD#ATOMIC_RELAXED();
+      VAR remaining SZ := .completion_count(@head head, @maximum maximum, @block TRUE);
+      IF (remaining == 0) { RETURN 0; }
+      IF (remaining == 1)
+      {
+        VAR entry syscall::linux::io_uring_completion_entry := .completion_entries[(head #&& .completion_mask) AS SZ];
+        .completion_head->.STORE#ATOMIC_RELEASE(head + 1);
+        IF (notify(@identity entry.user_data.value, @result entry.result)) { RETURN 1; }
+        RETURN 0;
+      }
+      VAR dispatched SZ;
+      LOOP WHILE (remaining != 0) DO
+      {
+        VAR count SZ := remaining;
+        IF (count > snapshot.SIZE()) { count := snapshot.SIZE(); }
+        LOOP VALUE(index) FROM(0 AS SZ) UNTIL(count) DO
+        {
+          snapshot[index] := .completion_entries[(head #&& .completion_mask) AS SZ];
+          head++;
+        };
+        .completion_head->.STORE#ATOMIC_RELEASE(head);
+        LOOP VALUE(index) FROM(0 AS SZ) UNTIL(count) DO
+        {
+          IF (notify(@identity snapshot[index].user_data.value, @result snapshot[index].result)) { dispatched++; }
+        };
+        remaining -= count;
+      };
+      RETURN dispatched;
+    }
+
+    DOC <$ Waits for minimum completions without submitting entries or dispatching callbacks. A negative timeout_nanoseconds waits indefinitely. FALSE denotes timeout or signal interruption. The caller serializes waits with completion processing. $>
+    .wait FUNCTION(@minimum U32 DEFAULT(1), @timeout_nanoseconds I64 DEFAULT(-1)) MUT: BOOL
+    {
+      VAR timeout syscall::timespec64;
+      VAR arguments syscall::linux::io_uring_wait_arguments;
+      VAR flags U32 := 1;
+      VAR address CONST=>>BYTE;
+      VAR size SZ;
+      IF (timeout_nanoseconds >= 0)
+      {
+        timeout.seconds := timeout_nanoseconds / 1000000000;
+        timeout.nanoseconds := timeout_nanoseconds % 1000000000;
+        arguments.timeout.value := IBC_GETADDR(@PTR timeout<-);
+        address := IBC_PUN#(CONST=>>BYTE)(@ADDR IBC_GETADDR(@PTR arguments<-));
+        flags := flags #|| 8;
+        size := SIZEOF(syscall::linux::io_uring_wait_arguments);
+      }
+      VAR result I32 := syscall::linux::io_uring_enter(@descriptor .descriptor,
+        @submission_count 0, @minimum_completion_count minimum, @flags flags,
+        @signal_mask address, @signal_mask_size size);
+      IF (result == uring_timeout_result || result == uring_interrupted_result) { RETURN FALSE; }
+      IF (result < 0) { THROW io_uring_error::wait_failed; }
+      RETURN TRUE;
+    }
+
+    DOC <$ Registers a borrowed eventfd for completion notifications observed by other threads. Registration changes require exclusive processor access. $>
+    .register_completion_event FUNCTION(@descriptor I32) MUT
+    {
+      IF (syscall::linux::io_uring_register(@descriptor .descriptor, @operation 4,
+        @argument IBC_GETADDR(@PTR descriptor<-), @count 1) < 0)
+      { THROW io_uring_error::registration_failed; }
+    }
+
+    DOC <$ Removes the completion eventfd registration under exclusive processor access. $>
+    .unregister_completion_event FUNCTION() MUT
+    {
+      IF (syscall::linux::io_uring_register(@descriptor .descriptor, @operation 5,
+        @argument NULL, @count 0) < 0) { THROW io_uring_error::registration_failed; }
+    }
+  }
+}

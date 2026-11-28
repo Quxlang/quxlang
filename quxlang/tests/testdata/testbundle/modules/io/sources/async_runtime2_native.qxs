@@ -1,0 +1,29 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+DOC <$ Borrows the receiver for one native completion. The receiver may rearm the request or release it during delivery. $>
+::native_receiver2 INCLUDE_IF(OS_WINDOWS) GENERIC_REF INCOMPARABLE
+{
+  .on_native_result FUNCTION(@size SZ, @error U32) MUT NOEXCEPT;
+}
+
+PRIVATE(MODULE)
+{
+  DOC <$ Stores a concrete operation together with its native request and producer through terminal delivery. $>
+  ::owned_native_operation2 INCLUDE_IF(OS_WINDOWS) TEMPLATE(@T:operation_type TYPE AUTO) STRUCT ROOTED
+  {
+    .invocation VAR native_invocation#operation_type;
+    .submission VAR native_submission2;
+    .CONSTRUCTOR FUNCTION(@runtime MUT& async_runtime2, @operation AUTO& operation_type)
+      :> .invocation:(@operation FORWARD(operation)), .submission:(@runtime runtime, @completion THIS) {}
+    .on_native_result FUNCTION(@size SZ, @error U32) MUT NOEXCEPT
+    {
+      IF (.invocation.complete(@submission .submission, @size size, @error error))
+      {
+        VAR owner MUT->owned_native_operation2#operation_type := THIS<-;
+        DELETE owner;
+      }
+    }
+  }
+}

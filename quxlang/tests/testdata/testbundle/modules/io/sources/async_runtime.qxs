@@ -65,7 +65,7 @@ DOC <$ Owns a platform completion runtime, completion workers, and a coroutine s
   }
 
   DOC <$ Schedules a cursor-based read on a file worker and returns its result future. The operating system manages the shared file position. $>
-  .read FUNCTION(@descriptor io_descriptor_ref, @buffer CONST& buffer_ref) MUT: std::future#transfer_result
+  .read FUNCTION(@descriptor CONST& io_descriptor_ref, @buffer CONST& buffer_ref) MUT: std::future#transfer_result
   {
     VAR operation stream_transfer#(@writing FALSE);
     operation.reference := file_ref(@descriptor descriptor);
@@ -76,7 +76,7 @@ DOC <$ Owns a platform completion runtime, completion workers, and a coroutine s
   }
 
   DOC <$ Schedules a cursor-based write on a file worker and returns its result future. The operating system manages the shared file position. $>
-  .write FUNCTION(@descriptor io_descriptor_ref, @buffer CONST& buffer_ref) MUT: std::future#transfer_result
+  .write FUNCTION(@descriptor CONST& io_descriptor_ref, @buffer CONST& buffer_ref) MUT: std::future#transfer_result
   {
     VAR operation stream_transfer#(@writing TRUE);
     operation.reference := file_ref(@descriptor descriptor);
@@ -87,7 +87,7 @@ DOC <$ Owns a platform completion runtime, completion workers, and a coroutine s
   }
 
   DOC <$ Submits a positioned read and returns its single-consumer future. $>
-  .read FUNCTION(@descriptor io_descriptor_ref, @buffer CONST& buffer_ref, @offset U64) MUT: std::future#transfer_result
+  .read FUNCTION(@descriptor CONST& io_descriptor_ref, @buffer CONST& buffer_ref, @offset U64) MUT: std::future#transfer_result
   {
     VAR completion transfer_completion;
     VAR result := completion.producer.get_future();
@@ -96,7 +96,7 @@ DOC <$ Owns a platform completion runtime, completion workers, and a coroutine s
   }
 
   DOC <$ Submits a positioned write and returns its single-consumer future. $>
-  .write FUNCTION(@descriptor io_descriptor_ref, @buffer CONST& buffer_ref, @offset U64) MUT: std::future#transfer_result
+  .write FUNCTION(@descriptor CONST& io_descriptor_ref, @buffer CONST& buffer_ref, @offset U64) MUT: std::future#transfer_result
   {
     VAR completion transfer_completion;
     VAR result := completion.producer.get_future();

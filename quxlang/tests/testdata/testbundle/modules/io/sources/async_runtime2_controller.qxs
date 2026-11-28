@@ -1,0 +1,102 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+PRIVATE(MODULE)
+{
+  DOC <$ Couples the selected coroutine's result type to its I/O controller and schedules the frame with the runtime's worker pool. $>
+  ::launch_io_coroutine2 INCLUDE_IF(OS_LINUX || OS_MACOS || OS_WINDOWS) TEMPLATE(@T:descriptor_type TYPE AUTO)
+    FUNCTION(@runtime MUT& async_runtime2, @ARGUMENTS:arguments ..., @group MUT->std::task_group DEFAULT(NULL)): AUTO
+  {
+    VAR controller async_controller2#(descriptor_type::RETURN_TYPE) :(@runtime runtime);
+    VAR result := runtime.scheduler.get().launch_with_controller#descriptor_type(@controller MOVE(controller),
+      @ARGUMENTS FORWARD PACK(arguments), @group group);
+    runtime.pool_submission.STORE#ATOMIC_RELEASE(TRUE);
+    RETURN MOVE(result);
+  }
+
+  DOC <$ Couples the selected coroutine's result type to its I/O controller and starts the frame on the calling worker. The caller is a coroutine that the runtime's worker pool is driving. $>
+  ::call_io_coroutine2 INCLUDE_IF(OS_LINUX || OS_MACOS || OS_WINDOWS) TEMPLATE(@T:descriptor_type TYPE AUTO)
+    FUNCTION(@runtime MUT& async_runtime2, @ARGUMENTS:arguments ...): AUTO
+  {
+    VAR controller async_controller2#(descriptor_type::RETURN_TYPE) :(@runtime runtime);
+    RETURN runtime.scheduler.get().call_with_controller#descriptor_type(@controller MOVE(controller),
+      @ARGUMENTS FORWARD PACK(arguments));
+  }
+}
+
+DOC <$ Extends the thread-pool controller with submission to the invocation's async_runtime2. The same runtime schedules nested calls, coroutine construction, and coroutine destruction. $>
+::async_controller2 INCLUDE_IF(OS_LINUX || OS_MACOS || OS_WINDOWS) TEMPLATE(@T TYPE) STRUCT
+{
+  .scheduling BASE std::thread_pool_cort_controller#T;
+  PRIVATE(MODULE) { .runtime VAR MUT->async_runtime2; }
+
+  .CONSTRUCTOR FUNCTION(@runtime MUT& async_runtime2) { .runtime := runtime<-; }
+
+  DOC <$ Borrows the owning runtime for a native request embedded in the coroutine frame. $>
+  .io_runtime FUNCTION() CONST: MUT& async_runtime2 { RETURN .runtime->; }
+
+  DOC <$ Submits a native operation to the runtime that owns this invocation. $>
+  .submit FUNCTION(@operation AUTO& AUTO): AUTO
+  { RETURN .runtime->.submit(@operation FORWARD(operation)); }
+
+  DOC <$ Schedules a coroutine with the I/O controller. Synchronous GO calls use the pool's ordinary function adapter. $>
+  .CO_GO FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ..., @group MUT->std::task_group DEFAULT(NULL)): AUTO
+  {
+    STATIC_IF(STATIC_CHOOSE(PACK_CONTAINS(arguments, "RECEIVER"),
+      IS_COROUTINE_CALLABLE_WITH(child, @CONTROLLER async_controller2#VOID, @THIS PACK_FIELD_TYPE(arguments, "RECEIVER"),
+        ...PACK_TYPES_EXCEPT(arguments, "RECEIVER")),
+      IS_COROUTINE_CALLABLE_WITH(child, @CONTROLLER async_controller2#VOID, ...PACK_TYPES(arguments))))
+    { RETURN .runtime->.CO_RUN(@COROUTINE child, @ARGUMENTS FORWARD PACK(arguments), @group group); }
+    STATIC_ELSE { RETURN .scheduling.launch_function(@child child, @ARGUMENTS FORWARD PACK(arguments), @group group); }
+  }
+
+  .CO_GO FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ..., @USING:group MUT& std::task_group): AUTO
+  { RETURN .CO_GO(@COROUTINE child, @ARGUMENTS FORWARD PACK(arguments), @group group<-); }
+
+  DOC <$ Starts a child on the calling worker with the I/O controller and returns its task. A child that completes without suspending leaves the task ready. A synchronous callable binding executes on the calling worker. $>
+  .CO_COROUTINE_CALL FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ...): AUTO
+  {
+    STATIC_IF(PACK_CONTAINS(arguments, "RECEIVER"))
+    {
+      STATIC_IF(IS_COROUTINE_CALLABLE_WITH(child, @CONTROLLER async_controller2#VOID, @THIS PACK_FIELD_TYPE(arguments, "RECEIVER"),
+        ...PACK_TYPES_EXCEPT(arguments, "RECEIVER")))
+      {
+        VAR descriptor := child#(@CONTROLLER async_controller2#VOID, @THIS PACK_FIELD_TYPE(arguments, "RECEIVER"),
+          ...PACK_TYPES_EXCEPT(arguments, "RECEIVER"));
+        VAR result := call_io_coroutine2#descriptor(@runtime .runtime->, @ARGUMENTS FORWARD PACK(arguments));
+        RETURN std::task#(DECLTYPE(result)::value_type)(@result MOVE(result));
+      }
+      STATIC_ELSE
+      {
+        VAR result := .scheduling.call_function(@child child, @ARGUMENTS FORWARD PACK(arguments));
+        RETURN std::task#(DECLTYPE(result)::value_type)(@result MOVE(result));
+      }
+    }
+    STATIC_ELSE
+    {
+      STATIC_IF(IS_COROUTINE_CALLABLE_WITH(child, @CONTROLLER async_controller2#VOID, ...PACK_TYPES(arguments)))
+      {
+        VAR descriptor := child#(@CONTROLLER async_controller2#VOID, ...PACK_TYPES(arguments));
+        VAR result := call_io_coroutine2#descriptor(@runtime .runtime->, @ARGUMENTS FORWARD PACK(arguments));
+        RETURN std::task#(DECLTYPE(result)::value_type)(@result MOVE(result));
+      }
+      STATIC_ELSE
+      {
+        VAR result := .scheduling.call_function(@child child, @ARGUMENTS FORWARD PACK(arguments));
+        RETURN std::task#(DECLTYPE(result)::value_type)(@result MOVE(result));
+      }
+    }
+  }
+
+  DOC <$ Starts a coroutine destructor on the calling worker. $>
+  .CO_CALL_DTOR FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ...): AUTO
+  { RETURN call_io_coroutine2#child(@runtime .runtime->, @ARGUMENTS FORWARD PACK(arguments)); }
+
+  DOC <$ Starts a coroutine constructor on the calling worker against its caller-owned destination. $>
+  .CO_CALL_CTOR FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ..., @DESTINATION:destination MUT& AUTO): AUTO
+  {
+    PACK invocation FUSE(...{ .RECEIVER = destination; }, arguments);
+    RETURN call_io_coroutine2#child(@runtime .runtime->, @ARGUMENTS FORWARD PACK(invocation));
+  }
+}

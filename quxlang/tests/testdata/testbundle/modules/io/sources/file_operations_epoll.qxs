@@ -1,0 +1,142 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+IMPORT syscall;
+
+DOC <$
+  Reads from a file at a byte offset on a file worker of an async_runtime2 that does
+  not use io_uring. The descriptor and the buffer outlive completion. A
+  coroutine awaits the operation in its own frame, and the operation occupies a
+  stable address until its result has been taken.
+  $>
+::epoll_file_read INCLUDE_IF(OS_LINUX) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  DOC <$ Names the result type. $>
+  ::value_type ALIAS transfer_result;
+
+  PRIVATE(MODULE)
+  {
+    .completion VAR operation_completion;
+    .work VAR file_work;
+    .descriptor VAR io_descriptor_ref;
+    .buffer VAR buffer_ref;
+    .offset VAR U64;
+    .outcome VAR transfer_result;
+
+    DOC <$ Performs the transfer on a file worker. $>
+    ::run FUNCTION(@context MUT->VOID)
+    {
+      VAR operation := context AS REINTERPRET MUT->epoll_file_read;
+      operation->.outcome := linux_positioned_read(@descriptor operation->.descriptor.native_handle(),
+        @buffer operation->.buffer, @offset operation->.offset);
+      operation->.completion.finish();
+    }
+  }
+
+  DOC <$ Describes the transfer without starting it. $>
+  .CONSTRUCTOR FUNCTION(@runtime MUT& async_runtime2, @descriptor io_descriptor_ref, @buffer CONST& buffer_ref, @offset U64)
+    :> .completion:(@runtime runtime), .buffer:(@OTHER buffer)
+  {
+    .descriptor := descriptor;
+    .offset := offset;
+    .work.context := THIS<- AS REINTERPRET MUT->VOID;
+    .work.run := run<-;
+  }
+
+  DOC <$ Queues the transfer once. TRUE reports that the result is available without waiting, which occurs when the descriptor or the offset is rejected. $>
+  .start FUNCTION() MUT: BOOL
+  {
+    IF (.descriptor.is_valid() == FALSE) { .outcome.error := 9; RETURN TRUE; } // EBADF
+    IF (.offset > 9223372036854775807) { .outcome.error := 22; RETURN TRUE; } // EINVAL
+    .completion.begin();
+    TRY { .completion.runtime().backend.file_work.submit(@work .work<-); }
+    CATCH DEFAULT { .completion.abandon(); RETHROW; }
+    RETURN FALSE;
+  }
+
+  DOC <$ Registers the continuation that completion notifies. FALSE reports that the transfer completed first. $>
+  .suspend FUNCTION(@continuation MUT->std::async_continuation) MUT: BOOL
+  { RETURN .completion.suspend(@continuation continuation); }
+
+  DOC <$ Returns the outcome of the completed transfer. $>
+  .result FUNCTION() MUT: transfer_result { RETURN .outcome; }
+
+  DOC <$ Starts the transfer. $>
+  .AWAIT_READY FUNCTION() MUT: BOOL { RETURN .start(); }
+  DOC <$ Registers the awaiting coroutine. $>
+  .AWAIT_SUSPEND FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) MUT: BOOL
+  { RETURN .completion.suspend(@continuation CONTROLLER.continuation()); }
+  DOC <$ Returns the outcome after resumption. $>
+  .AWAIT_RESUME FUNCTION() MUT: transfer_result { RETURN .outcome; }
+  DOC <$ A started transfer runs to completion. $>
+  .TRY_CANCEL FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) CONST NOEXCEPT: BOOL { RETURN FALSE; }
+}
+
+DOC <$
+  Writes to a file at a byte offset on a file worker of an async_runtime2 that does
+  not use io_uring. The descriptor and the buffer outlive completion. A
+  coroutine awaits the operation in its own frame, and the operation occupies a
+  stable address until its result has been taken.
+  $>
+::epoll_file_write INCLUDE_IF(OS_LINUX) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  DOC <$ Names the result type. $>
+  ::value_type ALIAS transfer_result;
+
+  PRIVATE(MODULE)
+  {
+    .completion VAR operation_completion;
+    .work VAR file_work;
+    .descriptor VAR io_descriptor_ref;
+    .buffer VAR buffer_ref;
+    .offset VAR U64;
+    .outcome VAR transfer_result;
+
+    DOC <$ Performs the transfer on a file worker. $>
+    ::run FUNCTION(@context MUT->VOID)
+    {
+      VAR operation := context AS REINTERPRET MUT->epoll_file_write;
+      operation->.outcome := linux_positioned_write(@descriptor operation->.descriptor.native_handle(),
+        @buffer operation->.buffer, @offset operation->.offset);
+      operation->.completion.finish();
+    }
+  }
+
+  DOC <$ Describes the transfer without starting it. $>
+  .CONSTRUCTOR FUNCTION(@runtime MUT& async_runtime2, @descriptor io_descriptor_ref, @buffer CONST& buffer_ref, @offset U64)
+    :> .completion:(@runtime runtime), .buffer:(@OTHER buffer)
+  {
+    .descriptor := descriptor;
+    .offset := offset;
+    .work.context := THIS<- AS REINTERPRET MUT->VOID;
+    .work.run := run<-;
+  }
+
+  DOC <$ Queues the transfer once. TRUE reports that the result is available without waiting, which occurs when the descriptor or the offset is rejected. $>
+  .start FUNCTION() MUT: BOOL
+  {
+    IF (.descriptor.is_valid() == FALSE) { .outcome.error := 9; RETURN TRUE; } // EBADF
+    IF (.offset > 9223372036854775807) { .outcome.error := 22; RETURN TRUE; } // EINVAL
+    .completion.begin();
+    TRY { .completion.runtime().backend.file_work.submit(@work .work<-); }
+    CATCH DEFAULT { .completion.abandon(); RETHROW; }
+    RETURN FALSE;
+  }
+
+  DOC <$ Registers the continuation that completion notifies. FALSE reports that the transfer completed first. $>
+  .suspend FUNCTION(@continuation MUT->std::async_continuation) MUT: BOOL
+  { RETURN .completion.suspend(@continuation continuation); }
+
+  DOC <$ Returns the outcome of the completed transfer. $>
+  .result FUNCTION() MUT: transfer_result { RETURN .outcome; }
+
+  DOC <$ Starts the transfer. $>
+  .AWAIT_READY FUNCTION() MUT: BOOL { RETURN .start(); }
+  DOC <$ Registers the awaiting coroutine. $>
+  .AWAIT_SUSPEND FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) MUT: BOOL
+  { RETURN .completion.suspend(@continuation CONTROLLER.continuation()); }
+  DOC <$ Returns the outcome after resumption. $>
+  .AWAIT_RESUME FUNCTION() MUT: transfer_result { RETURN .outcome; }
+  DOC <$ A started transfer runs to completion. $>
+  .TRY_CANCEL FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) CONST NOEXCEPT: BOOL { RETURN FALSE; }
+}

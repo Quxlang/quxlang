@@ -103,10 +103,11 @@ so a file opened in a scope that exits through an exception is closed.
 **Return value**: a copy of the owned reference. The owner retains the closing
 responsibility. A closed owner returns an empty reference.
 
-The returned reference is valid for transfers until the owner closes or releases
-the file. Calling `close` on the returned reference closes the native file
-without the knowledge of the owner; the owner then closes the same descriptor
-value a second time, which is a lifetime violation.
+The returned reference borrows the resource for transfers. The owner retains
+the obligation to close it. On Windows, successful closure through any
+reference invalidates all copies, including the reference held by the owner.
+On Linux and macOS, a borrowed reference retains its descriptor number after
+closure. Calling `release()` transfers the closing obligation to the caller.
 
 ### `is_open`
 
@@ -162,36 +163,34 @@ Relinquishes ownership and then closes the native file with
 result of the native close.
 
 The owner is closed after the call in every case. A failed native close is not
-retried, because ownership was relinquished before the native call.
+retried, because ownership was relinquished before the native call. On
+Windows, successful closure also invalidates previously obtained copies of
+the file reference. Moving the owner or calling `release()` transfers the
+open file with its existing completion-port association.
 
 ### `read` and `write` coroutines
 
+The following member calls are available on Linux, macOS and Windows inside
+coroutines that run on `io::async_runtime` or `io::async_runtime2`.
+
 ```quxlang
-.read INCLUDE_IF(OS_LINUX || OS_MACOS || OS_WINDOWS)
-  COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)   // (1)
-.write INCLUDE_IF(OS_LINUX || OS_MACOS || OS_WINDOWS)
-  COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)   // (2)
-.read INCLUDE_IF(OS_LINUX || OS_MACOS || OS_WINDOWS)
-  COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @result WRITE& transfer_result)                // (3)
-.write INCLUDE_IF(OS_LINUX || OS_MACOS || OS_WINDOWS)
-  COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @result WRITE& transfer_result)                // (4)
+file.read(@buffer buffer, @offset offset, @result result);
+file.write(@buffer buffer, @offset offset, @result result);
+file.read(@buffer buffer, @result result);
+file.write(@buffer buffer, @result result);
 ```
 
-Each overload calls the corresponding
-[coroutine overload of `file_ref`](file-ref.md#read-and-write-coroutines)
-through the owned reference: overloads (1) and (2) perform a positioned transfer
-at `offset` through the native completion queue of the selected
-[`io::async_runtime`](async-runtime.md), and overloads (3) and (4) perform a
-cursor-based transfer on a file worker of that runtime. The overloads are
-selected for calls made from a coroutine whose controller is an
-[`io::async_controller`](async-controller.md).
+The owner forwards each call through its borrowed file reference. Here
+`buffer` is an `io::buffer_ref`, `offset` is a `U64` byte position, and
+`result` is a writable `io::transfer_result`. The controller supplies the
+runtime. On `async_runtime2`, the positioned forms use a frame-local transfer
+waiter. The cursor forms await a file worker operating on the shared file
+position. [File member coroutines](async-runtime2.md#file-member-coroutines)
 
-**Preconditions**: the owner, the native file, and the storage that `buffer`
-designates remain alive, and the owner is neither moved, released, nor closed,
-until the calling coroutine resumes.
-
-**Target restrictions**: the overloads are not declared on JVM targets. The
-Windows requirements of the `file_ref` overloads apply.
+The owner must stay alive and retain the open file until the calling
+coroutine resumes. The buffer storage must also outlive the transfer.
+Windows positioned transfers require an overlapped handle and cursor
+transfers require a synchronous handle. [File reference transfer contract](file-ref.md#read-and-write-coroutines)
 
 ## Example
 

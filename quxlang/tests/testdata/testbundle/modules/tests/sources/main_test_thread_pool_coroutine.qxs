@@ -423,6 +423,66 @@ IMPORT std;
       index++;
     };
   }
+
+  ::count_publication FUNCTION(@context MUT->VOID)
+  {
+    VAR count MUT->U32 := context AS REINTERPRET MUT->U32;
+    count-> := count-> + 1;
+  }
+
+  ::publication_observer STRUCT ROOTED
+  {
+    .entry VAR std::async_continuation;
+    .notifications VAR U32;
+    .CONSTRUCTOR FUNCTION()
+    {
+      .entry.context := .notifications<- AS REINTERPRET MUT->VOID;
+      .entry.notify := count_publication<-;
+    }
+    .continuation FUNCTION() MUT: MUT->std::async_continuation { RETURN .entry<-; }
+  }
+
+  DOC <$ Blocking observers and a coroutine share one publication. The producer notifies the continuation exactly when registration accepts suspension. $>
+  ::publication_with_blocking_observers UNIT_TEST
+  {
+    LOOP VALUE(order) FROM(0 AS U32) UNTIL(3 AS U32) DO
+    {
+      VAR producer std::promise#I32;
+      VAR result := producer.get_future();
+      VAR observing std::semaphore;
+      VAR publish std::semaphore;
+      VAR finished ATOMIC#U32;
+      VAR observe := -< [result, observing, finished]
+      {
+        observing.release();
+        result.wait();
+        IF (result.is_ready()) { finished.ADD#ATOMIC_RELAXED(1); }
+      };
+      VAR first std::thread := std::thread(observe);
+      VAR second std::thread := std::thread(observe);
+      VAR complete := -< [producer, publish] { publish.acquire(); producer.set_value(@value 42); };
+      VAR publisher std::thread := std::thread(complete);
+      VAR observer publication_observer;
+      VAR frame I32;
+      observing.acquire();
+      observing.acquire();
+      TEST_ASSERT(result.AWAIT_READY() == FALSE);
+      // Exercise registration first, concurrent publication, and publication between the two awaiter calls.
+      IF (order != 0) { publish.release(); }
+      IF (order == 2) { publisher.join(); }
+      VAR suspended BOOL := result.AWAIT_SUSPEND(@CONTROLLER observer, @FRAME frame);
+      IF (order == 0) { publish.release(); }
+      IF (order != 2) { publisher.join(); }
+      first.join();
+      second.join();
+      IF (order == 0) { TEST_ASSERT(suspended); }
+      IF (order == 2) { TEST_ASSERT(suspended == FALSE); }
+      IF (suspended) { TEST_ASSERT(observer.notifications == 1); }
+      ELSE { TEST_ASSERT(observer.notifications == 0); }
+      TEST_ASSERT(finished.LOAD#ATOMIC_RELAXED() == 2);
+      TEST_ASSERT(result.AWAIT_RESUME() == 42);
+    };
+  }
 }
 
 ::thread_pool_coroutine_tests NAMESPACE

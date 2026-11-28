@@ -1,0 +1,300 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT std;
+IMPORT syscall;
+
+::async_runtime2_tests INCLUDE_IF(OS_WINDOWS) NAMESPACE
+{
+  DOC <$ Creates a temporary file with native access appropriate to the transfer interface under test. $>
+  ::temporary_file FUNCTION(@positioned BOOL): io::file
+  {
+    VAR descriptor io::io_descriptor_ref;
+    STATIC_IF(OS_WINDOWS)
+    {
+      VAR flags U32 := 67108864; // FILE_FLAG_DELETE_ON_CLOSE
+      IF (positioned) { flags := flags #|| 1073741824; } // FILE_FLAG_OVERLAPPED
+      VAR name std::string := std::fmt#("quxlang-runtime2-{process}-{mode}.tmp")(
+        @process async_test_windows_process_id(), @mode flags);
+      VAR path [64]BYTE;
+      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(name.size()) DO { path[index] := name[index]; };
+      VAR handle ADDRESS := syscall::windows::create_file_a(@path path[&0],
+        @desired_access 3221225472, @share_mode 0, @security_attributes NULL,
+        @creation_disposition 1, @flags flags, @template_file NULL);
+      TRY { descriptor := io::io_descriptor_ref(@native_handle handle); }
+      CATCH DEFAULT { syscall::windows::close_handle(@handle handle); RETHROW; }
+    }
+    STATIC_ELSE
+    {
+      VAR name STRING_CONSTANT := "/tmp/quxlang-io-XXXXXX";
+      VAR path [23]BYTE;
+      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(22) DO { path[index] := name.BEGIN()[index]; };
+      VAR native I32;
+      STATIC_IF(OS_MACOS)
+      {
+        native := io_runtime_tests::temporary_file(@path path[&0]);
+        TEST_ASSERT(native >= 0);
+        TEST_ASSERT(io_runtime_tests::unlink_file(@path path[&0]) == 0);
+      }
+      STATIC_ELSE { native := syscall::linux::memfd_create(@name path[&0], @flags 1); }
+      descriptor := io::io_descriptor_ref(@native_handle native);
+    }
+    TEST_ASSERT(descriptor.is_valid());
+    RETURN io::file(@native_ref io::file_ref(@descriptor descriptor));
+  }
+
+  DOC <$ Receives native notifications for a socket submission interface used to verify its completion key. $>
+  ::windows_receiver INCLUDE_IF(OS_WINDOWS) STRUCT
+  { .on_native_result FUNCTION(@size SZ, @error U32) MUT NOEXCEPT {} }
+
+  DOC <$ Copied Windows descriptors share their processor and completion key across owner moves. A fresh import requires a native association, and a closed file's copies cannot bind a later open. $>
+  ::windows_handle_association INCLUDE_IF(OS_WINDOWS) UNIT_TEST
+  {
+    VAR file io::file := temporary_file(@positioned TRUE);
+    VAR copied io::io_descriptor_ref := file.reference().descriptor;
+    VAR moved io::file := MOVE(file);
+    {
+      VAR runtime io::async_runtime2 :(@workers 1);
+      runtime.bind(@descriptor moved.reference().descriptor);
+      runtime.bind(@descriptor copied);
+      VAR failed_close := -< [] (@handle ADDRESS): BOOL = FALSE;
+      TEST_ASSERT(copied.close_windows_handle(@close failed_close) == FALSE && copied.is_valid());
+      runtime.bind(@descriptor copied);
+
+      VAR receiver windows_receiver;
+      VAR submission io::native_submission2 :(@runtime runtime, @completion receiver);
+      VAR wrong_key BOOL;
+      TRY { submission.associate(@descriptor copied); }
+      CATCH failure CONST& io::async_error { wrong_key := failure == io::async_error::submission_failed; }
+      TEST_ASSERT(wrong_key);
+
+      VAR fresh io::io_descriptor_ref :(@native_handle copied.native_handle());
+      VAR rejected BOOL;
+      TRY { runtime.bind(@descriptor fresh); }
+      CATCH failure CONST& io::overlapped_error { rejected := failure.code != 0; }
+      TEST_ASSERT(rejected);
+
+      VAR legacy io::async_runtime :(@workers 1);
+      VAR data [1]BYTE;
+      VAR buffer io::buffer_ref :(@data data[&0], @size 1);
+      VAR read := legacy.read(@descriptor copied, @buffer buffer, @offset 0);
+      TEST_ASSERT(read.get().succeeded == FALSE);
+    }
+    VAR successor io::async_runtime2 :(@workers 1);
+    VAR rejected BOOL;
+    TRY { successor.bind(@descriptor copied); }
+    CATCH failure CONST& io::overlapped_error { rejected := failure.code == 87; }
+    TEST_ASSERT(rejected);
+    TEST_ASSERT(moved.close() && copied.is_valid() == FALSE);
+    VAR reopened io::file := temporary_file(@positioned TRUE);
+    successor.bind(@descriptor reopened.reference().descriptor);
+    TEST_ASSERT(reopened.is_open() && copied.is_valid() == FALSE);
+  }
+
+  DOC <$ Reuses the completed write request for a read of the entire file, including its leading hole. $>
+  ::read_after_write STRUCT ROOTED
+  {
+    .runtime VAR MUT->io::async_runtime2;
+    .file VAR io::async_file_binding2;
+    .request VAR io::transfer_request2;
+    .bytes VAR [8]BYTE;
+    .writes VAR io::transfer_result;
+    .reads VAR io::transfer_result;
+    .count VAR SZ;
+
+    .CONSTRUCTOR FUNCTION(@runtime MUT->io::async_runtime2, @file io::async_file_binding2)
+      :> .file:(@OTHER file), .request:(@completion THIS) { .runtime := runtime; }
+
+    .complete FUNCTION(@result io::transfer_result) MUT NOEXCEPT
+    {
+      .count++;
+      IF (.count == 1)
+      {
+        .writes := result;
+        VAR buffer io::buffer_ref :(@data .bytes[&0], @size .bytes.SIZE());
+        .runtime->.read(@file .file, @request .request, @buffer buffer, @offset 0);
+      }
+      ELSE { .reads := result; }
+    }
+  }
+
+  DOC <$ Reads the final byte and reuses the same frame-local waiter to observe end of file. $>
+  ::read_end_in_frame COROUTINE(@runtime MUT->io::async_runtime2, @file io::async_file_binding2,
+    @buffer io::buffer_ref, @last_offset U64): io::transfer_result
+  {
+    VAR completion io::transfer_waiter2;
+    runtime->.read(@file file, @request completion.request, @buffer buffer, @offset last_offset);
+    VAR last io::transfer_result := AWAIT(completion);
+    TEST_ASSERT(last.succeeded && last.size == 1 && buffer.data[0] == 52);
+    runtime->.read(@file file, @request completion.request, @buffer buffer, @offset last_offset + 1);
+    RETURN AWAIT(completion);
+  }
+
+  DOC <$ Draining includes a read submitted by a write callback. Future and coroutine reads return the available suffix and the end-of-file result. $>
+  ::positioned_round_trip UNIT_TEST
+  {
+    VAR file io::file := temporary_file(@positioned TRUE);
+    VAR runtime io::async_runtime2 :(@entries 8, @workers 1, @file_workers 1);
+    VAR binding := runtime.bind(@descriptor file.reference().descriptor);
+    VAR chain read_after_write :(@runtime runtime<-, @file binding);
+    VAR data [3]BYTE;
+    data[0] := 19; data[1] := 73; data[2] := 52;
+    VAR buffer io::buffer_ref :(@data data[&0], @size data.SIZE());
+    VAR rejected BOOL;
+    TRY { runtime.write(@file binding, @request chain.request, @buffer buffer, @offset (0 AS U64) #!!); }
+    CATCH failure CONST& io::async_error { rejected := failure == io::async_error::submission_failed; }
+    TEST_ASSERT(rejected && chain.count == 0);
+    STATIC_IF(OS_WINDOWS)
+    {
+      VAR other io::async_runtime2;
+      rejected := FALSE;
+      TRY { other.write(@file binding, @request chain.request, @buffer buffer, @offset 2); }
+      CATCH failure CONST& io::overlapped_error { rejected := failure.code != 0; }
+      TEST_ASSERT(rejected && chain.count == 0);
+    }
+    runtime.write(@file binding, @request chain.request, @buffer buffer, @offset 2);
+    runtime.drain();
+    TEST_ASSERT(chain.count == 2 && chain.writes.succeeded && chain.writes.size == 3);
+    TEST_ASSERT(chain.reads.succeeded && chain.reads.size == 5);
+    TEST_ASSERT(chain.bytes[0] == 0 && chain.bytes[1] == 0);
+    TEST_ASSERT(chain.bytes[2] == 19 && chain.bytes[3] == 73 && chain.bytes[4] == 52);
+
+    VAR future := runtime.read(@file binding, @buffer buffer, @offset 3);
+    VAR suffix io::transfer_result := future.get();
+    TEST_ASSERT(suffix.succeeded && suffix.size == 2 && data[0] == 73 && data[1] == 52);
+    VAR end := ON(runtime) RUN read_end_in_frame(@runtime runtime<-, @file binding, @buffer buffer, @last_offset 4);
+    VAR empty io::transfer_result := end.get();
+    TEST_ASSERT(empty.succeeded && empty.size == 0);
+  }
+
+  DOC <$ Cursor transfers share the descriptor's offset across asynchronous calls. $>
+  ::cursor_transfers UNIT_TEST
+  {
+    VAR file io::file := temporary_file(@positioned FALSE);
+    VAR descriptor io::io_descriptor_ref := file.reference().descriptor;
+    VAR runtime io::async_runtime2 :(@entries 8, @workers 1, @file_workers 1);
+    VAR data [2]BYTE;
+    data[0] := 3; data[1] := 11;
+    VAR buffer io::buffer_ref :(@data data[&0], @size data.SIZE());
+    VAR write := runtime.write(@descriptor descriptor, @buffer buffer);
+    VAR written io::transfer_result := write.get();
+    TEST_ASSERT(written.succeeded && written.size == 2);
+    VAR read := runtime.read(@descriptor descriptor, @buffer buffer);
+    VAR empty io::transfer_result := read.get();
+    TEST_ASSERT(empty.succeeded && empty.size == 0);
+  }
+
+  DOC <$ Exercises the controller-selected file operations on owners and borrowed references. The positioned read begins before the written bytes and stops at the end of the file. $>
+  ::implicit_file_transfers COROUTINE(@positioned MUT& io::file, @stream MUT& io::file)
+  {
+    VAR source [2]BYTE;
+    source[0] := 29;
+    source[1] := 83;
+    VAR output io::buffer_ref :(@data source[&0], @size source.SIZE());
+    VAR received [4]BYTE;
+    received[0] := 255;
+    VAR input io::buffer_ref :(@data received[&0], @size received.SIZE());
+    VAR result io::transfer_result;
+
+    positioned.write(@buffer output, @offset 2, @result result);
+    TEST_ASSERT(result.succeeded && result.size == 2);
+    VAR positioned_ref io::file_ref := positioned.reference();
+    positioned_ref.read(@buffer input, @offset 1, @result result);
+    TEST_ASSERT(result.succeeded && result.size == 3);
+    TEST_ASSERT(received[0] == 0 && received[1] == 29 && received[2] == 83);
+    positioned.read(@buffer input, @offset 4, @result result);
+    TEST_ASSERT(result.succeeded && result.size == 0);
+
+    VAR stream_ref io::file_ref := stream.reference();
+    stream_ref.write(@buffer output, @result result);
+    TEST_ASSERT(result.succeeded && result.size == 2);
+    stream.read(@buffer input, @result result);
+    TEST_ASSERT(result.succeeded && result.size == 0);
+
+    VAR closed io::file_ref;
+    closed.read(@buffer input, @offset 0, @result result);
+    TEST_ASSERT(result.succeeded == FALSE && result.size == 0);
+  }
+
+  DOC <$ ON(runtime) selects positioned and cursor operations through the existing file API while preserving ownership of both files. $>
+  ::controller_selected_file_transfers UNIT_TEST
+  {
+    VAR positioned io::file := temporary_file(@positioned TRUE);
+    VAR stream io::file := temporary_file(@positioned FALSE);
+    VAR runtime io::async_runtime2 :(@entries 8, @workers 1, @file_workers 1);
+    VAR done := ON(runtime) RUN implicit_file_transfers(@positioned positioned, @stream stream);
+    done.get();
+    TEST_ASSERT(positioned.is_open() && stream.is_open());
+  }
+
+  DOC <$ Associates a single byte and its terminal results with one reusable batch request. $>
+  ::batch_item STRUCT ROOTED
+  {
+    .request VAR io::transfer_request2;
+    .data VAR [1]BYTE;
+    .result VAR io::transfer_result;
+    .completions VAR SZ;
+
+    .CONSTRUCTOR FUNCTION() :> .request:(@completion THIS) {}
+    .complete FUNCTION(@result io::transfer_result) MUT NOEXCEPT
+    { .result := result; .completions++; }
+
+    .describe FUNCTION(@file io::async_file_binding2, @offset U64, @writing BOOL) MUT: io::positioned_transfer2
+    {
+      VAR buffer io::buffer_ref :(@data .data[&0], @size 1);
+      RETURN io::positioned_transfer2(@file file, @request .request, @buffer buffer, @offset offset, @writing writing);
+    }
+  }
+
+  DOC <$ Transfer descriptions validate their offset. Each accepted prefix completes once, and retrying its suffix preserves request identities and file offsets across a write and a read. $>
+  ::positioned_batch UNIT_TEST
+  {
+    VAR file io::file := temporary_file(@positioned TRUE);
+    VAR runtime io::async_runtime2 :(@entries 2, @workers 1, @file_workers 1);
+    VAR binding := runtime.bind(@descriptor file.reference().descriptor);
+    VAR items [5]batch_item;
+    TEST_ASSERT(runtime.submit(@operations NULL, @count 0) == 0);
+
+    VAR rejected BOOL;
+    TRY { items[0].describe(@file binding, @offset (0 AS U64) #!!, @writing TRUE); }
+    CATCH failure CONST& io::async_error { rejected := failure == io::async_error::submission_failed; }
+    TEST_ASSERT(rejected);
+    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(items.SIZE()) DO
+    {
+      items[index].data[0] := ((index + 13) AS ASSUME U8) AS BYTE;
+    };
+
+    LOOP VALUE(pass) FROM(0 AS SZ) UNTIL(2) DO
+    {
+      VAR writing BOOL := pass == 0;
+      VAR operations [5]io::positioned_transfer2 :[
+        items[0].describe(@file binding, @offset 0, @writing writing), items[1].describe(@file binding, @offset 1, @writing writing),
+        items[2].describe(@file binding, @offset 2, @writing writing), items[3].describe(@file binding, @offset 3, @writing writing),
+        items[4].describe(@file binding, @offset 4, @writing writing)
+      ];
+      VAR submitted SZ;
+      LOOP WHILE(submitted < operations.SIZE()) DO
+      {
+        VAR remaining SZ := operations.SIZE() - submitted;
+        VAR accepted SZ := runtime.submit(@operations operations[&submitted], @count remaining);
+        TEST_ASSERT(accepted > 0 && accepted <= remaining);
+        submitted := submitted + accepted;
+        runtime.drain();
+        LOOP VALUE(index) FROM(0 AS SZ) UNTIL(items.SIZE()) DO
+        {
+          IF (index < submitted)
+          {
+            TEST_ASSERT(items[index].completions == pass + 1);
+            TEST_ASSERT(items[index].result.succeeded && items[index].result.size == 1);
+          }
+          ELSE { TEST_ASSERT(items[index].completions == pass); }
+        };
+      };
+      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(items.SIZE()) DO
+      {
+        TEST_ASSERT(items[index].data[0] == (((index + 13) AS ASSUME U8) AS BYTE));
+        items[index].data[0] := 0;
+      };
+    };
+  }
+}

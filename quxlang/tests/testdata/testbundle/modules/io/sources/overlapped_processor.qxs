@@ -1,5 +1,6 @@
 LANGUAGE QUXLANG EN 0.0;
 
+IMPORT std;
 IMPORT syscall;
 
 DOC <$ Carries the Windows system error code from a failed completion-port operation. $>
@@ -24,6 +25,22 @@ DOC <$ Borrows the receiver of terminal notifications for an overlapped request.
   .on_notify FUNCTION(@completion overlapped_completion_result) MUT NOEXCEPT;
 }
 
+PRIVATE(MODULE)
+{
+  DOC <$ Defers a packet dequeued before the native starter releases the request. Zero permits dispatch, one denotes an active starter, and larger values retain the dequeued byte count plus two. $>
+  ::windows_completion_issue INCLUDE_IF(OS_WINDOWS) STRUCT ROOTED
+  {
+    .state VAR ATOMIC#U64;
+    .ready FUNCTION(@transferred U32) MUT: BOOL
+    {
+      IF (.state.LOAD#ATOMIC_ACQUIRE() == 0) { RETURN TRUE; }
+      VAR issuing U64 := 1;
+      RETURN .state.COMPARE_EXCHANGE#(@SUCCESS ATOMIC_ACQREL, @FAILURE ATOMIC_ACQUIRE)(
+        @EXPECTED issuing, @DESIRED (transferred AS U64) + 2) == FALSE;
+    }
+  }
+}
+
 DOC <$ Holds the native OVERLAPPED at a stable address and binds its completion receiver. Each simultaneous operation requires its own request. $>
 ::overlapped_request INCLUDE_IF(OS_WINDOWS) IBC_STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
 {
@@ -32,6 +49,14 @@ DOC <$ Holds the native OVERLAPPED at a stable address and binds its completion 
     // Windows returns the address of this first field with each completion packet.
     .native VAR syscall::windows::overlapped;
     .operation VAR overlapped_operation_ref;
+    .issue VAR windows_completion_issue;
+
+    DOC <$ Delivers the packet through a local copy of the bound receiver. The receiver may release the request. $>
+    .on_notify FUNCTION(@completion overlapped_completion_result) MUT NOEXCEPT
+    {
+      VAR operation overlapped_operation_ref := .operation AS MUT& overlapped_operation_ref;
+      operation.on_notify(@completion completion);
+    }
   }
 
   DOC <$ Binds the receiver for the lifetime of this reusable request. $>
@@ -45,6 +70,32 @@ PRIVATE(MODULE)
   ::windows_io_pending INCLUDE_IF(OS_WINDOWS) STATIC U32 := 997;
   ::windows_io_not_found INCLUDE_IF(OS_WINDOWS) STATIC U32 := 1168;
   ::windows_wait_timeout INCLUDE_IF(OS_WINDOWS) STATIC U32 := 258;
+
+  DOC <$ Initializes the native request header and issues one positioned operation on an associated handle. $>
+  ::issue_windows_overlapped INCLUDE_IF(OS_WINDOWS) FUNCTION(@handle ADDRESS,
+    @native MUT& syscall::windows::overlapped, @issue MUT& windows_completion_issue, @offset U64, @start AUTO& AUTO): U32
+  {
+    native := syscall::windows::overlapped();
+    native.offset := offset AS PARTIAL U32;
+    native.offset_high := (offset #-- 32) AS ASSUME U32;
+    issue.state.STORE#ATOMIC_RELAXED(1);
+    RETURN start(@handle handle, @overlapped native<-);
+  }
+
+  DOC <$ Dispatches a completion to the enclosing request, whose first field is the native OVERLAPPED header. $>
+  ::deliver_windows_completion INCLUDE_IF(OS_WINDOWS) TEMPLATE(@T:request_type CLASS)
+    FUNCTION(@entry CONST& syscall::windows::overlapped_entry): BOOL
+  {
+    VAR request MUT->request_type := IBC_PUN#(MUT->request_type)(@ADDR IBC_GETADDR(@PTR entry.overlapped));
+    VAR issue MUT& windows_completion_issue := request->.issue AS MUT& windows_completion_issue;
+    IF (issue.ready(@transferred entry.transferred) == FALSE) { RETURN FALSE; }
+    VAR completion overlapped_completion_result;
+    completion.transferred := entry.transferred;
+    VAR status I32 := entry.overlapped->.internal AS PARTIAL I32;
+    IF (status < 0) { completion.error := syscall::windows::nt_status_to_dos_error(@status status); }
+    request->.on_notify(@completion completion);
+    RETURN TRUE;
+  }
 }
 
 DOC <$ Borrows an open overlapped handle and the processor to which Windows bound it. Both resources outlive submissions and cancellation through this reference. $>
@@ -63,21 +114,20 @@ DOC <$ Borrows an open overlapped handle and the processor to which Windows boun
     Issues one native operation through start(@handle, @overlapped). Start returns
     zero or ERROR_IO_PENDING when Windows will deliver one packet. Any other
     error, or an exception before issuance, leaves the request idle. The supplied
-    OVERLAPPED contains the byte offset and a null event. Another thread may
-    receive the completion before start returns.
+    OVERLAPPED contains the byte offset and a null event. The processor
+    delivers the notification after start returns.
     $>
   .submit FUNCTION(@request MUT& overlapped_request, @start AUTO& AUTO, @offset U64 DEFAULT(0)) CONST
   {
     VAR native MUT& syscall::windows::overlapped := request.native AS MUT& syscall::windows::overlapped;
-    native := syscall::windows::overlapped();
-    native.offset := offset AS PARTIAL U32;
-    native.offset_high := (offset #-- 32) AS ASSUME U32;
+    VAR issue MUT& windows_completion_issue := request.issue AS MUT& windows_completion_issue;
     .processor->.outstanding.ADD#ATOMIC_RELAXED(1);
     VAR accepted BOOL;
     DEFER { IF (accepted == FALSE) { .processor->.outstanding.SUBTRACT#ATOMIC_RELAXED(1); } }
-    VAR code U32 := start(@handle .handle, @overlapped native<-);
+    VAR code U32 := issue_windows_overlapped(@handle .handle, @native native, @issue issue, @offset offset, @start start);
     IF (code != 0 && code != windows_io_pending) { THROW overlapped_error(@code code); }
     accepted := TRUE;
+    .processor->.port.finish_issue(@issue issue, @native native<-, @key 0);
   }
 
   DOC <$ Requests cancellation of I/O issued with this handle and request. FALSE means Windows found no pending I/O to cancel. The completion determines the outcome. The caller coordinates cancellation with request reuse. $>
@@ -91,56 +141,122 @@ DOC <$ Borrows an open overlapped handle and the processor to which Windows boun
   }
 }
 
+PRIVATE(MODULE)
+{
+  DOC <$ Owns a Windows completion port. The owner determines the type of all requests issued on its associated handles and retires each dispatched batch. $>
+  ::windows_completion_port INCLUDE_IF(OS_WINDOWS) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    PRIVATE(CLASS)
+    {
+      .handle VAR ADDRESS;
+      .identity VAR std::shared_ptr#windows_port_identity;
+    }
+
+    DOC <$ Opens a port with the specified Windows concurrency limit. $>
+    .CONSTRUCTOR FUNCTION(@concurrency U32)
+    {
+      .identity := std::make_shared#windows_port_identity();
+      .handle := syscall::windows::create_io_completion_port(
+        @file_handle (NULL AS ADDRESS) - (1 AS SZ), @existing_completion_port NULL,
+        @completion_key 0, @concurrent_threads concurrency);
+      IF (.handle!?) { THROW overlapped_error(@code syscall::windows::get_last_error()); }
+    }
+
+    DOC <$ Closes the drained port. $>
+    .DESTRUCTOR FUNCTION()
+    {
+      IF (syscall::windows::close_handle(@handle .handle) == 0) { PANIC "Cannot close an I/O completion port."; }
+    }
+
+    DOC <$ Associates an open descriptor on its first submission and verifies the identity for its completion key on subsequent submissions. $>
+    .associate FUNCTION(@descriptor CONST& io_descriptor_ref, @key UINTPTR) CONST: U32
+    {
+      RETURN associate_windows_handle(@port .handle, @identity .identity, @descriptor descriptor, @completion_key key);
+    }
+
+    DOC <$ Posts a completed request with the supplied byte count. A null request wakes the consumer of a drained port during shutdown. $>
+    .post FUNCTION(@native MUT->syscall::windows::overlapped, @transferred U32) CONST
+    {
+      IF (native??) { native->.internal := 0; }
+      IF (syscall::windows::post_queued_completion_status(@completion_port .handle,
+        @transferred transferred, @completion_key 0, @overlapped native) == 0)
+      { THROW overlapped_error(@code syscall::windows::get_last_error()); }
+    }
+
+    DOC <$ Releases a request after its starter returns. If a consumer already dequeued the packet, requeue its byte count and completion key while preserving the native status. $>
+    .finish_issue FUNCTION(@issue MUT& windows_completion_issue, @native MUT->syscall::windows::overlapped, @key UINTPTR) CONST
+    {
+      VAR previous U64 := issue.state.EXCHANGE#ATOMIC_ACQREL(0);
+      IF (previous == 1) { RETURN; }
+      IF (syscall::windows::post_queued_completion_status(@completion_port .handle,
+        @transferred (previous - 2) AS ASSUME U32, @completion_key key, @overlapped native) == 0)
+      { PANIC "Cannot requeue an accepted Windows I/O completion."; }
+    }
+
+    DOC <$ Dispatches up to maximum native completions to the consumer with their associated handle keys. $>
+    .dispatch_batch FUNCTION(@maximum SZ, @timeout_milliseconds I32, @notify AUTO& AUTO,
+        @batch MUT& [overlapped_batch_capacity]syscall::windows::overlapped_entry) CONST: SZ
+    {
+      IF (maximum == 0) { RETURN 0; }
+      IF (maximum > batch.SIZE()) { maximum := batch.SIZE(); }
+      VAR timeout U32 := timeout_milliseconds AS PARTIAL U32;
+      IF (timeout_milliseconds < 0) { timeout := (0 AS U32) #!!; }
+      VAR removed U32;
+      IF (syscall::windows::get_queued_completion_status_ex(@completion_port .handle,
+        @entries batch[0]<-, @capacity maximum AS ASSUME U32, @removed removed<-,
+        @milliseconds timeout, @alertable 0) == 0)
+      {
+        VAR code U32 := syscall::windows::get_last_error();
+        IF (code == windows_wait_timeout) { RETURN 0; }
+        THROW overlapped_error(@code code);
+      }
+
+      // The shutdown packet is posted only after all transfers retire and is the sole packet in its batch.
+      IF (batch[0].overlapped!?) { RETURN 0; }
+      VAR delivered SZ;
+      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(removed AS SZ) DO
+      {
+        IF (notify(@entry batch[index])) { delivered++; }
+      };
+      RETURN delivered;
+    }
+  }
+}
+
 DOC <$ Owns one Windows I/O completion port. Producers issue native I/O on associated handles. Consumer threads dequeue bounded batches and invoke the receivers directly. Destruction requires exclusive access and a drained port. $>
 ::overlapped_processor INCLUDE_IF(OS_WINDOWS) STRUCT ROOTED
 {
   PRIVATE(MODULE)
   {
-    .port VAR ADDRESS;
+    .port VAR windows_completion_port;
     .outstanding VAR ATOMIC#SZ;
   }
 
   DOC <$ Creates a completion port. Concurrency limits the active consumer threads. Zero selects the Windows processor-count default. $>
-  .CONSTRUCTOR FUNCTION(@concurrency U32 DEFAULT(0))
-  {
-    .port := syscall::windows::create_io_completion_port(
-      @file_handle (NULL AS ADDRESS) - (1 AS SZ), @existing_completion_port NULL,
-      @completion_key 0, @concurrent_threads concurrency);
-    IF (.port!?) { THROW overlapped_error(@code syscall::windows::get_last_error()); }
-  }
+  .CONSTRUCTOR FUNCTION(@concurrency U32 DEFAULT(0)) :> .port:(@concurrency concurrency) {}
 
   DOC <$ Closes the port after all producers and consumers have finished. $>
   .DESTRUCTOR FUNCTION()
   {
     IF (.pending_count() != 0) { PANIC "Overlapped processor destroyed with outstanding requests."; }
-    IF (syscall::windows::close_handle(@handle .port) == 0) { PANIC "Cannot close an I/O completion port."; }
   }
 
   DOC <$ Associates an open overlapped handle once and returns its submission interface. The handle must deliver a packet for immediate success as well as pending I/O. $>
-  .associate FUNCTION(@descriptor io_descriptor_ref) MUT: overlapped_handle_ref
+  .associate FUNCTION(@descriptor CONST& io_descriptor_ref) MUT: overlapped_handle_ref
   {
-    IF (descriptor.is_valid() == FALSE) { THROW overlapped_error(@code 6); } // ERROR_INVALID_HANDLE
-    VAR handle ADDRESS := descriptor.native_handle();
-    VAR associated ADDRESS := syscall::windows::create_io_completion_port(
-      @file_handle handle, @existing_completion_port .port, @completion_key 0, @concurrent_threads 0);
-    IF (associated!?) { THROW overlapped_error(@code syscall::windows::get_last_error()); }
-    RETURN overlapped_handle_ref(@handle handle, @processor THIS<-);
+    VAR error U32 := .port.associate(@descriptor descriptor, @key 0);
+    IF (error != 0) { THROW overlapped_error(@code error); }
+    RETURN overlapped_handle_ref(@handle descriptor.native_handle(), @processor THIS<-);
   }
 
   DOC <$ Posts one successful notification to the port. An idle request and its receiver stay alive until dispatch. $>
   .post FUNCTION(@request MUT& overlapped_request, @transferred U32 DEFAULT(0)) MUT
   {
-    // Posted packets carry a byte count but Windows does not write a completion status.
-    request.native.internal := 0;
+    VAR issue MUT& windows_completion_issue := request.issue AS MUT& windows_completion_issue;
+    issue.state.STORE#ATOMIC_RELAXED(0);
     .outstanding.ADD#ATOMIC_RELAXED(1);
-    IF (syscall::windows::post_queued_completion_status(@completion_port .port,
-      @transferred transferred, @completion_key 0,
-      @overlapped request.native<- AS MUT->syscall::windows::overlapped) == 0)
-    {
-      VAR code U32 := syscall::windows::get_last_error();
-      .outstanding.SUBTRACT#ATOMIC_RELAXED(1);
-      THROW overlapped_error(@code code);
-    }
+    TRY { .port.post(@native request.native<- AS MUT->syscall::windows::overlapped, @transferred transferred); }
+    CATCH DEFAULT { .outstanding.SUBTRACT#ATOMIC_RELAXED(1); RETHROW; }
   }
 
   DOC <$ Returns a snapshot of submitted or posted requests, including submissions in progress and batches whose callbacks have not all returned. $>
@@ -149,40 +265,19 @@ DOC <$ Owns one Windows I/O completion port. Producers issue native I/O on assoc
   DOC <$ Dispatches up to maximum packets on the calling thread. The first dequeue uses timeout_milliseconds. Zero polls the port, and a negative timeout waits indefinitely. Subsequent dequeues poll. $>
   .process_completions FUNCTION(@maximum SZ, @timeout_milliseconds I32 DEFAULT(0)) MUT: SZ
   {
-    VAR timeout U32 := timeout_milliseconds AS PARTIAL U32;
-    IF (timeout_milliseconds < 0) { timeout := (0 AS U32) #!!; }
-    VAR processed SZ;
     VAR batch [overlapped_batch_capacity]syscall::windows::overlapped_entry;
+    AUTO notify := -< [] (@entry CONST& syscall::windows::overlapped_entry): BOOL
+    { RETURN deliver_windows_completion#overlapped_request(@entry entry); };
+    VAR processed SZ;
     LOOP WHILE(processed < maximum) DO
     {
-      VAR capacity SZ := maximum - processed;
-      IF (capacity > overlapped_batch_capacity) { capacity := overlapped_batch_capacity; }
-      VAR removed U32;
-      IF (syscall::windows::get_queued_completion_status_ex(@completion_port .port,
-        @entries batch[0]<-, @capacity capacity AS ASSUME U32, @removed removed<-,
-        @milliseconds timeout, @alertable 0) == 0)
-      {
-        VAR code U32 := syscall::windows::get_last_error();
-        IF (code == windows_wait_timeout) { BREAK; }
-        THROW overlapped_error(@code code);
-      }
-
-      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(removed AS SZ) DO
-      {
-        VAR entry CONST& syscall::windows::overlapped_entry := batch[index];
-        VAR request MUT->overlapped_request :=
-          IBC_PUN#(MUT->overlapped_request)(@ADDR IBC_GETADDR(@PTR entry.overlapped));
-        VAR completion overlapped_completion_result;
-        completion.transferred := entry.transferred;
-        VAR status I32 := request->.native.internal AS PARTIAL I32;
-        IF (status < 0) { completion.error := syscall::windows::nt_status_to_dos_error(@status status); }
-        VAR operation overlapped_operation_ref := request->.operation AS MUT& overlapped_operation_ref;
-        operation.on_notify(@completion completion);
-      };
-      .outstanding.SUBTRACT#ATOMIC_RELAXED(removed AS SZ);
-      processed := processed + (removed AS SZ);
-      IF ((removed AS SZ) < capacity) { BREAK; }
-      timeout := 0;
+      VAR count SZ := .port.dispatch_batch(@maximum maximum - processed,
+        @timeout_milliseconds timeout_milliseconds, @batch batch, @notify notify);
+      IF (count == 0) { BREAK; }
+      .outstanding.SUBTRACT#ATOMIC_RELAXED(count);
+      processed := processed + count;
+      IF (count < batch.SIZE()) { BREAK; }
+      timeout_milliseconds := 0;
     };
     RETURN processed;
   }

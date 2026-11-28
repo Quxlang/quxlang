@@ -1,0 +1,191 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+
+PRIVATE(MODULE)
+{
+  DOC <$ Retries a nonblocking operation after readiness notification and propagates a kernel event error. $>
+  ::retry_ready_socket INCLUDE_IF(OS_MACOS || (OS_LINUX && io::linux_use_io_uring == FALSE)) FUNCTION(@operation MUT& AUTO, @submission AUTO& AUTO, @error U32): BOOL
+  {
+    IF (error != 0) { THROW translate_socket_error(@code error AS I64); }
+    RETURN operation.start(@submission submission);
+  }
+
+  DOC <$ Starts a nonblocking connect and verifies its socket error on writable readiness. $>
+  ::connect_operation INCLUDE_IF(OS_MACOS || (OS_LINUX && io::linux_use_io_uring == FALSE)) STRUCT MOVE_ONLY NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    ::value_type ALIAS VOID;
+    .socket VAR socket_operation_handle;
+    .endpoint VAR endpoint;
+
+    .CONSTRUCTOR FUNCTION(@socket CONST& socket_operation_handle, @endpoint CONST& endpoint)
+      :> .socket:(@OTHER socket), .endpoint:(@OTHER endpoint) {}
+
+    .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
+    {
+      IF (connect_socket(@handle .socket, @endpoint .endpoint)) { RETURN TRUE; }
+      submission.wait(@descriptor .socket, @writing TRUE);
+      RETURN FALSE;
+    }
+
+    .complete FUNCTION(@submission AUTO& AUTO, @size SZ, @error U32) MUT: BOOL
+    {
+      IF (error != 0) { THROW translate_socket_error(@code error AS I64); }
+      finish_socket_connect(@handle .socket);
+      RETURN TRUE;
+    }
+
+    .result FUNCTION() MUT {}
+  }
+
+  DOC <$ Waits for a listener to produce a connection and owns the accepted socket until retrieval. $>
+  ::accept_operation INCLUDE_IF(OS_MACOS || (OS_LINUX && io::linux_use_io_uring == FALSE)) STRUCT MOVE_ONLY NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    ::value_type ALIAS tcp_connection;
+    .listener VAR socket_operation_handle;
+    .accepted VAR tcp_connection;
+
+    .CONSTRUCTOR FUNCTION(@socket CONST& socket_operation_handle) :> .listener:(@OTHER socket) {}
+
+    .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
+    {
+      IF (accept_socket(@handle .listener, @result .accepted)) { RETURN TRUE; }
+      submission.wait(@descriptor .listener, @writing FALSE);
+      RETURN FALSE;
+    }
+
+    .complete FUNCTION(@submission AUTO& AUTO, @size SZ, @error U32) MUT: BOOL
+    { RETURN retry_ready_socket(@operation THIS, @submission submission, @error error); }
+
+    .result FUNCTION() MUT: tcp_connection
+    {
+      VAR accepted MUT& tcp_connection := .accepted;
+      RETURN MOVE(accepted);
+    }
+  }
+
+  DOC <$ Reads a TCP prefix and uses one count for the requested and completed prefix. $>
+  ::read_operation INCLUDE_IF(OS_MACOS || (OS_LINUX && io::linux_use_io_uring == FALSE)) STRUCT MOVE_ONLY NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    ::value_type ALIAS SZ;
+    .data VAR MUT=>>BYTE;
+    .socket VAR socket_operation_handle;
+    .size VAR U32;
+
+    .CONSTRUCTOR FUNCTION(@socket CONST& socket_operation_handle, @buffer CONST& io::buffer_ref)
+      :> .data:(@OTHER buffer.data), .socket:(@OTHER socket), .size:(@OTHER socket_transfer_size(@size buffer.size)) {}
+
+    .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
+    {
+      VAR buffer io::buffer_ref :(@data .data, @size .size AS SZ);
+      VAR transferred SZ;
+      IF (transfer_socket#(@writing FALSE)(@handle .socket, @buffer buffer, @result transferred))
+      { .size := transferred AS CHECKED U32; RETURN TRUE; }
+      submission.wait(@descriptor .socket, @writing FALSE);
+      RETURN FALSE;
+    }
+
+    .complete FUNCTION(@submission AUTO& AUTO, @size SZ, @error U32) MUT: BOOL
+    { RETURN retry_ready_socket(@operation THIS, @submission submission, @error error); }
+
+    .result FUNCTION() MUT: SZ { RETURN .size AS SZ; }
+  }
+
+  DOC <$ Writes a TCP prefix and uses one count for the requested and completed prefix. $>
+  ::write_operation INCLUDE_IF(OS_MACOS || (OS_LINUX && io::linux_use_io_uring == FALSE)) STRUCT MOVE_ONLY NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    ::value_type ALIAS SZ;
+    .data VAR MUT=>>BYTE;
+    .socket VAR socket_operation_handle;
+    .size VAR U32;
+
+    .CONSTRUCTOR FUNCTION(@socket CONST& socket_operation_handle, @buffer CONST& io::buffer_ref)
+      :> .data:(@OTHER buffer.data), .socket:(@OTHER socket), .size:(@OTHER socket_transfer_size(@size buffer.size)) {}
+
+    .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
+    {
+      VAR buffer io::buffer_ref :(@data .data, @size .size AS SZ);
+      VAR transferred SZ;
+      IF (transfer_socket#(@writing TRUE)(@handle .socket, @buffer buffer, @result transferred))
+      { .size := transferred AS CHECKED U32; RETURN TRUE; }
+      submission.wait(@descriptor .socket, @writing TRUE);
+      RETURN FALSE;
+    }
+
+    .complete FUNCTION(@submission AUTO& AUTO, @size SZ, @error U32) MUT: BOOL
+    { RETURN retry_ready_socket(@operation THIS, @submission submission, @error error); }
+
+    .result FUNCTION() MUT: SZ { RETURN .size AS SZ; }
+  }
+
+  DOC <$ Sends one UDP datagram and retains the destination through any readiness retries. $>
+  ::send_operation INCLUDE_IF(OS_MACOS || (OS_LINUX && io::linux_use_io_uring == FALSE)) STRUCT MOVE_ONLY NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    ::value_type ALIAS SZ;
+    .buffer VAR io::buffer_ref;
+    .destination VAR endpoint;
+    .socket VAR socket_operation_handle;
+
+    .CONSTRUCTOR FUNCTION(@socket CONST& socket_operation_handle, @buffer CONST& io::buffer_ref, @destination CONST& endpoint)
+      :> .buffer:(@OTHER buffer), .destination:(@OTHER destination), .socket:(@OTHER socket) {}
+
+    .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
+    {
+      VAR transferred SZ;
+      IF (send_datagram(@handle .socket, @buffer .buffer, @destination .destination, @result transferred))
+      { .buffer.size := transferred; RETURN TRUE; }
+      submission.wait(@descriptor .socket, @writing TRUE);
+      RETURN FALSE;
+    }
+
+    .complete FUNCTION(@submission AUTO& AUTO, @size SZ, @error U32) MUT: BOOL
+    { RETURN retry_ready_socket(@operation THIS, @submission submission, @error error); }
+
+    .result FUNCTION() MUT: SZ { RETURN .buffer.size; }
+  }
+
+  DOC <$ Borrows the socket and buffer for a pending nonblocking datagram receive. $>
+  ::readiness_datagram_input INCLUDE_IF(OS_MACOS || (OS_LINUX && io::linux_use_io_uring == FALSE)) STRUCT
+  {
+    .socket VAR socket_operation_handle;
+    .buffer VAR io::buffer_ref;
+    .CONSTRUCTOR FUNCTION(@socket CONST& socket_operation_handle, @buffer CONST& io::buffer_ref)
+      :> .socket:(@OTHER socket), .buffer:(@OTHER buffer) {}
+  }
+
+  ::readiness_datagram_state INCLUDE_IF(OS_MACOS || (OS_LINUX && io::linux_use_io_uring == FALSE)) INLINE_VARIANT [readiness_datagram_input, datagram_result];
+
+  DOC <$ Stores the pending UDP receive arguments or the completed datagram in the same inline storage. $>
+  ::receive_operation INCLUDE_IF(OS_MACOS || (OS_LINUX && io::linux_use_io_uring == FALSE)) STRUCT MOVE_ONLY NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    ::value_type ALIAS datagram_result;
+    .state VAR readiness_datagram_state;
+
+    .CONSTRUCTOR FUNCTION(@socket CONST& socket_operation_handle, @buffer CONST& io::buffer_ref)
+      :> .state:(@OTHER readiness_datagram_input(@socket socket, @buffer buffer)) {}
+
+    .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
+    {
+      VAR received datagram_result;
+      {
+        VAR input CONST& readiness_datagram_input := UNWRAP .state INTO readiness_datagram_input;
+        IF (receive_datagram(@handle input.socket, @buffer input.buffer, @result received) == FALSE)
+        {
+          submission.wait(@descriptor input.socket, @writing FALSE);
+          RETURN FALSE;
+        }
+      }
+      .state := readiness_datagram_state(@OTHER received);
+      RETURN TRUE;
+    }
+
+    .complete FUNCTION(@submission AUTO& AUTO, @size SZ, @error U32) MUT: BOOL
+    { RETURN retry_ready_socket(@operation THIS, @submission submission, @error error); }
+
+    .result FUNCTION() MUT: datagram_result
+    {
+      VAR received MUT& datagram_result := UNWRAP .state INTO datagram_result;
+      RETURN MOVE(received);
+    }
+  }
+}

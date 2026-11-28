@@ -391,10 +391,10 @@ PRIVATE(MODULE)
     RETURN handle;
   }
 
-  DOC <$ The connect_socket function starts a TCP connection. Failed connections retain their closing obligation. $>
-  ::connect_socket FUNCTION(@handle native_socket_ref, @endpoint CONST& endpoint)
+  DOC <$ Starts a TCP connection and returns FALSE while the connection is in progress. $>
+  ::connect_socket FUNCTION(@handle native_socket_ref, @endpoint CONST& endpoint): BOOL
   {
-    VAR destination encoded_endpoint := encode_socket_endpoint(@endpoint endpoint);
+    VAR destination encoded_endpoint := encoded_endpoint(@endpoint endpoint);
     VAR status I32;
     STATIC_IF(OS_LINUX)
     {
@@ -411,10 +411,13 @@ PRIVATE(MODULE)
     IF (status != 0)
     {
       VAR code I64 := socket_failure_code(@status status AS I64);
-      STATIC_IF(OS_LINUX) { IF (code == 115 || code == 4) { THROW error::would_block; } }
-      STATIC_IF(OS_MACOS) { IF (code == 36 || code == 4) { THROW error::would_block; } }
-      THROW translate_socket_error(@code code);
+      STATIC_IF(OS_LINUX) { IF (code == 115 || code == 4) { RETURN FALSE; } }
+      STATIC_IF(OS_MACOS) { IF (code == 36 || code == 4) { RETURN FALSE; } }
+      VAR failure error := translate_socket_error(@code code);
+      IF (failure == error::would_block) { RETURN FALSE; }
+      THROW failure;
     }
+    RETURN TRUE;
   }
 
   DOC <$ The listen_socket function places a bound TCP socket into the listening state. $>
@@ -443,8 +446,8 @@ PRIVATE(MODULE)
     }
   }
 
-  DOC <$ The accept_socket function accepts one connection and configures its closing and signal policy. $>
-  ::accept_socket FUNCTION(@handle native_socket_ref): tcp_connection
+  DOC <$ Accepts one connection and configures its closing and signal policy. Returns FALSE while the listener has no connection to accept. $>
+  ::accept_socket FUNCTION(@handle native_socket_ref, @result MUT& tcp_connection): BOOL
   {
     VAR accepted native_socket_ref := invalid_socket_handle();
     STATIC_IF(OS_LINUX)
@@ -463,14 +466,18 @@ PRIVATE(MODULE)
     {
       IF (accepted == invalid_socket_handle())
       {
-        THROW translate_socket_error(@code syscall::windows::socket_last_error() AS I64);
+        VAR failure error := translate_socket_error(@code syscall::windows::socket_last_error() AS I64);
+        IF (failure == error::would_block) { RETURN FALSE; }
+        THROW failure;
       }
     }
     STATIC_ELSE
     {
       IF (accepted < 0)
       {
-        THROW translate_socket_error(@code socket_failure_code(@status accepted AS I64));
+        VAR failure error := translate_socket_error(@code socket_failure_code(@status accepted AS I64));
+        IF (failure == error::would_block) { RETURN FALSE; }
+        THROW failure;
       }
     }
     STATIC_IF(OS_WINDOWS)
@@ -486,16 +493,10 @@ PRIVATE(MODULE)
     VAR connection tcp_connection :(@reference tcp_connection_ref(@handle accepted));
     STATIC_IF(OS_MACOS)
     {
+      // Darwin inherits O_NONBLOCK and SO_NOSIGPIPE from the listener. FD_CLOEXEC belongs to the new descriptor.
       IF (syscall::macos::fcntl(@socket accepted, @command 2, @argument 1) < 0)
       {
         THROW translate_socket_error(@code syscall::macos::errno_location()-> AS I64);
-      }
-      IF (syscall::macos::fcntl(@socket accepted, @command 4, @argument 4) < 0)
-      { THROW translate_socket_error(@code syscall::macos::errno_location()-> AS I64); }
-      VAR code I64 := set_socket_integer_option(@handle accepted, @level 65535, @option 4130, @value 1);
-      IF (code != 0)
-      {
-        THROW translate_socket_error(@code code);
       }
     }
     STATIC_ELSE STATIC_IF(OS_WINDOWS)
@@ -505,7 +506,8 @@ PRIVATE(MODULE)
         THROW error::system_failure;
       }
     }
-    RETURN MOVE(connection);
+    result := MOVE(connection);
+    RETURN TRUE;
   }
 
   DOC <$ The shutdown_socket function disables the selected TCP directions without releasing the socket. $>
@@ -539,13 +541,15 @@ PRIVATE(MODULE)
     }
   }
 
-  DOC <$ The transfer_socket function transfers one TCP prefix. Empty requests return zero; a zero-byte read of a nonempty request denotes orderly EOF. Interrupted calls retry before publishing an outcome. $>
+  DOC <$ Transfers one TCP prefix and returns FALSE when the socket would block. Empty requests complete with zero bytes. A zero-byte read of a nonempty request denotes orderly EOF. $>
   ::transfer_socket TEMPLATE(@writing VALUE BOOL)
-    FUNCTION(@handle native_socket_ref, @buffer CONST& io::buffer_ref): SZ
+    FUNCTION(@handle native_socket_ref, @buffer CONST& io::buffer_ref, @result MUT& SZ): BOOL
   {
     IF (buffer.size == 0)
     {
-      RETURN 0;
+      IF (handle == invalid_socket_handle()) { THROW error::closed; }
+      result := 0;
+      RETURN TRUE;
     }
     LOOP WHILE(TRUE) DO
     {
@@ -570,7 +574,8 @@ PRIVATE(MODULE)
         }
         IF (status == 0)
         {
-          RETURN size AS SZ;
+          result := size AS SZ;
+          RETURN TRUE;
         }
         transferred := -1;
       }
@@ -600,24 +605,24 @@ PRIVATE(MODULE)
       }
       IF (transferred >= 0)
       {
-        RETURN transferred AS CHECKED SZ;
+        result := transferred AS CHECKED SZ;
+        RETURN TRUE;
       }
       VAR failure error := translate_socket_error(@code socket_failure_code(@status transferred AS I64));
-      IF (failure != error::interrupted)
-      {
-        THROW failure;
-      }
+      IF (failure == error::would_block) { RETURN FALSE; }
+      IF (failure != error::interrupted) { THROW failure; }
     };
   }
 
-  DOC <$ The send_datagram function sends one complete UDP message. Oversized messages fail before transmission. $>
-  ::send_datagram FUNCTION(@handle native_socket_ref, @buffer CONST& io::buffer_ref, @destination CONST& endpoint): SZ
+  DOC <$ Sends one complete UDP message and returns FALSE when the socket would block. Oversized messages fail before transmission. $>
+  ::send_datagram FUNCTION(@handle native_socket_ref, @buffer CONST& io::buffer_ref,
+    @destination CONST& endpoint, @result MUT& SZ): BOOL
   {
     IF (buffer.size > 2147483647)
     {
       THROW error::message_too_large;
     }
-    VAR encoded encoded_endpoint := encode_socket_endpoint(@endpoint destination);
+    VAR encoded encoded_endpoint := encoded_endpoint(@endpoint destination);
     LOOP WHILE(TRUE) DO
     {
       VAR transferred syscall::signed_byte_count;
@@ -628,11 +633,12 @@ PRIVATE(MODULE)
         native_buffer.length := buffer.size AS CHECKED U32;
         VAR size U32;
         VAR status I32 := syscall::windows::socket_send_to(@socket handle, @buffers native_buffer<-, @count 1,
-          @transferred size<-, @flags 0, @destination encoded.address<-, @length encoded.length AS CHECKED I32,
+          @transferred size<-, @flags 0, @destination IBC_GETADDR(@PTR encoded.address<-), @length encoded.length AS CHECKED I32,
           @overlapped NULL, @completion NULL);
         IF (status == 0)
         {
-          RETURN size AS SZ;
+          result := size AS SZ;
+          RETURN TRUE;
         }
         transferred := -1;
       }
@@ -648,18 +654,17 @@ PRIVATE(MODULE)
       }
       IF (transferred >= 0)
       {
-        RETURN transferred AS CHECKED SZ;
+        result := transferred AS CHECKED SZ;
+        RETURN TRUE;
       }
       VAR failure error := translate_socket_error(@code socket_failure_code(@status transferred AS I64));
-      IF (failure != error::interrupted)
-      {
-        THROW failure;
-      }
+      IF (failure == error::would_block) { RETURN FALSE; }
+      IF (failure != error::interrupted) { THROW failure; }
     };
   }
 
-  DOC <$ The receive_datagram function consumes one UDP message and reports its source and truncation status. $>
-  ::receive_datagram FUNCTION(@handle native_socket_ref, @buffer CONST& io::buffer_ref): datagram_result
+  DOC <$ Consumes one UDP message and reports its source and truncation status. Returns FALSE when no message is available. $>
+  ::receive_datagram FUNCTION(@handle native_socket_ref, @buffer CONST& io::buffer_ref, @result MUT& datagram_result): BOOL
   {
     // A nonempty native destination consumes messages even when the public
     // buffer is empty. The copied byte distinguishes empty messages from loss.
@@ -671,9 +676,7 @@ PRIVATE(MODULE)
     }
     LOOP WHILE(TRUE) DO
     {
-      VAR source encoded_endpoint;
-      source.length := 128;
-      VAR result datagram_result;
+      VAR source internet_address_storage;
       VAR transferred syscall::signed_byte_count;
       STATIC_IF(OS_WINDOWS)
       {
@@ -682,10 +685,9 @@ PRIVATE(MODULE)
         native_buffer.length := socket_transfer_size(@size receive_buffer.size);
         VAR size U32;
         VAR flags U32;
-        VAR length I32 := 128;
+        VAR length I32 := SIZEOF(internet_address_storage) AS CHECKED I32;
         VAR status I32 := syscall::windows::socket_receive_from(@socket handle, @buffers native_buffer<-, @count 1,
-          @transferred size<-, @flags flags<-, @source source.address<-, @length length<-, @overlapped NULL, @completion NULL);
-        source.length := length AS CHECKED U32;
+          @transferred size<-, @flags flags<-, @source IBC_GETADDR(@PTR source<-), @length length<-, @overlapped NULL, @completion NULL);
         IF (status == 0 || syscall::windows::socket_last_error() == 10040)
         {
           IF (status != 0)
@@ -693,13 +695,13 @@ PRIVATE(MODULE)
             size := native_buffer.length;
           }
           result.size := size AS SZ;
-          result.truncated := status != 0 || result.size > buffer.size;
+          result.truncated := status != 0 || (flags #&& 32768) != 0 || result.size > buffer.size;
           IF (result.size > buffer.size)
           {
             result.size := buffer.size;
           }
-          result.source := decode_socket_endpoint(@encoded source);
-          RETURN result;
+          result.source := decode_socket_address(@address source, @length length AS CHECKED U32);
+          RETURN TRUE;
         }
         transferred := -1;
       }
@@ -709,8 +711,8 @@ PRIVATE(MODULE)
         vector.address := IBC_GETADDR(@PTR receive_buffer.data);
         vector.length := socket_transfer_size(@size receive_buffer.size) AS SZ;
         VAR message syscall::datagram_message;
-        message.name := IBC_GETADDR(@PTR source.address<-);
-        message.name_length := 128;
+        message.name := IBC_GETADDR(@PTR source<-);
+        message.name_length := SIZEOF(internet_address_storage) AS CHECKED U32;
         message.vectors := IBC_GETADDR(@PTR vector<-);
         message.vector_count := 1;
         STATIC_IF(OS_LINUX)
@@ -724,8 +726,7 @@ PRIVATE(MODULE)
         IF (transferred >= 0)
         {
           result.size := transferred AS CHECKED SZ;
-          source.length := message.name_length;
-          result.source := decode_socket_endpoint(@encoded source);
+          result.source := decode_socket_address(@address source, @length message.name_length);
           STATIC_IF(OS_LINUX)
           {
             result.truncated := (message.flags #&& 32) != 0;
@@ -739,14 +740,12 @@ PRIVATE(MODULE)
           {
             result.size := buffer.size;
           }
-          RETURN result;
+          RETURN TRUE;
         }
       }
       VAR failure error := translate_socket_error(@code socket_failure_code(@status transferred AS I64));
-      IF (failure != error::interrupted)
-      {
-        THROW failure;
-      }
+      IF (failure == error::would_block) { RETURN FALSE; }
+      IF (failure != error::interrupted) { THROW failure; }
     };
   }
 }

@@ -1,0 +1,131 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+DOC <$
+  Reads from a blocking descriptor at its cursor on a file worker of an
+  async_runtime2. The descriptor and the buffer outlive completion. The
+  operation occupies a stable address until its result has been taken.
+  $>
+::file_stream_read INCLUDE_IF(OS_LINUX || OS_MACOS) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  DOC <$ Names the result type. $>
+  ::value_type ALIAS transfer_result;
+
+  PRIVATE(MODULE)
+  {
+    .completion VAR operation_completion;
+    .work VAR file_work;
+    .descriptor VAR io_descriptor_ref;
+    .buffer VAR buffer_ref;
+    .outcome VAR transfer_result;
+
+    DOC <$ Performs the transfer on a file worker. $>
+    ::run FUNCTION(@context MUT->VOID)
+    {
+      VAR operation := context AS REINTERPRET MUT->file_stream_read;
+      VAR reference file_ref :(@descriptor operation->.descriptor);
+      reference.read(@buffer operation->.buffer, @result operation->.outcome);
+      operation->.completion.finish();
+    }
+  }
+
+  DOC <$ Describes the transfer without starting it. $>
+  .CONSTRUCTOR FUNCTION(@runtime MUT& async_runtime2, @descriptor io_descriptor_ref, @buffer CONST& buffer_ref)
+    :> .completion:(@runtime runtime), .buffer:(@OTHER buffer)
+  {
+    .descriptor := descriptor;
+    .work.context := THIS<- AS REINTERPRET MUT->VOID;
+    .work.run := run<-;
+  }
+
+  DOC <$ Queues the transfer once. The result is never available without waiting. $>
+  .start FUNCTION() MUT: BOOL
+  {
+    .completion.begin();
+    TRY { .completion.runtime().stream_work.submit(@work .work<-); }
+    CATCH DEFAULT { .completion.abandon(); RETHROW; }
+    RETURN FALSE;
+  }
+
+  DOC <$ Registers the continuation that completion notifies. FALSE reports that the transfer completed first. $>
+  .suspend FUNCTION(@continuation MUT->std::async_continuation) MUT: BOOL
+  { RETURN .completion.suspend(@continuation continuation); }
+
+  DOC <$ Returns the outcome of the completed transfer. $>
+  .result FUNCTION() MUT: transfer_result { RETURN .outcome; }
+
+  DOC <$ Starts the transfer. $>
+  .AWAIT_READY FUNCTION() MUT: BOOL { RETURN .start(); }
+  DOC <$ Registers the awaiting coroutine. $>
+  .AWAIT_SUSPEND FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) MUT: BOOL
+  { RETURN .completion.suspend(@continuation CONTROLLER.continuation()); }
+  DOC <$ Returns the outcome after resumption. $>
+  .AWAIT_RESUME FUNCTION() MUT: transfer_result { RETURN .outcome; }
+  DOC <$ A started transfer runs to completion. $>
+  .TRY_CANCEL FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) CONST NOEXCEPT: BOOL { RETURN FALSE; }
+}
+
+DOC <$
+  Writes to a blocking descriptor at its cursor on a file worker of an
+  async_runtime2. The descriptor and the buffer outlive completion. The
+  operation occupies a stable address until its result has been taken.
+  $>
+::file_stream_write INCLUDE_IF(OS_LINUX || OS_MACOS) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  DOC <$ Names the result type. $>
+  ::value_type ALIAS transfer_result;
+
+  PRIVATE(MODULE)
+  {
+    .completion VAR operation_completion;
+    .work VAR file_work;
+    .descriptor VAR io_descriptor_ref;
+    .buffer VAR buffer_ref;
+    .outcome VAR transfer_result;
+
+    DOC <$ Performs the transfer on a file worker. $>
+    ::run FUNCTION(@context MUT->VOID)
+    {
+      VAR operation := context AS REINTERPRET MUT->file_stream_write;
+      VAR reference file_ref :(@descriptor operation->.descriptor);
+      reference.write(@buffer operation->.buffer, @result operation->.outcome);
+      operation->.completion.finish();
+    }
+  }
+
+  DOC <$ Describes the transfer without starting it. $>
+  .CONSTRUCTOR FUNCTION(@runtime MUT& async_runtime2, @descriptor io_descriptor_ref, @buffer CONST& buffer_ref)
+    :> .completion:(@runtime runtime), .buffer:(@OTHER buffer)
+  {
+    .descriptor := descriptor;
+    .work.context := THIS<- AS REINTERPRET MUT->VOID;
+    .work.run := run<-;
+  }
+
+  DOC <$ Queues the transfer once. The result is never available without waiting. $>
+  .start FUNCTION() MUT: BOOL
+  {
+    .completion.begin();
+    TRY { .completion.runtime().stream_work.submit(@work .work<-); }
+    CATCH DEFAULT { .completion.abandon(); RETHROW; }
+    RETURN FALSE;
+  }
+
+  DOC <$ Registers the continuation that completion notifies. FALSE reports that the transfer completed first. $>
+  .suspend FUNCTION(@continuation MUT->std::async_continuation) MUT: BOOL
+  { RETURN .completion.suspend(@continuation continuation); }
+
+  DOC <$ Returns the outcome of the completed transfer. $>
+  .result FUNCTION() MUT: transfer_result { RETURN .outcome; }
+
+  DOC <$ Starts the transfer. $>
+  .AWAIT_READY FUNCTION() MUT: BOOL { RETURN .start(); }
+  DOC <$ Registers the awaiting coroutine. $>
+  .AWAIT_SUSPEND FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) MUT: BOOL
+  { RETURN .completion.suspend(@continuation CONTROLLER.continuation()); }
+  DOC <$ Returns the outcome after resumption. $>
+  .AWAIT_RESUME FUNCTION() MUT: transfer_result { RETURN .outcome; }
+  DOC <$ A started transfer runs to completion. $>
+  .TRY_CANCEL FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) CONST NOEXCEPT: BOOL { RETURN FALSE; }
+}

@@ -169,8 +169,9 @@ first submission associates the handle with this context's completion port.
 Subsequent submissions to this context reuse that binding. A handle that
 cannot be associated, including a handle bound to another completion port,
 produces an immediate unsuccessful completion. After all operations complete,
-the handle is closed through `file_ref::close` or
-[`io::close_windows_async_handle`](native-operation.md#close_windows_async_handle).
+the owner closes the handle through `file_ref::close` or through the
+originating descriptor's `close_windows_handle(@close)` member.
+[Windows descriptor ownership](io-descriptor-ref.md#close_windows_handle)
 On macOS, an `offset` above 9,223,372,036,854,775,807 produces an immediate
 unsuccessful completion.
 

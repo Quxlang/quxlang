@@ -1,0 +1,39 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+IMPORT syscall;
+
+PRIVATE(MODULE)
+{
+  DOC <$ Supplies the macOS mechanisms of an async_runtime2: one kqueue for socket readiness and native file completions, and a worker pool for positioned transfers that the kernel does not accept. $>
+  ::runtime_backend INCLUDE_IF(OS_MACOS) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    .processor VAR kqueue_processor;
+    .wake_target VAR kqueue_target;
+    .file_work VAR file_work_pool;
+    DOC <$ Records whether the running kernel delivers file completions through the kqueue. $>
+    .native_aio VAR BOOL;
+
+    DOC <$ The wake event carries no work. Its delivery returns the consumer from its wait. $>
+    ::ignore_event FUNCTION(@context MUT->VOID, @event CONST->syscall::macos::kernel_event) {}
+
+    .CONSTRUCTOR FUNCTION(@entries U32, @file_workers SZ) :> .file_work:(@workers file_workers)
+    {
+      .native_aio := kqueue_native_aio_available();
+      .wake_target.deliver := ignore_event<-;
+    }
+
+    DOC <$ Returns the consumer from its wait. $>
+    .wake FUNCTION() MUT { .processor.raise(@target .wake_target); }
+
+    DOC <$ The kqueue discards an undelivered wake event when it closes. $>
+    .quiesce FUNCTION() MUT {}
+
+    DOC <$ Waits for events and delivers them to their operations on the calling thread. A failed wait leaves no way to complete any pending operation and panics. $>
+    .process FUNCTION() MUT
+    {
+      TRY { .processor.process_events(@maximum 64, @timeout_milliseconds -1); }
+      CATCH failure CONST& kqueue_error { PANIC "The kqueue consumer cannot wait for events."; }
+    }
+  }
+}

@@ -1,0 +1,228 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT std;
+IMPORT syscall;
+
+::runtime2_operation_tests INCLUDE_IF(OS_LINUX || OS_MACOS) NAMESPACE
+{
+  DOC <$ Creates an anonymous temporary file that supports positioned and cursor transfers. $>
+  ::temporary_file INCLUDE_IF(OS_MACOS) FUNCTION(): io::file
+  {
+    VAR name STRING_CONSTANT := "/tmp/quxlang-io-XXXXXX";
+    VAR path [23]BYTE;
+    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(22) DO { path[index] := name.BEGIN()[index]; };
+    VAR native I32 := io_runtime_tests::temporary_file(@path path[&0]);
+    TEST_ASSERT(native >= 0);
+    TEST_ASSERT(io_runtime_tests::unlink_file(@path path[&0]) == 0);
+    RETURN io::file(@native_ref io::file_ref(@descriptor io::io_descriptor_ref(@native_handle native)));
+  }
+
+  DOC <$ Creates an anonymous temporary file that supports positioned and cursor transfers. $>
+  ::temporary_file INCLUDE_IF(OS_LINUX) FUNCTION(): io::file
+  {
+    VAR name STRING_CONSTANT := "quxlang-runtime2\0";
+    VAR native I32 := syscall::linux::memfd_create(@name name.BEGIN(), @flags 1);
+    TEST_ASSERT(native >= 0);
+    RETURN io::file(@native_ref io::file_ref(@descriptor io::io_descriptor_ref(@native_handle native)));
+  }
+
+  DOC <$ Awaits positioned transfers through the file members in a coroutine: a write past a hole, a read that spans the hole, and a read at end of file. $>
+  ::frame_transfers COROUTINE(@file io::file_ref): BOOL
+  {
+    VAR data [3]BYTE;
+    data[0] := 19; data[1] := 73; data[2] := 52;
+    VAR output io::buffer_ref :(@data data[&0], @size data.SIZE());
+    VAR written io::transfer_result;
+    file.write(@buffer output, @offset 2, @result written);
+    TEST_ASSERT(written.succeeded && written.size == 3 && written.error == 0);
+    VAR bytes [8]BYTE;
+    VAR input io::buffer_ref :(@data bytes[&0], @size bytes.SIZE());
+    VAR received io::transfer_result;
+    file.read(@buffer input, @offset 0, @result received);
+    TEST_ASSERT(received.succeeded && received.size == 5);
+    TEST_ASSERT(bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 19 && bytes[3] == 73 && bytes[4] == 52);
+    VAR empty io::transfer_result;
+    file.read(@buffer input, @offset 5, @result empty);
+    TEST_ASSERT(empty.succeeded && empty.size == 0 && empty.error == 0);
+    RETURN TRUE;
+  }
+
+  DOC <$ Frame-local operations and futures transfer the same bytes. A rejected descriptor or offset completes with its error code and no transfer. $>
+  ::positioned_round_trip UNIT_TEST
+  {
+    VAR file io::file := temporary_file();
+    VAR descriptor io::io_descriptor_ref := file.reference().descriptor;
+    VAR runtime io::async_runtime2 :(@entries 8, @workers 1, @file_workers 1);
+    VAR done := ON(runtime) RUN frame_transfers(@file file.reference());
+    TEST_ASSERT(done.get());
+
+    VAR data [2]BYTE;
+    VAR buffer io::buffer_ref :(@data data[&0], @size data.SIZE());
+    VAR suffix_future := runtime.read(@descriptor descriptor, @buffer buffer, @offset 3);
+    VAR suffix io::transfer_result := suffix_future.get();
+    TEST_ASSERT(suffix.succeeded && suffix.size == 2 && data[0] == 73 && data[1] == 52);
+    data[0] := 7;
+    VAR rewritten_future := runtime.write(@descriptor descriptor, @buffer buffer, @offset 0);
+    VAR rewritten io::transfer_result := rewritten_future.get();
+    TEST_ASSERT(rewritten.succeeded && rewritten.size == 2);
+    VAR prefix_future := runtime.read(@descriptor descriptor, @buffer buffer, @offset 0);
+    VAR prefix io::transfer_result := prefix_future.get();
+    TEST_ASSERT(prefix.succeeded && prefix.size == 2 && data[0] == 7 && data[1] == 52);
+
+    VAR closed io::io_descriptor_ref;
+    VAR invalid_future := runtime.read(@descriptor closed, @buffer buffer, @offset 0);
+    VAR invalid io::transfer_result := invalid_future.get();
+    TEST_ASSERT(invalid.succeeded == FALSE && invalid.size == 0 && invalid.error == 9);
+    VAR beyond_future := runtime.write(@descriptor descriptor, @buffer buffer, @offset (0 AS U64) #!!);
+    VAR beyond io::transfer_result := beyond_future.get();
+    TEST_ASSERT(beyond.succeeded == FALSE && beyond.size == 0 && beyond.error == 22);
+    runtime.drain();
+  }
+
+  DOC <$ More positioned reads than Darwin queues for one process complete with their own bytes. $>
+  ::many_concurrent_reads UNIT_TEST
+  {
+    VAR file io::file := temporary_file();
+    VAR descriptor io::io_descriptor_ref := file.reference().descriptor;
+    VAR runtime io::async_runtime2 :(@workers 1, @file_workers 2);
+    VAR source [96]BYTE;
+    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(source.SIZE()) DO { source[index] := ((index + 1) AS ASSUME U8) AS BYTE; };
+    VAR output io::buffer_ref :(@data source[&0], @size source.SIZE());
+    VAR written_future := runtime.write(@descriptor descriptor, @buffer output, @offset 0);
+    VAR written io::transfer_result := written_future.get();
+    TEST_ASSERT(written.succeeded && written.size == source.SIZE());
+
+    VAR bytes [96]BYTE;
+    VAR reads [96]std::future#io::transfer_result;
+    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(bytes.SIZE()) DO
+    {
+      VAR buffer io::buffer_ref :(@data bytes[&index], @size 1);
+      reads[index] := runtime.read(@descriptor descriptor, @buffer buffer, @offset index AS U64);
+    };
+    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(bytes.SIZE()) DO
+    {
+      VAR result io::transfer_result := reads[index].get();
+      TEST_ASSERT(result.succeeded && result.size == 1);
+      TEST_ASSERT(bytes[index] == source[index]);
+    };
+    runtime.drain();
+  }
+
+  DOC <$ Cursor transfers share the descriptor's offset across asynchronous calls. $>
+  ::cursor_transfers UNIT_TEST
+  {
+    VAR file io::file := temporary_file();
+    VAR descriptor io::io_descriptor_ref := file.reference().descriptor;
+    VAR runtime io::async_runtime2 :(@entries 8, @workers 1, @file_workers 1);
+    VAR data [2]BYTE;
+    data[0] := 3; data[1] := 11;
+    VAR buffer io::buffer_ref :(@data data[&0], @size data.SIZE());
+    VAR written_future := runtime.write(@descriptor descriptor, @buffer buffer);
+    VAR written io::transfer_result := written_future.get();
+    TEST_ASSERT(written.succeeded && written.size == 2);
+    VAR empty_future := runtime.read(@descriptor descriptor, @buffer buffer);
+    VAR empty io::transfer_result := empty_future.get();
+    TEST_ASSERT(empty.succeeded && empty.size == 0);
+  }
+
+  DOC <$ Exercises the controller-selected file members on owners and borrowed references. The positioned read begins before the written bytes and stops at the end of the file. $>
+  ::implicit_file_transfers COROUTINE(@positioned MUT& io::file, @stream MUT& io::file)
+  {
+    VAR source [2]BYTE;
+    source[0] := 29;
+    source[1] := 83;
+    VAR output io::buffer_ref :(@data source[&0], @size source.SIZE());
+    VAR received [4]BYTE;
+    received[0] := 255;
+    VAR input io::buffer_ref :(@data received[&0], @size received.SIZE());
+    VAR result io::transfer_result;
+
+    positioned.write(@buffer output, @offset 2, @result result);
+    TEST_ASSERT(result.succeeded && result.size == 2);
+    VAR positioned_ref io::file_ref := positioned.reference();
+    positioned_ref.read(@buffer input, @offset 1, @result result);
+    TEST_ASSERT(result.succeeded && result.size == 3);
+    TEST_ASSERT(received[0] == 0 && received[1] == 29 && received[2] == 83);
+    positioned.read(@buffer input, @offset 4, @result result);
+    TEST_ASSERT(result.succeeded && result.size == 0);
+
+    VAR stream_ref io::file_ref := stream.reference();
+    stream_ref.write(@buffer output, @result result);
+    TEST_ASSERT(result.succeeded && result.size == 2);
+    stream.read(@buffer input, @result result);
+    TEST_ASSERT(result.succeeded && result.size == 0);
+
+    VAR closed io::file_ref;
+    closed.read(@buffer input, @offset 0, @result result);
+    TEST_ASSERT(result.succeeded == FALSE && result.size == 0 && result.error == 9);
+  }
+
+  DOC <$ ON(runtime) selects positioned and cursor operations through the file members while preserving ownership of both files. $>
+  ::controller_selected_file_transfers UNIT_TEST
+  {
+    VAR positioned io::file := temporary_file();
+    VAR stream io::file := temporary_file();
+    VAR runtime io::async_runtime2 :(@entries 8, @workers 1, @file_workers 1);
+    VAR done := ON(runtime) RUN implicit_file_transfers(@positioned positioned, @stream stream);
+    done.get();
+    TEST_ASSERT(positioned.is_open() && stream.is_open());
+  }
+}
+
+::runtime2_operation_tests INCLUDE_IF(OS_LINUX) NAMESPACE
+{
+  DOC <$ Closes its descriptor during its notification and asks for another notification, so the processor cannot continue the registration. $>
+  ::closing_waiter STRUCT
+  {
+    .watched VAR io::io_descriptor_ref;
+    .failed VAR std::promise#VOID;
+
+    .descriptor FUNCTION() CONST NOEXCEPT: io::io_descriptor_ref { RETURN .watched; }
+    .interest FUNCTION() CONST NOEXCEPT: io::epoll_events { RETURN io::epoll_events::readable; }
+    .notify FUNCTION(@events io::epoll_events) MUT NOEXCEPT: io::operation_status
+    {
+      syscall::linux::close(@fd .watched.native_handle());
+      RETURN io::operation_status::pending;
+    }
+    .rearm_failed FUNCTION() MUT NOEXCEPT { .failed.set_value(); }
+  }
+
+  DOC <$ Publishes its first notification and finishes. $>
+  ::notified_waiter STRUCT
+  {
+    .watched VAR io::io_descriptor_ref;
+    .notified VAR std::promise#VOID;
+
+    .descriptor FUNCTION() CONST NOEXCEPT: io::io_descriptor_ref { RETURN .watched; }
+    .interest FUNCTION() CONST NOEXCEPT: io::epoll_events { RETURN io::epoll_events::readable; }
+    .notify FUNCTION(@events io::epoll_events) MUT NOEXCEPT: io::operation_status
+    {
+      .notified.set_value();
+      RETURN io::operation_status::finished;
+    }
+    .rearm_failed FUNCTION() MUT NOEXCEPT { PANIC "Unexpected epoll rearm failure."; }
+  }
+
+  DOC <$ On a runtime that uses epoll, a registration that cannot be continued receives its failure, and the consumer goes on to deliver a later notification. $>
+  ::consumer_survives_rearm_failure UNIT_TEST
+  {
+    VAR runtime io::async_runtime2 :(@workers 1);
+    IF (runtime.uses_io_uring()) { RETURN; }
+    // EFD_NONBLOCK | EFD_CLOEXEC. A nonzero counter is readable at once.
+    VAR closing closing_waiter;
+    closing.watched := io::io_descriptor_ref(@native_handle syscall::linux::eventfd2(@initial 1, @flags 526336));
+    TEST_ASSERT(closing.watched.is_valid());
+    VAR failed := closing.failed.get_future();
+    runtime.epoll().add(closing);
+    failed.get();
+
+    VAR later notified_waiter;
+    later.watched := io::io_descriptor_ref(@native_handle syscall::linux::eventfd2(@initial 1, @flags 526336));
+    TEST_ASSERT(later.watched.is_valid());
+    DEFER { syscall::linux::close(@fd later.watched.native_handle()); }
+    VAR notified := later.notified.get_future();
+    runtime.epoll().add(later);
+    notified.get();
+  }
+}

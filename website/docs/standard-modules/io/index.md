@@ -1,6 +1,6 @@
 # Module `io`
 
-Module `io` · source files `filesystem.qxs`, `io_descriptor_ref.qxs`, `async_io.qxs`, `async_io_linux.qxs`, `async_io_epoll.qxs`, `async_io_macos.qxs`, `async_io_windows.qxs`, `async_runtime.qxs`, `native_operation.qxs`, `io_uring_processor.qxs`, `epoll_processor.qxs`, `overlapped_processor.qxs`
+Module `io` · source files `filesystem.qxs`, `io_descriptor_ref.qxs`, `windows_completion_bindings.qxs`, `async_io.qxs`, `async_io_linux.qxs`, `async_io_epoll.qxs`, `async_io_macos.qxs`, `async_io_windows.qxs`, `async_runtime.qxs`, `async_runtime2.qxs`, `native_operation.qxs`, `io_uring_processor.qxs`, `epoll_processor.qxs`, `kqueue_processor.qxs`, `overlapped_processor.qxs`
 
 The `io` module provides native file access and asynchronous I/O. Its
 declarations form three layers. The first layer consists of value types that
@@ -13,7 +13,10 @@ completion queue with worker threads and a coroutine scheduler, so that
 coroutines suspend while a transfer is in progress. The [`net`](../net/index.md)
 module builds its socket operations on the third layer.
 
-The standalone Linux and Windows processors expose native event dispatch to
+[`io::async_runtime2`](async-runtime2.md) drives file and socket operations with caller-owned requests, frame-local
+waiters and a single native completion consumer.
+
+The standalone Linux, macOS and Windows processors expose native event dispatch to
 applications that provide their own scheduling.
 
 A source file gains access to the module with `IMPORT io;` and names its
@@ -43,6 +46,7 @@ declarations with the prefix `io::`.
 
 | Page | Contents |
 | --- | --- |
+| [`io::async_runtime2`](async-runtime2.md) | Processor-backed file and socket I/O with caller-owned requests, frame-local waiters and futures. |
 | [`io::async_runtime`](async-runtime.md) | Completion queue, worker threads, and coroutine scheduler in one object. |
 | [`io::async_controller`](async-controller.md) | Controller of coroutines that run on a runtime. |
 | [Native operations and `io::async_submission_ref`](native-operation.md) | Protocol for operations that the completion queue drives. |
@@ -53,6 +57,7 @@ declarations with the prefix `io::`.
 | --- | --- |
 | [`io::io_uring_processor`](io-uring-processor.md) | Standalone owner of an io_uring with batched submission and explicit completion processing. |
 | [`io::epoll_processor`](epoll-processor.md) | Standalone owner of an epoll instance with shared per-descriptor readiness notifications and explicit event processing. |
+| [`io::kqueue_processor`](kqueue-processor.md) | Darwin kqueue with caller-supplied event storage, one-shot readiness, user events and native AIO. |
 | [`io::overlapped_processor`](overlapped-processor.md) | Windows I/O completion port with caller-owned requests and batched completion dispatch. |
 
 ## Module options
@@ -62,7 +67,7 @@ declarations with the prefix `io::`.
 ```
 
 `io::linux_use_io_uring` selects the mechanism behind
-[`io::async_context`](async-context.md) on Linux. The option is declared in
+`async_runtime2` and [`io::async_context`](async-context.md) on Linux. The option is declared in
 source file `async_runtime.qxs` and has the default value `TRUE`.
 
 | Value | Completion queue on Linux | Backend alias |
@@ -121,6 +126,7 @@ Each declaration exists only on the targets for which its
 | `create_temporary_path` | No | No | No | Yes |
 | `windows_transfer_size` | No | No | Yes | No |
 | `async_context`, `async_file`, `thread_pool`, `async_worker_entry` | Yes | Yes | Yes | No |
+| `async_runtime2`, `async_controller2`, `native_receiver2`, `native_submission2`, `native_waiter2`, `async_file_binding2`, `positioned_transfer2`, `transfer_request2`, `transfer_receiver2`, `transfer_waiter2` | Yes | Yes | Yes | No |
 | `async_runtime`, `async_controller` | Yes | Yes | Yes | No |
 | `io_uring_async_runtime` | When `linux_use_io_uring` is `TRUE` | No | No | No |
 | `epoll_async_runtime` | When `linux_use_io_uring` is `FALSE` | No | No | No |
@@ -131,6 +137,7 @@ Each declaration exists only on the targets for which its
 | `async_submission_ref::associate`, `async_submission_ref::overlapped` | No | No | Yes | No |
 | `epoll_processor`, `epoll_operation_ref`, `epoll_events`, `epoll_registration_id`, `epoll_error` | Yes | No | No | No |
 | `io_uring_processor`, `io_uring_operation_ref`, `io_uring_submission_entry` | Yes | No | No | No |
+| `kqueue_processor`, `kqueue_interest`, `kqueue_transfer_request`, `kqueue_error`, `kqueue_native_aio_available` | No | Yes | No | No |
 | `overlapped_processor`, `overlapped_handle_ref`, `overlapped_request`, `overlapped_operation_ref`, `overlapped_completion_result`, `overlapped_error` | No | No | Yes | No |
 
 The declarations `async_error`, `async_submission_ref`, `io_uring_error`,

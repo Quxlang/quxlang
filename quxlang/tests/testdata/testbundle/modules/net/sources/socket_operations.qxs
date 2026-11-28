@@ -49,7 +49,7 @@ PRIVATE(MODULE)
   DOC <$ The bind_socket function binds a socket to a numeric local endpoint. $>
   ::bind_socket FUNCTION(@handle native_socket_ref, @endpoint CONST& endpoint)
   {
-    VAR encoded encoded_endpoint := encode_socket_endpoint(@endpoint endpoint);
+    VAR encoded encoded_endpoint := encoded_endpoint(@endpoint endpoint);
     VAR code I64;
     STATIC_IF(OS_LINUX)
     {
@@ -115,6 +115,6 @@ PRIVATE(MODULE)
     {
       THROW translate_socket_error(@code code);
     }
-    RETURN decode_socket_endpoint(@encoded encoded);
+    RETURN decode_socket_address(@address encoded.address, @length encoded.length);
   }
 }

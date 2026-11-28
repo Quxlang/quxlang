@@ -93,6 +93,28 @@ IMPORT syscall;
     }
   }
 
+  DOC <$ A wake ends one indefinite wait without a notification, and every later wake ends another wait. A registered operation is unaffected. $>
+  ::wake UNIT_TEST
+  {
+    VAR processor io::epoll_processor;
+    VAR counter io::io_descriptor_ref := open_counter(0);
+    DEFER { syscall::linux::close(@fd counter.native_handle()); }
+    VAR reader waiter;
+    reader.watched := counter;
+    reader.wanted := io::epoll_events::readable;
+    processor.add(reader);
+    processor.wake();
+    TEST_ASSERT(processor.process_events(@maximum 4, @timeout_milliseconds -1) == 0);
+    TEST_ASSERT(processor.process_events(@maximum 4) == 0);
+    processor.wake();
+    processor.wake();
+    TEST_ASSERT(processor.process_events(@maximum 4, @timeout_milliseconds -1) == 0);
+    TEST_ASSERT(reader.count == 0 && processor.pending_count() == 1);
+    TEST_ASSERT(signal_counter(counter));
+    TEST_ASSERT(processor.process_events(@maximum 4, @timeout_milliseconds 2000) == 1);
+    TEST_ASSERT(reader.count == 1 && processor.pending_count() == 0);
+  }
+
   DOC <$ Removes its own registration from inside a notification and then requests rearming. $>
   ::self_canceller STRUCT
   {

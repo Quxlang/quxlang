@@ -1,0 +1,83 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+PRIVATE(MODULE)
+{
+  DOC <$ Carries one blocking file operation through a worker pool. An operation embeds its node at a stable address and supplies the procedure that a worker runs with context. The procedure completes the operation, which may release the node. $>
+  ::file_work STRUCT ROOTED
+  {
+    .next VAR MUT->file_work;
+    .context VAR MUT->VOID;
+    .run VAR CONST->PROCEDURE(@context MUT->VOID);
+  }
+
+  DOC <$ Executes blocking file operations in submission order on worker threads. A worker starts when work arrives and no existing worker is idle, up to the configured count. Each operation completes on the worker that ran it. $>
+  ::file_work_pool STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    .capacity VAR SZ;
+    .workers VAR std::dynarr#std::thread;
+    .mutex VAR std::unfair_mutex;
+    .work_available VAR std::condition_variable;
+    .first VAR MUT->file_work;
+    .last VAR MUT->file_work;
+    .idle VAR SZ;
+    .stopping VAR BOOL;
+
+    DOC <$ Records the worker limit, which is positive. No thread starts before the first submission. $>
+    .CONSTRUCTOR FUNCTION(@workers SZ)
+    {
+      IF (workers == 0) { THROW async_error::initialization_failed; }
+      .capacity := workers;
+    }
+
+    DOC <$ Wakes and joins the workers. The runtime destroys the pool after its operations have completed. $>
+    .DESTRUCTOR FUNCTION()
+    {
+      .mutex.lock();
+      .stopping := TRUE;
+      .mutex.unlock();
+      .work_available.notify_all();
+      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(.workers.size()) DO { .workers[index].join(); };
+    }
+
+    DOC <$ Runs submitted operations until the pool stops. $>
+    .work FUNCTION() MUT
+    {
+      LOOP DO
+      {
+        .mutex.lock();
+        .idle++;
+        LOOP WHILE(.first!? && .stopping == FALSE) DO { .work_available.wait(@locked_mutex .mutex); };
+        .idle--;
+        IF (.first!?) { .mutex.unlock(); RETURN; }
+        VAR work MUT->file_work := .first;
+        .first := work->.next;
+        IF (.first!?) { .last := NULL; }
+        .mutex.unlock();
+        work->.run(@context work->.context);
+      };
+    }
+
+    DOC <$ Queues one operation. Failure to start the first worker leaves the operation with the submitter. $>
+    .submit FUNCTION(@work MUT->file_work) MUT
+    {
+      {
+        .mutex.lock();
+        DEFER { .mutex.unlock(); }
+        IF (.idle == 0 && .workers.size() < .capacity)
+        {
+          IF (.workers.empty()) { .workers.reserve(.capacity); }
+          VAR pool MUT->file_work_pool := THIS<-;
+          TRY { .workers.push_back(std::thread(@ARG -< [=pool] { pool->.work(); })); }
+          CATCH DEFAULT { IF (.workers.empty()) { RETHROW; } }
+        }
+        work->.next := NULL;
+        IF (.last??) { .last->.next := work; }
+        ELSE { .first := work; }
+        .last := work;
+      }
+      .work_available.notify_one();
+    }
+  }
+}

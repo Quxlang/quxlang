@@ -23,23 +23,23 @@ eagerly scheduled coroutine. The language-level use of these types with `GO`,
 
 ## Result state
 
-A result state records whether the producer has published, an `EXCEPTION_PTR`
-for a failure, a stored value of type `T` unless `T` is `VOID`, and at most one
-registered [`async_continuation`](#stdasync_continuation). A
-[`std::unfair_mutex`](mutexes.md#stdunfair_mutex) inside the state orders
-publication, readiness checks, and continuation registration, and a
-[`std::condition_variable`](condition-variable.md) wakes blocked consumers.
+A result state stores an `EXCEPTION_PTR` for a failure, a value of type `T`
+when `T` is non-void, and space for one
+[`async_continuation`](#stdasync_continuation) pointer. One atomic word records
+publication and the presence of blocking waiters and a coroutine continuation.
+The producer stores the result before publishing it. A thread that observes
+publication with an acquire load can read the result.
 
-Publication performs the following steps: it locks the state, marks the state
-complete, removes the registered continuation, wakes every thread blocked in
-`wait` or `get`, unlocks the state, and then calls the notification procedure
-of the removed continuation when one was registered. A state is published at
-most once.
+A producer publishes at most once. Publication wakes all registered blocking
+waiters and calls the registered continuation on the publishing thread. A
+blocking waiter that races with publication either observes the published
+state or waits on the address of the same word until the producer wakes it.
 
-The producer object and the consumer object can be used from different
-threads without further synchronization. Concurrent operations on the same
-`future`, the same `promise`, or the same `task` object require external
-synchronization.
+The producer and consumer can run on different threads. Multiple threads may
+call `wait` and `is_ready` on the same valid future while its owner keeps it
+alive. One coroutine may register a continuation during these observations.
+The owner synchronizes operations that consume, move, replace, or destroy
+the future with all observers. The same rules apply to a task's future.
 
 ## `std::future`
 
@@ -126,8 +126,8 @@ after `get` or `AWAIT_RESUME`.
 ```
 
 **Return value**: `TRUE` when the producer has published a value, an
-exception, or abandonment. The function reads the state while the state mutex
-is locked.
+exception, or abandonment. The function performs one acquire load of the
+publication word.
 
 **Preconditions**: `valid()` is `TRUE`.
 
@@ -182,11 +182,9 @@ abandoned, the rethrown exception is a
 ```
 
 Obtains the continuation of the awaiting invocation by calling
-`CONTROLLER.continuation()`, locks the result state, and registers the
-continuation unless the producer has already published. Readiness is tested
-and the continuation is registered under the state mutex, so publication
-either observes the registration or causes the registration to decline
-suspension.
+`CONTROLLER.continuation()` and registers it through the publication word.
+If registration precedes publication, the producer notifies the continuation
+once. If publication precedes registration, the caller continues immediately.
 
 **Parameters**
 
@@ -447,13 +445,9 @@ procedure does not throw.
 
 ## Target restrictions
 
-The source file declares no target-conditional code. The blocking and
-publication operations require `std::unfair_mutex` and
-`std::condition_variable` and are therefore implemented when
-`OS_LINUX || OS_WINDOWS || OS_MACOS` holds (see
-[Synchronization primitives](synchronization.md#target-restrictions)). The
-operations are native runtime operations and are not available during constant
-evaluation.
+Blocking waits and wakeups use the native runtime's 32-bit address-wait
+operations on Linux, Windows, and macOS. These operations require runtime
+execution. [Synchronization primitives](synchronization.md#target-restrictions)
 
 ## Example
 

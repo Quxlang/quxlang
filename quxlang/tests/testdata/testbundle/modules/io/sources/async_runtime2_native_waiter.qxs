@@ -1,0 +1,80 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+PRIVATE(MODULE)
+{
+  DOC <$ Coordinates one native completion with one suspending coroutine. A null slot has no continuation. Completion exchanges the installed continuation for the address of the slot before scheduling resumption. $>
+  ::native_continuation_slot2 INCLUDE_IF(OS_WINDOWS) STRUCT ROOTED
+  {
+    .slot VAR ATOMIC#(MUT->VOID);
+
+    .publish FUNCTION() MUT NOEXCEPT
+    {
+      VAR previous := .slot.EXCHANGE#ATOMIC_ACQREL(THIS<- AS REINTERPRET MUT->VOID);
+      IF (previous??)
+      {
+        VAR continuation := previous AS REINTERPRET MUT->std::async_continuation;
+        continuation->.notify(@context continuation->.context);
+      }
+    }
+
+    .ready FUNCTION() CONST: BOOL
+    { RETURN IBC_GETADDR(@PTR .slot.LOAD#ATOMIC_ACQUIRE()) == IBC_GETADDR(@PTR THIS<-); }
+
+    .suspend FUNCTION(@continuation MUT->std::async_continuation) MUT: BOOL
+    {
+      VAR empty MUT->VOID;
+      RETURN .slot.COMPARE_EXCHANGE#(@SUCCESS ATOMIC_ACQREL, @FAILURE ATOMIC_ACQUIRE)(
+        @EXPECTED empty, @DESIRED continuation AS REINTERPRET MUT->VOID);
+    }
+
+    .reset FUNCTION() MUT { .slot.STORE#ATOMIC_RELAXED(NULL); }
+  }
+}
+
+DOC <$ Awaits one borrowed native operation directly in its caller's coroutine frame. AWAIT starts the operation once. The operation and the waiter occupy stable storage through resumption. $>
+::native_waiter2 INCLUDE_IF(OS_WINDOWS) TEMPLATE(@T:operation_type TYPE AUTO)
+  STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  PRIVATE(MODULE)
+  {
+    .operation VAR MUT->operation_type;
+    .submission VAR native_submission2;
+    .continuation VAR native_continuation_slot2;
+    .failure VAR EXCEPTION_PTR;
+  }
+
+  .CONSTRUCTOR FUNCTION(@runtime MUT& async_runtime2, @operation MUT& operation_type)
+    :> .submission:(@runtime runtime, @completion THIS) { .operation := operation<-; }
+
+  DOC <$ Issues the first native request through the backend's submission interface. $>
+  .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
+  { RETURN .operation->.start(@submission submission); }
+
+  DOC <$ Starts the borrowed operation and reports an inline result or a captured admission error. $>
+  .AWAIT_READY FUNCTION() MUT: BOOL
+  {
+    TRY { RETURN .submission.start(@operation THIS); }
+    CATCH DEFAULT { .failure := CURRENT_EXCEPTION(); RETURN TRUE; }
+  }
+
+  .AWAIT_SUSPEND FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) MUT: BOOL
+  { RETURN .continuation.suspend(@continuation CONTROLLER.continuation()); }
+
+  DOC <$ Delivers a native result to the operation. A rearmed operation retains the continuation until terminal delivery. $>
+  .on_native_result FUNCTION(@size SZ, @error U32) MUT NOEXCEPT
+  {
+    TRY { IF (.operation->.complete(@submission .submission, @size size, @error error) == FALSE) { RETURN; } }
+    CATCH DEFAULT { .failure := CURRENT_EXCEPTION(); }
+    .continuation.publish();
+  }
+
+  .AWAIT_RESUME FUNCTION() MUT: operation_type::value_type
+  {
+    IF (.failure??) { THROW_EXCEPTION_PTR(.failure); }
+    RETURN .operation->.result();
+  }
+
+  .TRY_CANCEL FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) CONST NOEXCEPT: BOOL { RETURN FALSE; }
+}

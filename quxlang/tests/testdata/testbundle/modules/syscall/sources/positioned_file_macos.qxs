@@ -1,0 +1,12 @@
+LANGUAGE QUXLANG EN 0.0;
+
+::macos INCLUDE_IF(OS_MACOS) NAMESPACE
+{
+  DOC <$ Reads bytes at a file offset independently of the descriptor's stream position. $>
+  ::pread EXTERN_PROCEDURE["/usr/lib/libSystem.B.dylib":"pread"]
+    CALLABLE CALLCONV CCALL(@descriptor I32, @buffer MUT=>>BYTE, @count SZ, @offset I64; RETURN I64);
+
+  DOC <$ Writes bytes at a file offset independently of the descriptor's stream position. $>
+  ::pwrite EXTERN_PROCEDURE["/usr/lib/libSystem.B.dylib":"pwrite"]
+    CALLABLE CALLCONV CCALL(@descriptor I32, @buffer CONST=>>BYTE, @count SZ, @offset I64; RETURN I64);
+}

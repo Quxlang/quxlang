@@ -70,7 +70,7 @@ LANGUAGE QUXLANG EN 0.0;
   ::socket_send_to EXTERN_PROCEDURE["ws2_32":"WSASendTo"]
     CALLABLE CALLCONV CCALL(@socket UINTPTR, @buffers MUT->socket_buffer,
       @count U32, @transferred MUT->U32, @flags U32,
-      @destination CONST->socket_address_storage, @length I32,
+      @destination ADDRESS, @length I32,
       @overlapped MUT->overlapped, @completion ADDRESS; RETURN I32);
 
   DOC <$ The shutdown procedure binds Windows connection shutdown. $>
@@ -79,6 +79,11 @@ LANGUAGE QUXLANG EN 0.0;
   DOC <$ Receives a Windows datagram with its source and truncation status. $>
   ::socket_receive_from EXTERN_PROCEDURE["ws2_32":"WSARecvFrom"]
     CALLABLE CALLCONV CCALL(@socket UINTPTR, @buffers MUT->socket_buffer, @count U32,
-      @transferred MUT->U32, @flags MUT->U32, @source MUT->socket_address_storage, @length MUT->I32,
+      @transferred MUT->U32, @flags MUT->U32, @source ADDRESS, @length MUT->I32,
       @overlapped MUT->overlapped, @completion ADDRESS; RETURN I32);
+
+  DOC <$ Reads the completion status, byte count, and message flags of an overlapped Winsock request. $>
+  ::socket_overlapped_result EXTERN_PROCEDURE["ws2_32":"WSAGetOverlappedResult"]
+    CALLABLE CALLCONV CCALL(@socket UINTPTR, @overlapped MUT->overlapped, @transferred MUT->U32,
+      @wait I32, @flags MUT->U32; RETURN I32);
 }

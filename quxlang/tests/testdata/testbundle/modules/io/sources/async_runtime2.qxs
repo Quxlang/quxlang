@@ -1,0 +1,308 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+DOC <$ Borrows the receiver of one terminal transfer result. A callback may reuse its request after finishing its accesses to the previous transfer. $>
+::transfer_receiver2 INCLUDE_IF(OS_WINDOWS) GENERIC_REF INCOMPARABLE
+{
+  .complete FUNCTION(@result transfer_result) MUT NOEXCEPT;
+}
+
+DOC <$ Describes a positioned transfer for batch submission. The runtime borrows the description only during submit. $>
+::positioned_transfer2 INCLUDE_IF(OS_WINDOWS) STRUCT NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  PRIVATE(MODULE)
+  {
+    .file VAR async_file_binding2;
+    .request VAR MUT->transfer_request2;
+    .buffer VAR buffer_ref;
+    .offset VAR U64;
+    .writing VAR BOOL;
+  }
+
+  .CONSTRUCTOR FUNCTION(@file async_file_binding2, @request MUT& transfer_request2,
+    @buffer CONST& buffer_ref, @offset U64, @writing BOOL)
+    :> .file:(@OTHER file), .buffer:(@OTHER buffer)
+  {
+    IF (offset > 9223372036854775807) { THROW async_error::submission_failed; }
+    .request := request<-;
+    .offset := offset;
+    .writing := writing;
+  }
+}
+
+PRIVATE(MODULE)
+{
+  DOC <$ Returns the accepted prefix when the native interface issues one call per transfer. $>
+  ::submit_transfers_individually2 INCLUDE_IF(OS_WINDOWS)
+    FUNCTION(@backend MUT& runtime2_backend, @operations CONST=>>positioned_transfer2, @count SZ): SZ
+  {
+    VAR accepted SZ;
+    TRY
+    {
+      LOOP WHILE(accepted < count) DO
+      {
+        VAR operation CONST& positioned_transfer2 := operations[accepted];
+        IF (operation.writing)
+        { backend.transfer#(@writing TRUE)(@file operation.file, @request operation.request->, @buffer operation.buffer, @offset operation.offset); }
+        ELSE
+        { backend.transfer#(@writing FALSE)(@file operation.file, @request operation.request->, @buffer operation.buffer, @offset operation.offset); }
+        accepted++;
+      };
+    }
+    CATCH DEFAULT { IF (accepted == 0) { RETHROW; } }
+    RETURN accepted;
+  }
+
+  DOC <$ Owns the platform request only for the lifetime of a future-producing transfer. $>
+  ::promised_transfer2 INCLUDE_IF(OS_WINDOWS) STRUCT ROOTED
+  {
+    .request VAR transfer_request2;
+    .producer VAR std::promise#transfer_result;
+    .CONSTRUCTOR FUNCTION() :> .request:(@completion THIS) {}
+    .complete FUNCTION(@result transfer_result) MUT NOEXCEPT
+    {
+      .producer.set_value(@value result);
+      VAR operation MUT->promised_transfer2 := THIS<-;
+      DELETE operation;
+    }
+  }
+
+  DOC <$ Creates a worker pool on first use. Its address is stable until exclusive destruction. $>
+  ::runtime2_worker_pool INCLUDE_IF(OS_WINDOWS) STRUCT ROOTED
+  {
+    .pool VAR ATOMIC#(MUT->std::thread_pool_cort_runtime);
+    .creation VAR std::thin_mutex;
+    .workers VAR SZ;
+    .CONSTRUCTOR FUNCTION(@workers SZ)
+    {
+      IF (workers == 0) { THROW async_error::initialization_failed; }
+      .workers := workers;
+    }
+    .get FUNCTION() MUT: MUT& std::thread_pool_cort_runtime
+    {
+      VAR pool MUT->std::thread_pool_cort_runtime := .pool.LOAD#ATOMIC_ACQUIRE();
+      IF (pool!?) {
+        .creation.lock();
+        DEFER { .creation.unlock(); }
+        pool := .pool.LOAD#ATOMIC_RELAXED();
+        IF (pool!?) {
+          pool := NEW std::thread_pool_cort_runtime:(@workers .workers);
+          .pool.STORE#ATOMIC_RELEASE(pool);
+        }
+      }
+      RETURN pool->;
+    }
+    .drain FUNCTION() MUT
+    {
+      VAR pool MUT->std::thread_pool_cort_runtime := .pool.LOAD#ATOMIC_ACQUIRE();
+      IF (pool??) { pool->.drain(); }
+    }
+    .DESTRUCTOR FUNCTION()
+    {
+      VAR pool MUT->std::thread_pool_cort_runtime := .pool.LOAD#ATOMIC_RELAXED();
+      DELETE OPTIONAL pool;
+    }
+  }
+}
+
+DOC <$ Holds a transfer request and a single coroutine's result in caller-owned storage. The waiter can be submitted again after AWAIT consumes the previous result. $>
+::transfer_waiter2 INCLUDE_IF(OS_WINDOWS) STRUCT ROOTED
+{
+  .request VAR transfer_request2;
+  PRIVATE(MODULE)
+  {
+    .continuation VAR native_continuation_slot2;
+    .result VAR transfer_result;
+  }
+  .CONSTRUCTOR FUNCTION() :> .request:(@completion THIS) {}
+
+  .complete FUNCTION(@result transfer_result) MUT NOEXCEPT
+  {
+    .result := result;
+    .continuation.publish();
+  }
+  .AWAIT_READY FUNCTION() CONST: BOOL
+  { RETURN .continuation.ready(); }
+
+  .AWAIT_SUSPEND FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) MUT: BOOL
+  { RETURN .continuation.suspend(@continuation CONTROLLER.continuation()); }
+  .AWAIT_RESUME FUNCTION() MUT: transfer_result
+  {
+    .continuation.reset();
+    RETURN .result;
+  }
+  .TRY_CANCEL FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) CONST NOEXCEPT: BOOL { RETURN FALSE; }
+}
+
+DOC <$ Runs a native I/O processor with a single completion consumer and concurrent producers. Positioned transfers borrow an open binding and caller-owned buffers. Scheduling and blocking cursor operations acquire separate worker pools on first use. $>
+::async_runtime2 INCLUDE_IF(OS_WINDOWS) STRUCT ROOTED
+{
+  PRIVATE(MODULE)
+  {
+    .backend VAR runtime2_backend;
+    .scheduler VAR runtime2_worker_pool;
+    .streams VAR runtime2_worker_pool;
+    // Exclusive shutdown starts after the final transfer retires.
+    ::consumer_stopped STATIC SZ := (0 AS SZ) #!!;
+    .outstanding VAR ATOMIC#SZ;
+    .drain_wait VAR ATOMIC#U32;
+    .pool_submission VAR ATOMIC#BOOL;
+    .consumer VAR std::thread;
+
+    DOC <$ Releases requests after their callbacks return or their submission fails. Only a thread waiting in drain needs an idle notification. $>
+    .retire FUNCTION(@count SZ) MUT
+    {
+      // The total order pairs the zero transition with drain's registration and count recheck.
+      IF (.outstanding.FETCH_SUBTRACT#ATOMIC_SEQCST(count) == count && .drain_wait.LOAD#ATOMIC_SEQCST() != 0)
+      {
+        .drain_wait.STORE#ATOMIC_RELEASE(0);
+        RUNTIME_MODULE::notify_one_at_address(@address IBC_GETADDR(@PTR .drain_wait<-), @size SIZEOF(U32));
+      }
+    }
+    DOC <$ Waits in the native processor and retires each completed batch. $>
+    .dispatch FUNCTION() MUT
+    {
+      VAR events runtime2_event_batch;
+      LOOP DO
+      {
+        VAR completed SZ := .backend.process(@events events, @maximum 64);
+        IF (completed != 0) { .retire(@count completed); }
+        ELSE IF (.outstanding.LOAD#ATOMIC_ACQUIRE() == consumer_stopped) { RETURN; }
+      };
+    }
+    DOC <$ Reserves a count before the backend can deliver a completion and releases it on synchronous rejection. $>
+    .issue TEMPLATE(@writing VALUE BOOL) FUNCTION(@file async_file_binding2, @request MUT& transfer_request2,
+      @buffer CONST& buffer_ref, @offset U64) MUT
+    {
+      IF (offset > 9223372036854775807) { THROW async_error::submission_failed; }
+      .outstanding.ADD#ATOMIC_RELAXED(1);
+      TRY { .backend.transfer#(@writing writing)(@file file, @request request, @buffer buffer, @offset offset); }
+      CATCH DEFAULT { .retire(@count 1); RETHROW; }
+    }
+    DOC <$ Adapts native completion to single-consumer future ownership. $>
+    .future_transfer TEMPLATE(@writing VALUE BOOL) FUNCTION(@file async_file_binding2,
+      @buffer CONST& buffer_ref, @offset U64) MUT: std::future#transfer_result
+    {
+      VAR operation MUT->promised_transfer2 := NEW promised_transfer2;
+      VAR future := operation->.producer.get_future();
+      TRY { THIS.issue#(@writing writing)(@file file, @request operation->.request, @buffer buffer, @offset offset); }
+      CATCH DEFAULT
+      {
+        DELETE operation;
+        RETHROW;
+      }
+      RETURN MOVE(future);
+    }
+    DOC <$ Executes a cursor transfer on the blocking pool associated with synchronous descriptors. $>
+    .stream TEMPLATE(@writing VALUE BOOL) FUNCTION(@descriptor io_descriptor_ref,
+      @buffer CONST& buffer_ref) MUT: std::future#transfer_result
+    {
+      VAR operation stream_transfer#(@writing writing);
+      operation.reference := file_ref(@descriptor descriptor);
+      operation.buffer := buffer;
+      VAR future := operation.producer.get_future();
+      .streams.get().post(@operation MOVE(operation));
+      .pool_submission.STORE#ATOMIC_RELEASE(TRUE);
+      RETURN MOVE(future);
+    }
+  }
+
+  DOC <$ Starts the completion consumer. Entries selects the Linux ring capacity. File workers serve blocking transfers, and workers selects the coroutine pool size. $>
+  .CONSTRUCTOR FUNCTION(@entries U32 DEFAULT(256), @file_workers SZ DEFAULT(2), @workers SZ DEFAULT(1))
+    :> .backend:(@entries entries, @file_workers file_workers), .scheduler:(@workers workers), .streams:(@workers file_workers)
+  {
+    VAR runtime MUT->async_runtime2 := THIS<-;
+    .consumer := std::thread(@ARG -< [=runtime] { runtime->.dispatch(); });
+  }
+  .DESTRUCTOR FUNCTION()
+  {
+    .drain();
+    .outstanding.STORE#ATOMIC_RELEASE(consumer_stopped);
+    .backend.wake();
+    .consumer.join();
+  }
+
+  DOC <$ Submits an owned native operation. Native completion and submission failures are published through the result future. $>
+  .submit FUNCTION(@operation AUTO& AUTO(operation_type)) MUT: std::future#(operation_type::value_type)
+  {
+    VAR owner := NEW owned_native_operation2#operation_type:(@runtime THIS, @operation FORWARD(operation));
+    VAR future := owner->.invocation.producer.get_future();
+    IF (owner->.submission.start(@operation owner->.invocation)) { DELETE owner; }
+    RETURN MOVE(future);
+  }
+
+  DOC <$ Borrows an open descriptor. Windows associates each overlapped handle once with its owning runtime. $>
+  .bind FUNCTION(@descriptor CONST& io_descriptor_ref) MUT: async_file_binding2
+  {
+    IF (descriptor.is_valid() == FALSE) { THROW async_error::submission_failed; }
+    RETURN .backend.bind(@descriptor descriptor);
+  }
+  DOC <$ Issues a positioned read into caller-owned storage. $>
+  .read FUNCTION(@file async_file_binding2, @request MUT& transfer_request2, @buffer CONST& buffer_ref, @offset U64) MUT
+  { THIS.issue#(@writing FALSE)(@file file, @request request, @buffer buffer, @offset offset); }
+  DOC <$ Issues a positioned write from caller-owned storage. $>
+  .write FUNCTION(@file async_file_binding2, @request MUT& transfer_request2, @buffer CONST& buffer_ref, @offset U64) MUT
+  { THIS.issue#(@writing TRUE)(@file file, @request request, @buffer buffer, @offset offset); }
+  DOC <$ Submits an ordered prefix of a batch and returns its length. The unaccepted suffix can be submitted again. $>
+  .submit FUNCTION(@operations CONST=>>positioned_transfer2, @count SZ) MUT: SZ
+  {
+    IF (count == 0) { RETURN 0; }
+    .outstanding.ADD#ATOMIC_RELAXED(count);
+    VAR accepted SZ;
+    TRY { accepted := .backend.submit_batch(@operations operations, @count count); }
+    CATCH DEFAULT { .retire(@count count); RETHROW; }
+    IF (accepted < count) { .retire(@count count - accepted); }
+    RETURN accepted;
+  }
+  DOC <$ Returns the result future of a positioned read. $>
+  .read FUNCTION(@file async_file_binding2, @buffer CONST& buffer_ref, @offset U64) MUT: std::future#transfer_result
+  { RETURN THIS.future_transfer#(@writing FALSE)(@file file, @buffer buffer, @offset offset); }
+  DOC <$ Returns the result future of a positioned write. $>
+  .write FUNCTION(@file async_file_binding2, @buffer CONST& buffer_ref, @offset U64) MUT: std::future#transfer_result
+  { RETURN THIS.future_transfer#(@writing TRUE)(@file file, @buffer buffer, @offset offset); }
+  DOC <$ Reads at the cursor of a synchronous descriptor on a file worker. $>
+  .read FUNCTION(@descriptor io_descriptor_ref, @buffer CONST& buffer_ref) MUT: std::future#transfer_result
+  { RETURN THIS.stream#(@writing FALSE)(@descriptor descriptor, @buffer buffer); }
+  DOC <$ Writes at the cursor of a synchronous descriptor on a file worker. $>
+  .write FUNCTION(@descriptor io_descriptor_ref, @buffer CONST& buffer_ref) MUT: std::future#transfer_result
+  { RETURN THIS.stream#(@writing TRUE)(@descriptor descriptor, @buffer buffer); }
+
+  DOC <$ Selects the coroutine with the runtime's I/O controller and schedules it on the runtime's worker pool. $>
+  .CO_RUN FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ..., @group MUT->std::task_group DEFAULT(NULL)) MUT: AUTO
+  {
+    STATIC_IF(PACK_CONTAINS(arguments, "RECEIVER"))
+    {
+      VAR descriptor := child#(@CONTROLLER async_controller2#VOID, @THIS PACK_FIELD_TYPE(arguments, "RECEIVER"),
+        ...PACK_TYPES_EXCEPT(arguments, "RECEIVER"));
+      RETURN launch_io_coroutine2#descriptor(@runtime THIS, @ARGUMENTS FORWARD PACK(arguments), @group group);
+    }
+    STATIC_ELSE
+    {
+      VAR descriptor := child#(@CONTROLLER async_controller2#VOID, ...PACK_TYPES(arguments));
+      RETURN launch_io_coroutine2#descriptor(@runtime THIS, @ARGUMENTS FORWARD PACK(arguments), @group group);
+    }
+  }
+
+  DOC <$ Waits for native callbacks, cursor transfers, and scheduled coroutines, including work submitted by them. A single external thread drains after external producers finish submitting. $>
+  .drain FUNCTION() MUT
+  {
+    LOOP DO
+    {
+      IF (.outstanding.LOAD#ATOMIC_ACQUIRE() != 0)
+      {
+        LOOP DO
+        {
+          .drain_wait.STORE#ATOMIC_SEQCST(1);
+          IF (.outstanding.LOAD#ATOMIC_SEQCST() == 0) { BREAK; }
+          RUNTIME_MODULE::wait_at_u32_address(@address IBC_GETADDR(@PTR .drain_wait<-), @expected 1);
+        };
+        .drain_wait.STORE#ATOMIC_RELAXED(0);
+      }
+      IF (.pool_submission.LOAD#ATOMIC_ACQUIRE() == FALSE) { RETURN; }
+      .pool_submission.EXCHANGE#ATOMIC_ACQREL(FALSE);
+      .scheduler.drain();
+      .streams.drain();
+    };
+  }
+}

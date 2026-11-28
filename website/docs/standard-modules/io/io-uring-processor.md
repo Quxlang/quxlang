@@ -11,8 +11,8 @@ thread that asks for them. The processor is independent of
 [`io::async_runtime`](async-runtime.md), coroutine controllers, and futures; it
 starts no thread and performs no internal locking. The processor is available
 on Linux for both values of the option
-[`io::linux_use_io_uring`](index.md#module-options), which selects only the
-backend of `io::async_context`.
+[`io::linux_use_io_uring`](index.md#module-options), which selects the
+Linux backends of `io::async_context` and `io::async_runtime2`.
 
 ## Declarations
 
@@ -48,7 +48,7 @@ role:
 
 | Role | Member functions | Requirement |
 | --- | --- | --- |
-| Producer | [`enqueue`](#enqueue), [`enqueue_cancel`](#enqueue_cancel), [`flush`](#flush) | One serialized producer. In single-issuer mode, the producer is the thread that constructed the processor. |
+| Producer | [`enqueue`](#enqueue), [`enqueue_cancel`](#enqueue_cancel), [`flush`](#flush), [`submit`](#submit) | One serialized producer. In single-issuer mode, the producer is the thread that constructed the processor. |
 | Consumer | [`process_completions`](#process_completions), [`wait`](#wait) | One serialized consumer. |
 | Exclusive | Construction, destruction, [`register_completion_event`](#register_completion_event), [`unregister_completion_event`](#unregister_completion_event) | No other access to the processor. |
 
@@ -74,6 +74,7 @@ snapshots.
 | [`enqueue`](#enqueue) | Prepares one operation and queues its entry. |
 | [`enqueue_cancel`](#enqueue_cancel) | Queues the cancellation of a live submission. |
 | [`flush`](#flush) | Submits every queued entry to the kernel. |
+| [`submit`](#submit) | Prepares one operation and submits it to the kernel in the same call. |
 
 **Completion**
 
@@ -103,6 +104,11 @@ Creates one io_uring with the requested queue capacities and maps its rings.
 The constructor always requests an explicit completion queue size
 (`IORING_SETUP_CQSIZE`). The processor uses the capacities that the kernel
 reports after setup.
+
+The processor requests `IORING_SETUP_NO_SQARRAY` so the kernel can consume
+submission entries directly by slot number. If setup returns `EINVAL`, the
+processor retries with the submission index array and initializes the indices
+once during construction.
 
 **Parameters**:
 
@@ -214,6 +220,35 @@ call that a signal interrupts is repeated.
 **Exceptions**: `io_uring_error::submission_failed` is thrown when the system
 call fails or consumes no entry. Entries that the kernel has not consumed
 remain queued, and a later call submits them.
+
+### `submit`
+
+```quxlang
+.submit FUNCTION(@operation io_uring_operation_ref) MUT: io_uring_submission_id
+```
+
+Calls `operation.prepare`, registers the operation, and enters the kernel
+before returning. The function combines [`enqueue`](#enqueue) and
+[`flush`](#flush) for a producer that submits each operation as it is issued.
+The notification of the operation can begin on the consumer thread before the
+function returns.
+
+**Preconditions**:
+
+- The submission queue holds no entry queued by [`enqueue`](#enqueue) or
+  [`enqueue_cancel`](#enqueue_cancel). A producer uses either `submit` or the
+  `enqueue` and `flush` pair.
+- The prepared entry does not set `IOSQE_CQE_SKIP_SUCCESS`.
+
+**Return value**: the identity of the submission.
+
+**Exceptions**: `io_uring_error::invalid_submission` under the condition of
+[`enqueue`](#enqueue), and `io_uring_error::submission_failed` when the system
+call fails. A failed call withdraws the entry and retains no reference to the
+operation.
+
+`io::async_runtime2` submits every io_uring operation through this function
+while it holds its producer lock.
 
 ### `wait`
 
@@ -396,7 +431,7 @@ operation.
 | `initialization_failed` | [`CONSTRUCTOR`](#constructor) | Setup, feature, or mapping failure. |
 | `resource_release_failed` | [`DESTRUCTOR`](#destructor), and the constructor when it releases resources after a failure | Failed unmap or close. |
 | `queue_full` | [`enqueue`](#enqueue), [`enqueue_cancel`](#enqueue_cancel) | No free submission slot. |
-| `submission_failed` | [`flush`](#flush) | The enter system call failed or consumed no entry. |
+| `submission_failed` | [`flush`](#flush), [`submit`](#submit) | The enter system call failed or consumed no entry. |
 | `registration_failed` | [`register_completion_event`](#register_completion_event), [`unregister_completion_event`](#unregister_completion_event) | The register system call failed. |
 | `wait_failed` | [`wait`](#wait), [`process_completions`](#process_completions) | The enter system call failed for a reason other than a timeout or a signal. |
 | `invalid_submission` | [`enqueue`](#enqueue) | The prepared entry requests suppression of its completion record. |

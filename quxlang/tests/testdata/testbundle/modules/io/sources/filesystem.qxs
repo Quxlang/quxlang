@@ -12,6 +12,16 @@ DOC <$
 {
   .size VAR SZ;
   .succeeded VAR BOOL;
+  DOC <$ Stores the native error code of a failed transfer: the errno value on Linux and macOS, and the system error code on Windows. A successful transfer stores zero. The async_runtime transfers store zero for every outcome. $>
+  .error VAR U32;
+}
+
+PRIVATE(MODULE)
+{
+  DOC <$ Recovers the errno value from the raw result of a failed Linux transfer, which is its negation. $>
+  ::posix_transfer_error INCLUDE_IF(OS_LINUX) FUNCTION(@size SZ): U32 { RETURN async_transfer_size(@size (0 AS SZ) - size); }
+  DOC <$ Reads the errno value that Darwin recorded for the calling thread's failed transfer. $>
+  ::posix_transfer_error INCLUDE_IF(OS_MACOS) FUNCTION(@size SZ): U32 { RETURN syscall::macos::errno_location()-> AS ASSUME U32; }
 }
 
 DOC <$
@@ -96,98 +106,49 @@ DOC <$
   EXTERN_PROCEDURE["java/io/RandomAccessFile":"close"]
   CALLABLE CALLCONV JVM_VIRTUAL(@THIS ~> java_random_access_file);
 
-DOC <$
-  A non-owning reference to an open Linux file descriptor. Destroying this
-  value does not close the descriptor.
-  $>
-::file_ref INCLUDE_IF(OS_LINUX)
-  STRUCT
+PRIVATE(MODULE)
 {
-  .descriptor VAR io_descriptor_ref;
+  ::file_processor_error2 INCLUDE_IF(OS_WINDOWS) ALIAS overlapped_error;
 
-  DOC <$ Creates an empty resource reference. $>
-  .CONSTRUCTOR FUNCTION() {}
+  DOC <$ Borrows the runtime selected by the file coroutine's controller. $>
+  ::file_transfer_runtime INCLUDE_IF(OS_LINUX || OS_MACOS || OS_WINDOWS)
+    FUNCTION(@controller MUT& async_controller#AUTO(result_type)): MUT& async_runtime { RETURN controller.runtime->; }
+  ::file_transfer_runtime INCLUDE_IF(OS_LINUX || OS_MACOS || OS_WINDOWS)
+    FUNCTION(@controller MUT& async_controller2#AUTO(result_type)): MUT& async_runtime2 { RETURN controller.io_runtime(); }
 
-  DOC <$ Borrows descriptor without acquiring ownership. $>
-  .CONSTRUCTOR FUNCTION(@descriptor io_descriptor_ref) { .descriptor := descriptor; }
-
-  DOC <$ Reports whether the stored descriptor is valid. $>
-  .is_valid FUNCTION() CONST: BOOL { RETURN .descriptor.is_valid(); }
-
-  DOC <$ Reads at most buffer.size bytes into buffer and stores the outcome in result. $>
-  .read FUNCTION(@buffer CONST& buffer_ref, @result WRITE& transfer_result)
+  DOC <$ Stores the positioned transfer and its completion in the calling file coroutine. The controller selects either a frame-local native request or a future. $>
+  ::positioned_file_transfer INCLUDE_IF(OS_WINDOWS)
+    TEMPLATE(@writing VALUE BOOL, @controller_type TYPE AUTO) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
   {
-    VAR outcome transfer_result;
-    outcome.size := syscall::linux::read(
-      @fd .descriptor.native_handle(),
-      @buffer buffer.data,
-      @count buffer.size
-    );
-    outcome.succeeded := outcome.size <= buffer.size;
-    IF (outcome.succeeded == FALSE)
+    .pending INCLUDE_IF(TYPE_HAS_MEMBER(controller_type, "io_runtime")) VAR transfer_waiter2;
+    .pending INCLUDE_IF(TYPE_HAS_MEMBER(controller_type, "io_runtime") == FALSE) VAR std::future#transfer_result;
+
+    .CONSTRUCTOR FUNCTION(@controller MUT& controller_type, @descriptor CONST& io_descriptor_ref, @buffer CONST& buffer_ref, @offset U64)
     {
-      outcome.size := 0;
+      STATIC_IF(TYPE_HAS_MEMBER(controller_type, "io_runtime"))
+      {
+        VAR runtime MUT& async_runtime2 := controller.io_runtime();
+        TRY
+        {
+          VAR binding := runtime.bind(@descriptor descriptor);
+          STATIC_IF(writing) { runtime.write(@file binding, @request .pending.request, @buffer buffer, @offset offset); }
+          STATIC_ELSE { runtime.read(@file binding, @request .pending.request, @buffer buffer, @offset offset); }
+        }
+        CATCH failure CONST& async_error { .pending.complete(@result transfer_result()); }
+        CATCH failure CONST& file_processor_error2 { .pending.complete(@result transfer_result()); }
+      }
+      STATIC_ELSE
+      {
+        VAR runtime MUT& async_runtime := controller.runtime->;
+        STATIC_IF(writing) { .pending := runtime.write(@descriptor descriptor, @buffer buffer, @offset offset); }
+        STATIC_ELSE { .pending := runtime.read(@descriptor descriptor, @buffer buffer, @offset offset); }
+      }
     }
-    result := outcome;
   }
-
-  DOC <$ Writes at most buffer.size bytes from buffer and stores the outcome in result. $>
-  .write FUNCTION(@buffer CONST& buffer_ref, @result WRITE& transfer_result)
-  {
-    VAR outcome transfer_result;
-    outcome.size := syscall::linux::write(
-      @fd .descriptor.native_handle(),
-      @buffer buffer.data,
-      @count buffer.size
-    );
-    outcome.succeeded := outcome.size <= buffer.size;
-    IF (outcome.succeeded == FALSE)
-    {
-      outcome.size := 0;
-    }
-    result := outcome;
-  }
-
-  DOC <$
-    Closes the referenced descriptor. This operation does not track whether
-    another file_ref still refers to the same descriptor.
-    $>
-  .close FUNCTION(): BOOL
-  {
-    RETURN syscall::linux::close(@fd .descriptor.native_handle()) == 0;
-  }
-  DOC <$ Submits a positioned read through the selected async runtime and suspends until completion. The descriptor and buffer remain valid through resumption. $>
-  .read COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
-  {
-    result := AWAIT(CONTROLLER.runtime->.read(@descriptor .descriptor, @buffer buffer, @offset offset));
-  }
-
-  DOC <$ Submits a positioned write through the selected async runtime and suspends until completion. The descriptor and buffer remain valid through resumption. $>
-  .write COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
-  {
-    result := AWAIT(CONTROLLER.runtime->.write(@descriptor .descriptor, @buffer buffer, @offset offset));
-  }
-
-  DOC <$ Schedules a cursor-based read through the selected I/O runtime and suspends until the transfer completes. $>
-  .read COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @result WRITE& transfer_result)
-  {
-    result := AWAIT(CONTROLLER.runtime->.read(@descriptor .descriptor, @buffer buffer));
-  }
-
-  DOC <$ Schedules a cursor-based write through the selected I/O runtime and suspends until the transfer completes. $>
-  .write COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @result WRITE& transfer_result)
-  {
-    result := AWAIT(CONTROLLER.runtime->.write(@descriptor .descriptor, @buffer buffer));
-  }
-
 }
 
-DOC <$
-  A non-owning reference to an open macOS file descriptor. Destroying this
-  value does not close the descriptor.
-  $>
-::file_ref INCLUDE_IF(OS_MACOS)
-  STRUCT
+DOC <$ Borrows an open native file descriptor or Windows file handle. The caller owns its lifetime. $>
+::file_ref INCLUDE_IF(OS_LINUX || OS_MACOS || OS_WINDOWS) STRUCT
 {
   .descriptor VAR io_descriptor_ref;
 
@@ -195,16 +156,16 @@ DOC <$
   .CONSTRUCTOR FUNCTION() {}
 
   DOC <$ Borrows descriptor without acquiring ownership. $>
-  .CONSTRUCTOR FUNCTION(@descriptor io_descriptor_ref) { .descriptor := descriptor; }
+  .CONSTRUCTOR FUNCTION(@descriptor AUTO& io_descriptor_ref) :> .descriptor:(@OTHER FORWARD(descriptor)) {}
 
   DOC <$ Reports whether the stored descriptor is valid. $>
   .is_valid FUNCTION() CONST: BOOL { RETURN .descriptor.is_valid(); }
 
   DOC <$ Reads at most buffer.size bytes into buffer and stores the outcome in result. $>
-  .read FUNCTION(@buffer CONST& buffer_ref, @result WRITE& transfer_result)
+  .read INCLUDE_IF(OS_LINUX || OS_MACOS) FUNCTION(@buffer CONST& buffer_ref, @result WRITE& transfer_result)
   {
     VAR outcome transfer_result;
-    outcome.size := syscall::macos::read(
+    outcome.size := posix_filesystem::read(
       @fd .descriptor.native_handle(),
       @buffer buffer.data,
       @count buffer.size
@@ -212,16 +173,17 @@ DOC <$
     outcome.succeeded := outcome.size <= buffer.size;
     IF (outcome.succeeded == FALSE)
     {
+      outcome.error := posix_transfer_error(@size outcome.size);
       outcome.size := 0;
     }
     result := outcome;
   }
 
   DOC <$ Writes at most buffer.size bytes from buffer and stores the outcome in result. $>
-  .write FUNCTION(@buffer CONST& buffer_ref, @result WRITE& transfer_result)
+  .write INCLUDE_IF(OS_LINUX || OS_MACOS) FUNCTION(@buffer CONST& buffer_ref, @result WRITE& transfer_result)
   {
     VAR outcome transfer_result;
-    outcome.size := syscall::macos::write(
+    outcome.size := posix_filesystem::write(
       @fd .descriptor.native_handle(),
       @buffer buffer.data,
       @count buffer.size
@@ -229,6 +191,7 @@ DOC <$
     outcome.succeeded := outcome.size <= buffer.size;
     IF (outcome.succeeded == FALSE)
     {
+      outcome.error := posix_transfer_error(@size outcome.size);
       outcome.size := 0;
     }
     result := outcome;
@@ -238,34 +201,153 @@ DOC <$
     Closes the referenced descriptor. This operation does not track whether
     another file_ref still refers to the same descriptor.
     $>
-  .close FUNCTION(): BOOL
+  .close INCLUDE_IF(OS_LINUX || OS_MACOS) FUNCTION(): BOOL
   {
-    RETURN syscall::macos::close(@fd .descriptor.native_handle()) == 0;
+    RETURN posix_filesystem::close(@fd .descriptor.native_handle()) == 0;
   }
-  DOC <$ Submits a positioned read through the selected async runtime and suspends until completion. The descriptor and buffer remain valid through resumption. $>
-  .read COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
+
+  DOC <$ Reads at most buffer.size bytes into buffer and stores the outcome in result. $>
+  .read INCLUDE_IF(OS_WINDOWS) FUNCTION(@buffer CONST& buffer_ref, @result WRITE& transfer_result)
+  {
+    VAR outcome transfer_result;
+    VAR transferred U32 := 0;
+    VAR overlapped MUT->syscall::windows::overlapped;
+    outcome.succeeded := syscall::windows::read_file(
+      @handle .descriptor.native_handle(),
+      @buffer buffer.data,
+      @count windows_transfer_size(@size buffer.size),
+      @transferred transferred<-,
+      @overlapped overlapped
+    ) != 0;
+    IF (outcome.succeeded == FALSE) { outcome.error := syscall::windows::get_last_error(); }
+    outcome.size := transferred AS SZ;
+    result := outcome;
+  }
+
+  DOC <$ Writes at most buffer.size bytes from buffer and stores the outcome in result. $>
+  .write INCLUDE_IF(OS_WINDOWS) FUNCTION(@buffer CONST& buffer_ref, @result WRITE& transfer_result)
+  {
+    VAR outcome transfer_result;
+    VAR transferred U32 := 0;
+    VAR overlapped MUT->syscall::windows::overlapped;
+    outcome.succeeded := syscall::windows::write_file(
+      @handle .descriptor.native_handle(),
+      @buffer buffer.data,
+      @count windows_transfer_size(@size buffer.size),
+      @transferred transferred<-,
+      @overlapped overlapped
+    ) != 0;
+    IF (outcome.succeeded == FALSE) { outcome.error := syscall::windows::get_last_error(); }
+    outcome.size := transferred AS SZ;
+    result := outcome;
+  }
+
+  DOC <$
+    Closes the referenced Windows handle and invalidates copies of its descriptor.
+    $>
+  .close INCLUDE_IF(OS_WINDOWS) FUNCTION(): BOOL
+  {
+    RETURN .descriptor.close_windows_handle(
+      @close -< [] (@handle ADDRESS): BOOL = syscall::windows::close_handle(@handle handle) != 0);
+  }
+
+  DOC <$ Submits a positioned read to the selected I/O runtime and stores the completed transfer result. $>
+  .read INCLUDE_IF(OS_WINDOWS)
+    COROUTINE(@CONTROLLER AUTO(controller_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
+    ENABLE_IF(IS_FUNCTUM_CALLABLE_WITH(file_transfer_runtime, @controller MUT& controller_type))
+  {
+    VAR transfer positioned_file_transfer#(@writing FALSE, @controller_type controller_type)
+      :(@controller CONTROLLER, @descriptor .descriptor, @buffer buffer, @offset offset);
+    result := AWAIT(transfer.pending);
+  }
+
+  DOC <$ Submits a positioned write to the selected I/O runtime and stores the completed transfer result. $>
+  .write INCLUDE_IF(OS_WINDOWS)
+    COROUTINE(@CONTROLLER AUTO(controller_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
+    ENABLE_IF(IS_FUNCTUM_CALLABLE_WITH(file_transfer_runtime, @controller MUT& controller_type))
+  {
+    VAR transfer positioned_file_transfer#(@writing TRUE, @controller_type controller_type)
+      :(@controller CONTROLLER, @descriptor .descriptor, @buffer buffer, @offset offset);
+    result := AWAIT(transfer.pending);
+  }
+
+  DOC <$ Awaits a positioned read on the async_runtime of the calling coroutine and stores the completed transfer result. $>
+  .read INCLUDE_IF(OS_LINUX || OS_MACOS)
+    COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
   {
     result := AWAIT(CONTROLLER.runtime->.read(@descriptor .descriptor, @buffer buffer, @offset offset));
   }
 
-  DOC <$ Submits a positioned write through the selected async runtime and suspends until completion. The descriptor and buffer remain valid through resumption. $>
-  .write COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
+  DOC <$ Awaits a positioned write on the async_runtime of the calling coroutine and stores the completed transfer result. $>
+  .write INCLUDE_IF(OS_LINUX || OS_MACOS)
+    COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
   {
     result := AWAIT(CONTROLLER.runtime->.write(@descriptor .descriptor, @buffer buffer, @offset offset));
   }
 
-  DOC <$ Schedules a cursor-based read through the selected I/O runtime and suspends until the transfer completes. $>
-  .read COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @result WRITE& transfer_result)
+  DOC <$ Awaits a positioned read operation in the calling coroutine's frame on its async_runtime2 and stores the completed transfer result. $>
+  .read INCLUDE_IF(OS_MACOS)
+    COROUTINE(@CONTROLLER async_controller2#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
   {
-    result := AWAIT(CONTROLLER.runtime->.read(@descriptor .descriptor, @buffer buffer));
+    VAR operation kqueue_file_read :(@runtime CONTROLLER.io_runtime(), @descriptor .descriptor, @buffer buffer, @offset offset);
+    result := AWAIT(operation);
   }
 
-  DOC <$ Schedules a cursor-based write through the selected I/O runtime and suspends until the transfer completes. $>
-  .write COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @result WRITE& transfer_result)
+  DOC <$ Awaits a positioned read operation in the calling coroutine's frame on its async_runtime2 and stores the completed transfer result. The operation type matches the mechanism that the runtime selected for the running kernel. $>
+  .read INCLUDE_IF(OS_LINUX)
+    COROUTINE(@CONTROLLER async_controller2#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
   {
-    result := AWAIT(CONTROLLER.runtime->.write(@descriptor .descriptor, @buffer buffer));
+    IF (CONTROLLER.io_runtime().uses_io_uring())
+    {
+      VAR ring_operation io_uring_file_read :(@runtime CONTROLLER.io_runtime(), @descriptor .descriptor, @buffer buffer, @offset offset);
+      result := AWAIT(ring_operation);
+    }
+    ELSE
+    {
+      VAR worker_operation epoll_file_read :(@runtime CONTROLLER.io_runtime(), @descriptor .descriptor, @buffer buffer, @offset offset);
+      result := AWAIT(worker_operation);
+    }
   }
 
+  DOC <$ Awaits a positioned write operation in the calling coroutine's frame on its async_runtime2 and stores the completed transfer result. $>
+  .write INCLUDE_IF(OS_MACOS)
+    COROUTINE(@CONTROLLER async_controller2#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
+  {
+    VAR operation kqueue_file_write :(@runtime CONTROLLER.io_runtime(), @descriptor .descriptor, @buffer buffer, @offset offset);
+    result := AWAIT(operation);
+  }
+
+  DOC <$ Awaits a positioned write operation in the calling coroutine's frame on its async_runtime2 and stores the completed transfer result. The operation type matches the mechanism that the runtime selected for the running kernel. $>
+  .write INCLUDE_IF(OS_LINUX)
+    COROUTINE(@CONTROLLER async_controller2#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
+  {
+    IF (CONTROLLER.io_runtime().uses_io_uring())
+    {
+      VAR ring_operation io_uring_file_write :(@runtime CONTROLLER.io_runtime(), @descriptor .descriptor, @buffer buffer, @offset offset);
+      result := AWAIT(ring_operation);
+    }
+    ELSE
+    {
+      VAR worker_operation epoll_file_write :(@runtime CONTROLLER.io_runtime(), @descriptor .descriptor, @buffer buffer, @offset offset);
+      result := AWAIT(worker_operation);
+    }
+  }
+
+  DOC <$ Schedules a cursor read on the selected I/O runtime and stores the completed transfer result. $>
+  .read
+    COROUTINE(@CONTROLLER AUTO(controller_type), @buffer CONST& buffer_ref, @result WRITE& transfer_result)
+    ENABLE_IF(IS_FUNCTUM_CALLABLE_WITH(file_transfer_runtime, @controller MUT& controller_type))
+  {
+    result := AWAIT(file_transfer_runtime(@controller CONTROLLER).read(@descriptor .descriptor, @buffer buffer));
+  }
+
+  DOC <$ Schedules a cursor write on the selected I/O runtime and stores the completed transfer result. $>
+  .write
+    COROUTINE(@CONTROLLER AUTO(controller_type), @buffer CONST& buffer_ref, @result WRITE& transfer_result)
+    ENABLE_IF(IS_FUNCTUM_CALLABLE_WITH(file_transfer_runtime, @controller MUT& controller_type))
+  {
+    result := AWAIT(file_transfer_runtime(@controller CONTROLLER).write(@descriptor .descriptor, @buffer buffer));
+  }
 }
 
 DOC <$
@@ -367,94 +449,6 @@ DOC <$
 }
 
 DOC <$
-  A non-owning reference to an open Windows file HANDLE. Destroying this value
-  does not close the handle.
-  $>
-::file_ref INCLUDE_IF(OS_WINDOWS)
-  STRUCT
-{
-  .descriptor VAR io_descriptor_ref;
-
-  DOC <$ Creates an empty resource reference. $>
-  .CONSTRUCTOR FUNCTION() {}
-
-  DOC <$ Borrows descriptor without acquiring ownership. $>
-  .CONSTRUCTOR FUNCTION(@descriptor io_descriptor_ref) { .descriptor := descriptor; }
-
-  DOC <$ Reports whether the stored descriptor is valid. $>
-  .is_valid FUNCTION() CONST: BOOL { RETURN .descriptor.is_valid(); }
-
-  DOC <$ Reads at most buffer.size bytes into buffer and stores the outcome in result. $>
-  .read FUNCTION(@buffer CONST& buffer_ref, @result WRITE& transfer_result)
-  {
-    VAR outcome transfer_result;
-    VAR transferred U32 := 0;
-    VAR overlapped MUT->syscall::windows::overlapped;
-    outcome.succeeded := syscall::windows::read_file(
-      @handle .descriptor.native_handle(),
-      @buffer buffer.data,
-      @count windows_transfer_size(@size buffer.size),
-      @transferred transferred<-,
-      @overlapped overlapped
-    ) != 0;
-    outcome.size := transferred AS SZ;
-    result := outcome;
-  }
-
-  DOC <$ Writes at most buffer.size bytes from buffer and stores the outcome in result. $>
-  .write FUNCTION(@buffer CONST& buffer_ref, @result WRITE& transfer_result)
-  {
-    VAR outcome transfer_result;
-    VAR transferred U32 := 0;
-    VAR overlapped MUT->syscall::windows::overlapped;
-    outcome.succeeded := syscall::windows::write_file(
-      @handle .descriptor.native_handle(),
-      @buffer buffer.data,
-      @count windows_transfer_size(@size buffer.size),
-      @transferred transferred<-,
-      @overlapped overlapped
-    ) != 0;
-    outcome.size := transferred AS SZ;
-    result := outcome;
-  }
-
-  DOC <$
-    Closes the referenced handle. This operation does not track whether another
-    file_ref still refers to the same handle.
-    $>
-  .close FUNCTION(): BOOL
-  {
-    VAR handle ADDRESS := .descriptor.native_handle();
-    RETURN close_windows_async_handle(@handle handle,
-      @close -< [=handle]: BOOL = syscall::windows::close_handle(@handle handle) != 0);
-  }
-  DOC <$ Submits a positioned read through the selected async runtime and suspends until completion. The descriptor and buffer remain valid through resumption. $>
-  .read COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
-  {
-    result := AWAIT(CONTROLLER.runtime->.read(@descriptor .descriptor, @buffer buffer, @offset offset));
-  }
-
-  DOC <$ Submits a positioned write through the selected async runtime and suspends until completion. The descriptor and buffer remain valid through resumption. $>
-  .write COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
-  {
-    result := AWAIT(CONTROLLER.runtime->.write(@descriptor .descriptor, @buffer buffer, @offset offset));
-  }
-
-  DOC <$ Schedules a cursor-based read through the selected I/O runtime and suspends until the transfer completes. $>
-  .read COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @result WRITE& transfer_result)
-  {
-    result := AWAIT(CONTROLLER.runtime->.read(@descriptor .descriptor, @buffer buffer));
-  }
-
-  DOC <$ Schedules a cursor-based write through the selected I/O runtime and suspends until the transfer completes. $>
-  .write COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @result WRITE& transfer_result)
-  {
-    result := AWAIT(CONTROLLER.runtime->.write(@descriptor .descriptor, @buffer buffer));
-  }
-
-}
-
-DOC <$
   An automatic resource management object with exclusive ownership of a file_ref. Default construction creates a closed
   owner. Construction from a valid file_ref transfers exclusive ownership;
   the caller retains no responsibility for closing the native resource.
@@ -471,10 +465,7 @@ DOC <$
   .CONSTRUCTOR FUNCTION() { }
 
   DOC <$ Takes exclusive ownership of native_ref. Empty references remain closed. $>
-  .CONSTRUCTOR FUNCTION(@native_ref file_ref)
-  {
-    .native_ref := native_ref;
-  }
+  .CONSTRUCTOR FUNCTION(@native_ref AUTO& file_ref) :> .native_ref:(@OTHER FORWARD(native_ref)) {}
 
   DOC <$ Transfers ownership from OTHER and leaves OTHER closed. $>
   .CONSTRUCTOR FUNCTION(@OTHER TEMP& file)
@@ -487,7 +478,7 @@ DOC <$
   {
     VAR incoming file_ref := OTHER.release();
     .close();
-    .native_ref := incoming;
+    .native_ref := MOVE(incoming);
   }
 
   DOC <$ Closes the owned reference if it is valid. $>
@@ -508,9 +499,8 @@ DOC <$
   DOC <$ Transfers responsibility for closing the reference to the caller and leaves this owner closed. $>
   .release FUNCTION() MUT: file_ref
   {
-    VAR previous file_ref := .native_ref;
-    VAR empty file_ref;
-    .native_ref := empty;
+    VAR previous file_ref;
+    previous <-> .native_ref;
     RETURN previous;
   }
 
@@ -545,32 +535,103 @@ DOC <$
     VAR previous file_ref := .release();
     RETURN previous.close();
   }
-  DOC <$ Submits a positioned read through the selected async runtime. The owner remains alive through completion. $>
-  .read INCLUDE_IF(OS_LINUX || OS_MACOS || OS_WINDOWS)
+
+  DOC <$ Submits a positioned read to the selected I/O runtime and stores the completed transfer result. $>
+  .read INCLUDE_IF(OS_WINDOWS)
+    COROUTINE(@CONTROLLER AUTO(controller_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
+    ENABLE_IF(IS_FUNCTUM_CALLABLE_WITH(file_transfer_runtime, @controller MUT& controller_type))
+  {
+    VAR transfer positioned_file_transfer#(@writing FALSE, @controller_type controller_type)
+      :(@controller CONTROLLER, @descriptor .native_ref.descriptor, @buffer buffer, @offset offset);
+    result := AWAIT(transfer.pending);
+  }
+
+  DOC <$ Submits a positioned write to the selected I/O runtime and stores the completed transfer result. $>
+  .write INCLUDE_IF(OS_WINDOWS)
+    COROUTINE(@CONTROLLER AUTO(controller_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
+    ENABLE_IF(IS_FUNCTUM_CALLABLE_WITH(file_transfer_runtime, @controller MUT& controller_type))
+  {
+    VAR transfer positioned_file_transfer#(@writing TRUE, @controller_type controller_type)
+      :(@controller CONTROLLER, @descriptor .native_ref.descriptor, @buffer buffer, @offset offset);
+    result := AWAIT(transfer.pending);
+  }
+
+  DOC <$ Awaits a positioned read on the async_runtime of the calling coroutine and stores the completed transfer result. $>
+  .read INCLUDE_IF(OS_LINUX || OS_MACOS)
     COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
   {
-    .native_ref.read(@buffer buffer, @offset offset, @result result);
+    result := AWAIT(CONTROLLER.runtime->.read(@descriptor .native_ref.descriptor, @buffer buffer, @offset offset));
   }
 
-  DOC <$ Submits a positioned write through the selected async runtime. The owner remains alive through completion. $>
-  .write INCLUDE_IF(OS_LINUX || OS_MACOS || OS_WINDOWS)
+  DOC <$ Awaits a positioned write on the async_runtime of the calling coroutine and stores the completed transfer result. $>
+  .write INCLUDE_IF(OS_LINUX || OS_MACOS)
     COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
   {
-    .native_ref.write(@buffer buffer, @offset offset, @result result);
+    result := AWAIT(CONTROLLER.runtime->.write(@descriptor .native_ref.descriptor, @buffer buffer, @offset offset));
   }
 
-  DOC <$ Schedules a cursor-based read through the selected I/O runtime. The owner remains alive through completion. $>
+  DOC <$ Awaits a positioned read operation in the calling coroutine's frame on its async_runtime2 and stores the completed transfer result. $>
+  .read INCLUDE_IF(OS_MACOS)
+    COROUTINE(@CONTROLLER async_controller2#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
+  {
+    VAR operation kqueue_file_read :(@runtime CONTROLLER.io_runtime(), @descriptor .native_ref.descriptor, @buffer buffer, @offset offset);
+    result := AWAIT(operation);
+  }
+
+  DOC <$ Awaits a positioned read operation in the calling coroutine's frame on its async_runtime2 and stores the completed transfer result. The operation type matches the mechanism that the runtime selected for the running kernel. $>
+  .read INCLUDE_IF(OS_LINUX)
+    COROUTINE(@CONTROLLER async_controller2#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
+  {
+    IF (CONTROLLER.io_runtime().uses_io_uring())
+    {
+      VAR ring_operation io_uring_file_read :(@runtime CONTROLLER.io_runtime(), @descriptor .native_ref.descriptor, @buffer buffer, @offset offset);
+      result := AWAIT(ring_operation);
+    }
+    ELSE
+    {
+      VAR worker_operation epoll_file_read :(@runtime CONTROLLER.io_runtime(), @descriptor .native_ref.descriptor, @buffer buffer, @offset offset);
+      result := AWAIT(worker_operation);
+    }
+  }
+
+  DOC <$ Awaits a positioned write operation in the calling coroutine's frame on its async_runtime2 and stores the completed transfer result. $>
+  .write INCLUDE_IF(OS_MACOS)
+    COROUTINE(@CONTROLLER async_controller2#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
+  {
+    VAR operation kqueue_file_write :(@runtime CONTROLLER.io_runtime(), @descriptor .native_ref.descriptor, @buffer buffer, @offset offset);
+    result := AWAIT(operation);
+  }
+
+  DOC <$ Awaits a positioned write operation in the calling coroutine's frame on its async_runtime2 and stores the completed transfer result. The operation type matches the mechanism that the runtime selected for the running kernel. $>
+  .write INCLUDE_IF(OS_LINUX)
+    COROUTINE(@CONTROLLER async_controller2#AUTO(result_type), @buffer CONST& buffer_ref, @offset U64, @result WRITE& transfer_result)
+  {
+    IF (CONTROLLER.io_runtime().uses_io_uring())
+    {
+      VAR ring_operation io_uring_file_write :(@runtime CONTROLLER.io_runtime(), @descriptor .native_ref.descriptor, @buffer buffer, @offset offset);
+      result := AWAIT(ring_operation);
+    }
+    ELSE
+    {
+      VAR worker_operation epoll_file_write :(@runtime CONTROLLER.io_runtime(), @descriptor .native_ref.descriptor, @buffer buffer, @offset offset);
+      result := AWAIT(worker_operation);
+    }
+  }
+
+  DOC <$ Schedules a cursor read on the selected I/O runtime and stores the completed transfer result. $>
   .read INCLUDE_IF(OS_LINUX || OS_MACOS || OS_WINDOWS)
-    COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @result WRITE& transfer_result)
+    COROUTINE(@CONTROLLER AUTO(controller_type), @buffer CONST& buffer_ref, @result WRITE& transfer_result)
+    ENABLE_IF(IS_FUNCTUM_CALLABLE_WITH(file_transfer_runtime, @controller MUT& controller_type))
   {
-    .native_ref.read(@buffer buffer, @result result);
+    result := AWAIT(file_transfer_runtime(@controller CONTROLLER).read(@descriptor .native_ref.descriptor, @buffer buffer));
   }
 
-  DOC <$ Schedules a cursor-based write through the selected I/O runtime. The owner remains alive through completion. $>
+  DOC <$ Schedules a cursor write on the selected I/O runtime and stores the completed transfer result. $>
   .write INCLUDE_IF(OS_LINUX || OS_MACOS || OS_WINDOWS)
-    COROUTINE(@CONTROLLER async_controller#AUTO(result_type), @buffer CONST& buffer_ref, @result WRITE& transfer_result)
+    COROUTINE(@CONTROLLER AUTO(controller_type), @buffer CONST& buffer_ref, @result WRITE& transfer_result)
+    ENABLE_IF(IS_FUNCTUM_CALLABLE_WITH(file_transfer_runtime, @controller MUT& controller_type))
   {
-    .native_ref.write(@buffer buffer, @result result);
+    result := AWAIT(file_transfer_runtime(@controller CONTROLLER).write(@descriptor .native_ref.descriptor, @buffer buffer));
   }
 
 }

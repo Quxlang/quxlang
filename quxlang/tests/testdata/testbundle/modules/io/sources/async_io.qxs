@@ -318,7 +318,7 @@ DOC <$
   }
 
   DOC <$ Submits a positioned read on a borrowed descriptor. The descriptor and buffer remain valid until callback returns. Windows descriptors must support overlapped I/O and belong to this completion port. $>
-  .read FUNCTION(@descriptor io_descriptor_ref, @buffer CONST& buffer_ref, @offset U64, @callback AUTO& AUTO(callback_type))
+  .read FUNCTION(@descriptor CONST& io_descriptor_ref, @buffer CONST& buffer_ref, @offset U64, @callback AUTO& AUTO(callback_type))
   {
     ASSERT(.valid(), "Cannot submit to an unavailable async context.");
     VAR file_control MUT->async_file_control;
@@ -340,7 +340,7 @@ DOC <$
   }
 
   DOC <$ Submits a positioned write on a borrowed descriptor. The descriptor and buffer remain valid until callback returns. Windows descriptors must support overlapped I/O and belong to this completion port. $>
-  .write FUNCTION(@descriptor io_descriptor_ref, @buffer CONST& buffer_ref, @offset U64, @callback AUTO& AUTO(callback_type))
+  .write FUNCTION(@descriptor CONST& io_descriptor_ref, @buffer CONST& buffer_ref, @offset U64, @callback AUTO& AUTO(callback_type))
   {
     ASSERT(.valid(), "Cannot submit to an unavailable async context.");
     VAR file_control MUT->async_file_control;

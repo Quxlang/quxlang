@@ -1,0 +1,63 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+::scheduling_benchmarks NAMESPACE
+{
+  DOC <$ Completes without suspending. $>
+  ::leaf COROUTINE(@value U64): U64 { RETURN value + 1; }
+
+  DOC <$ Calls a coroutine that completes without suspending, count times. $>
+  ::nested_calls COROUTINE(@count U64): U64
+  {
+    VAR total U64;
+    LOOP VALUE(index) FROM(0 AS U64) UNTIL(count) DO { total := leaf(@value total); };
+    RETURN total;
+  }
+
+  DOC <$ Suspends at a scheduling boundary count times. $>
+  ::yields COROUTINE(@count U64): U64
+  {
+    VAR total U64;
+    LOOP VALUE(index) FROM(0 AS U64) UNTIL(count) DO
+    {
+      AWAIT(std::cort_yield());
+      total += 1;
+    };
+    RETURN total;
+  }
+
+  DOC <$ Measures a nested coroutine call whose callee completes without suspending. $>
+  ::pool_nested_call BENCHMARK(@workers SZ) CASE("workers1", @workers 1) CASE("workers4", @workers 4) BODY
+  {
+    VAR runtime std::thread_pool_cort_runtime:(@workers workers);
+    VAR count U64 := 256;
+    BENCHMARK_LOOP
+    {
+      VAR total U64;
+      MEASURE COUNT(count)
+      {
+        VAR result := ON(runtime) RUN nested_calls(@count count);
+        total := result.get();
+      }
+      TEST_ASSERT(total == count);
+    }
+  }
+
+  DOC <$ Measures one suspension of an invocation followed by its resumption through the ready queue. $>
+  ::pool_yield BENCHMARK(@workers SZ) CASE("workers1", @workers 1) CASE("workers4", @workers 4) BODY
+  {
+    VAR runtime std::thread_pool_cort_runtime:(@workers workers);
+    VAR count U64 := 256;
+    BENCHMARK_LOOP
+    {
+      VAR total U64;
+      MEASURE COUNT(count)
+      {
+        VAR result := ON(runtime) RUN yields(@count count);
+        total := result.get();
+      }
+      TEST_ASSERT(total == count);
+    }
+  }
+}

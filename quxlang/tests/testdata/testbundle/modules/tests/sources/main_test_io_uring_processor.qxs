@@ -46,6 +46,23 @@ IMPORT syscall;
     TEST_ASSERT(processor.process_completions(@maximum 16) != 0);
   }
 
+  DOC <$ An immediate submission reaches the kernel without a separate flush and completes once. $>
+  ::immediate_submission UNIT_TEST
+  {
+    VAR processor io::io_uring_processor :(@submission_entries 2, @completion_entries 4);
+    VAR first operation;
+    VAR second operation;
+    processor.submit(@operation first);
+    TEST_ASSERT(processor.pending_count() == 1);
+    receive(@processor processor);
+    TEST_ASSERT(first.final_notifications == 1 && first.last_result == 0);
+    TEST_ASSERT(processor.pending_count() == 0);
+    processor.submit(@operation second);
+    receive(@processor processor);
+    TEST_ASSERT(second.final_notifications == 1 && processor.pending_count() == 0);
+    TEST_ASSERT(processor.wait(@timeout_nanoseconds 1000000) == FALSE);
+  }
+
   DOC <$ Queued operations submit in batches and completion processing respects its bound. $>
   ::batch UNIT_TEST
   {

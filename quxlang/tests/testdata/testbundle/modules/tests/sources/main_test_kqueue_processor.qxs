@@ -1,0 +1,117 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT syscall;
+
+::kqueue_processor_tests INCLUDE_IF(OS_MACOS) NAMESPACE
+{
+  ::open_pipe EXTERN_PROCEDURE["/usr/lib/libSystem.B.dylib":"pipe"]
+    CALLABLE CALLCONV CCALL(@descriptors MUT=>>I32; RETURN I32);
+
+  DOC <$ Records the events that the processor delivers to one target. $>
+  ::recorder STRUCT ROOTED
+  {
+    .target VAR io::kqueue_target;
+    .deliveries VAR SZ;
+    .readiness_error VAR U32;
+    .transfer_error VAR U32;
+    .transfer_size VAR SZ;
+
+    .CONSTRUCTOR FUNCTION()
+    {
+      .target.context := THIS<- AS REINTERPRET MUT->VOID;
+      .target.deliver := on_event<-;
+    }
+
+    ::on_event FUNCTION(@context MUT->VOID, @event CONST->syscall::macos::kernel_event)
+    {
+      VAR record := context AS REINTERPRET MUT->recorder;
+      record->.deliveries++;
+      record->.readiness_error := io::kqueue_readiness_error(@event event->);
+      record->.transfer_error := io::kqueue_transfer_error(@event event->);
+      record->.transfer_size := io::kqueue_transfer_size(@event event->);
+    }
+  }
+
+  DOC <$ Processes events until count deliveries have occurred or the attempts are exhausted. $>
+  ::deliver FUNCTION(@processor CONST& io::kqueue_processor, @count SZ): SZ
+  {
+    VAR delivered SZ;
+    LOOP VALUE(attempt) FROM(0 AS SZ) UNTIL(8) DO
+    {
+      IF (delivered >= count) { BREAK; }
+      delivered := delivered + processor.process_events(@maximum count - delivered, @timeout_milliseconds 1000);
+    };
+    RETURN delivered;
+  }
+
+  DOC <$ Each one-shot watch on the read end of a pipe delivers one event to its own target. $>
+  ::multiple_readers UNIT_TEST
+  {
+    VAR handles [2]I32;
+    TEST_ASSERT(open_pipe(@descriptors handles[&0]) == 0);
+    DEFER { syscall::macos::close(@fd handles[1]); syscall::macos::close(@fd handles[0]); }
+    VAR descriptor io::io_descriptor_ref :(@native_handle handles[0]);
+    VAR processor io::kqueue_processor;
+    VAR first recorder;
+    VAR second recorder;
+    processor.watch_readable(@descriptor descriptor, @target first.target);
+    processor.watch_readable(@descriptor descriptor, @target second.target);
+    TEST_ASSERT(processor.process_events(@maximum 2) == 0);
+    VAR byte [1]BYTE;
+    TEST_ASSERT(syscall::macos::write(@fd handles[1], @buffer byte[&0], @count 1) == 1);
+    TEST_ASSERT(deliver(@processor processor, @count 2) == 2);
+    TEST_ASSERT(first.deliveries == 1 && second.deliveries == 1);
+    TEST_ASSERT(first.readiness_error == 0 && second.readiness_error == 0);
+    TEST_ASSERT(processor.process_events(@maximum 2) == 0);
+  }
+
+  DOC <$ Raising a target before its event is dequeued coalesces into one delivery. The registration persists for a later raise. $>
+  ::raised_target UNIT_TEST
+  {
+    VAR processor io::kqueue_processor;
+    VAR signal recorder;
+    TEST_ASSERT(processor.process_events(@maximum 2, @timeout_milliseconds 1) == 0);
+    processor.raise(@target signal.target);
+    processor.raise(@target signal.target);
+    TEST_ASSERT(processor.process_events(@maximum 0, @timeout_milliseconds -1) == 0);
+    TEST_ASSERT(deliver(@processor processor, @count 1) == 1);
+    TEST_ASSERT(signal.deliveries == 1);
+    TEST_ASSERT(processor.process_events(@maximum 2) == 0);
+    processor.raise(@target signal.target);
+    TEST_ASSERT(deliver(@processor processor, @count 1) == 1);
+    TEST_ASSERT(signal.deliveries == 2);
+  }
+
+  DOC <$ A positioned write and a positioned read each deliver their status and byte count to the target. A request can be reused after its event. $>
+  ::positioned_transfers UNIT_TEST
+  {
+    VAR pattern STRING_CONSTANT := "/tmp/quxlang-io-XXXXXX";
+    VAR path [23]BYTE;
+    LOOP VALUE(index) FROM(0 AS SZ) UNTIL(path.SIZE() - 1) DO { path[index] := pattern.BEGIN()[index]; };
+    VAR handle I32 := io_runtime_tests::temporary_file(@path path[&0]);
+    TEST_ASSERT(handle >= 0);
+    DEFER { syscall::macos::close(@fd handle); }
+    TEST_ASSERT(io_runtime_tests::unlink_file(@path path[&0]) == 0);
+    VAR descriptor io::io_descriptor_ref :(@native_handle handle);
+    VAR processor io::kqueue_processor;
+    VAR data [2]BYTE;
+    data[0] := 23;
+    VAR record recorder;
+    VAR request io::kqueue_transfer_request;
+    VAR buffer io::buffer_ref :(@data data[&0], @size 1);
+    VAR code I32 := processor.write(@request request, @descriptor descriptor, @buffer buffer, @offset 1, @target record.target);
+    IF (code != 0)
+    {
+      TEST_ASSERT(io::kqueue_native_aio_available() == FALSE);
+      RETURN;
+    }
+    TEST_ASSERT(deliver(@processor processor, @count 1) == 1);
+    TEST_ASSERT(record.deliveries == 1 && record.transfer_error == 0 && record.transfer_size == 1);
+    buffer.size := 2;
+    TEST_ASSERT(processor.read(@request request, @descriptor descriptor, @buffer buffer, @offset 0, @target record.target) == 0);
+    TEST_ASSERT(deliver(@processor processor, @count 1) == 1);
+    TEST_ASSERT(record.deliveries == 2 && record.transfer_error == 0 && record.transfer_size == 2);
+    TEST_ASSERT(data[0] == 0 && data[1] == 23);
+  }
+}

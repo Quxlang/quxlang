@@ -1,6 +1,6 @@
 # Socket operations
 
-Module `net` · source files `socket_async.qxs`, `socket_transport.qxs`, `socket_readiness.qxs`, `socket_operations.qxs`, `socket_state.qxs`, `socket_extensions.qxs`
+Module `net` · source files `socket_async.qxs`, `socket_async_uring.qxs`, `socket_async_readiness.qxs`, `socket_async_windows.qxs`, `socket_transport.qxs`, `socket_readiness.qxs`, `socket_operations.qxs`, `socket_state.qxs`, `socket_extensions.qxs`
 
 The `net` module has six socket operations that can wait for the network:
 `connect`, `accept`, `read`, `write`, `send`, and `receive`. Each operation is
@@ -38,10 +38,10 @@ complete without waiting for the network and have a synchronous form only.
 VAR received SZ := connection.read(@buffer buffer);
 ```
 
-A call from an ordinary function, or from a coroutine that does not run on an
-[`io::async_runtime`](../io/async-runtime.md), selects the synchronous
-function. The function returns when the operation has completed and blocks the
-calling thread in the meantime. A failure throws [`net::error`](error.md).
+A call from an ordinary function selects the synchronous function. A
+coroutine controller without a socket submission interface also selects it.
+The function blocks the calling thread until completion. A native socket
+failure throws [`net::error`](error.md).
 
 The synchronous form requires no runtime and starts no thread. The function has
 no time limit: a `read` on a connection whose peer sends nothing, and an
@@ -50,24 +50,25 @@ no time limit: a `read` on a connection whose peer sends nothing, and an
 ## Future form
 
 ```quxlang
+VAR runtime io::async_runtime2;
 VAR pending := connection.async_read(@runtime runtime, @buffer buffer);
 VAR received SZ := pending.get();
 ```
 
-A function with the prefix `async_` takes an additional first parameter
-`@runtime MUT& io::async_runtime`, submits the operation to the runtime as a
-[native operation](../io/native-operation.md), and returns a single-consumer
-[`std::future`](../std/future.md) whose value type is the result type of the
-operation. `async_connect` returns `std::future#VOID`.
+Each `async_` function takes a mutable reference to an `io::async_runtime2`
+or `io::async_runtime`. The runtime takes ownership of the operation and
+returns a single-consumer `std::future` of its result type. For example,
+`async_connect` returns `std::future#VOID`, and `async_accept` returns
+`std::future#net::tcp_connection`. [Future contract](../std/future.md)
 
 - The function starts the operation on the calling thread and returns without
   waiting for its completion. An operation that completes during the start
   produces a future that is already ready.
-- The completion workers of the runtime finish the operation. A pending socket
-  operation occupies no file worker and no scheduler worker of the runtime.
+- The runtime processes pending operations through its native completion or
+  readiness queue. Its scheduler and file workers are available for other work.
 - A failure is stored in the future, and `get` or `AWAIT` rethrows it. The
   `async_` function itself does not throw `net::error`.
-- The function copies the socket handle, the buffer reference, and the endpoint
+- The function copies the borrowed socket descriptor, the buffer reference, and the endpoint
   argument into the operation at the call.
 
 ## Coroutine form
@@ -79,22 +80,19 @@ operation. `async_connect` returns `std::future#VOID`.
 }
 ```
 
-Each of the six operations is also declared as a coroutine that has the name of
-the synchronous function and an explicit controller parameter
-`@CONTROLLER io::async_controller#AUTO(result_type)`. A call made from a
-coroutine that runs under an
-[`io::async_controller`](../io/async-controller.md) selects the coroutine. The
-coroutine submits the operation through the controller, suspends the calling
-coroutine until a completion worker publishes the result, and then returns the
-result or rethrows the failure. No thread is blocked while the operation is
-pending.
+`ON(runtime) RUN` selects `io::async_controller2` for an `io::async_runtime2`
+and `io::async_controller` for an `io::async_runtime`. Both controllers
+select the coroutine forms of all six operations. Nested coroutine calls and
+coroutines launched with `GO` inherit the selected runtime.
 
-A coroutine runs under `io::async_controller` when `ON(runtime) RUN` launches
-it on an `io::async_runtime`, or when such a coroutine calls it or starts it
-with `GO`. The source text of a call is the same in the synchronous form and
-in the coroutine form; the context of the call selects the form. The fragment
-above is the `read` coroutine of the unit tests of the module
-(`main_test_net_sockets.qxs`).
+Under `io::async_controller2`, the socket coroutine stores its operation and
+waiter in its frame. The waiter borrows the operation, starts the native
+request, and arranges resumption when the operation completes. The socket
+coroutine returns the result or rethrows the failure. An inline completion
+allows the coroutine to continue immediately. Under `io::async_controller`,
+the socket coroutine submits the operation and awaits its future.
+[Processor-backed runtime](../io/async-runtime2.md) ·
+[I/O controller](../io/async-controller.md)
 
 ## Lifetime and concurrency contract
 
@@ -111,12 +109,18 @@ above is the `read` coroutine of the unit tests of the module
 - The caller serializes the operations of each direction on one socket. One
   receiving operation and one sending operation can be pending at the same
   time.
-- The module provides no deadline and no cancellation for a pending operation.
-  [`io::async_runtime::drain`](../io/async-runtime.md#drain) and the destructor
-  of the runtime wait for every pending socket operation.
-- On Windows, the first future or coroutine operation on a socket associates
-  the socket with the completion port of its runtime. Every later future or
-  coroutine operation on that socket uses the same runtime.
+- Both runtimes wait for pending socket operations during `drain()` and
+  destruction. An `accept` on a listener with no incoming connection can keep
+  the drain pending indefinitely.
+- On Windows, the first native asynchronous submission associates the open
+  socket with its runtime's completion port. A native submission through a
+  different runtime fails with `io::async_error::submission_failed`. All
+  owners and references to the open socket share its association record.
+  An in-flight operation retains a descriptor copy so its record stays alive
+  during deferred start and completion. The caller keeps the socket open. After all operations complete, a
+  successful close through the socket owner or a reference invalidates all
+  copies. A newly opened socket has its own record even if Windows reuses a
+  numeric handle. [Windows descriptor ownership](../io/io-descriptor-ref.md)
 
 ## Socket creation
 
@@ -127,7 +131,7 @@ socket before the program receives it:
 | Target | Creation | Properties |
 | --- | --- | --- |
 | Linux | One `socket` call, or one `accept4` call for an accepted connection, with the nonblocking and close-on-exec flags | Nonblocking. Not inherited by a new program image. Sends pass the no-signal flag, so a write to a closed connection raises no `SIGPIPE`. |
-| macOS | A `socket` or `accept` call followed by three configuration calls | Close-on-exec, nonblocking, and the `SO_NOSIGPIPE` option. A failed configuration call closes the socket and throws the translated error. |
+| macOS | A new socket uses three configuration calls. An accepted socket inherits nonblocking and no-signal behavior from the listener and sets close-on-exec with one call | Close-on-exec, nonblocking, and the `SO_NOSIGPIPE` option. A failed configuration call closes the socket and throws the translated error. |
 | Windows | One Winsock startup call (version 2.2) per socket, then socket creation with the overlapped and no-inherit flags | Blocking mode with support for overlapped I/O. Not inherited by a child process. `close` releases the startup reference. |
 
 A TCP socket uses the stream type with the TCP protocol, and a UDP socket uses
@@ -137,38 +141,49 @@ option; in particular, no address-reuse option is set.
 
 ## Platform implementations
 
-The public interface is identical on every supported target. The mechanism
-behind the operations is selected at compile time.
+Each backend defines a distinct request structure for each of the six
+asynchronous socket operations. The request borrows the socket and any
+caller-supplied payload buffer through completion.
+
+The processor-backed runtime uses the same native queue for socket
+notifications and positioned file completions. The target and the Linux
+`io::linux_use_io_uring` module option select the socket transport at compile
+time. [`io::async_runtime2`](../io/async-runtime2.md)
 
 | Target | Synchronous form | Future and coroutine forms |
 | --- | --- | --- |
 | Linux, `io::linux_use_io_uring` equal to `TRUE` (default) | Nonblocking native call; on a would-block result, `ppoll` on the calling thread, then a repeated call | One io_uring request per operation, submitted to the ring of the runtime |
-| Linux, `io::linux_use_io_uring` equal to `FALSE` | As above | Nonblocking native call on the submitting thread; on a would-block result, one readiness registration with the epoll instance of the runtime, then a repeated call on a completion worker |
+| Linux, `io::linux_use_io_uring` equal to `FALSE` | As above | The submitting thread attempts the nonblocking operation. The runtime waits for epoll readiness after a would-block result. |
 | macOS | Nonblocking native call; on a would-block result, `poll` on the calling thread, then a repeated call | As for the Linux epoll backend, with a one-shot kqueue event as the readiness registration |
 | Windows | Blocking Winsock call | Overlapped Winsock call whose completion packet is delivered to the I/O completion port of the runtime |
 
 **Readiness-based targets (macOS, and Linux with the epoll backend)**. The
 operation attempts the nonblocking native call when it is submitted. When the
-call would block, the operation registers one readiness notification through
-[`io::async_submission_ref::wait`](../io/native-operation.md#wait): readable
-readiness for `accept`, `read`, and `receive`, and writable readiness for
-`connect`, `write`, and `send`. When the notification arrives, a completion
+call would block, the operation registers readable readiness for `accept`,
+`read`, and `receive`, or writable readiness for `connect`, `write`, and
+`send`. When the notification arrives, a completion
 worker repeats the native call and registers a further notification after a
 spurious readiness. A `connect` completes at the first writable notification;
 the operation then reads the pending error of the socket to determine success
 or failure. A notification that carries an error completes the operation with
 the translated error.
 
+On Linux, `io::async_runtime2` tracks a pending reader and writer
+independently under one epoll watch for the socket. On macOS, it uses the
+kqueue read and write filters. Both readiness backends deliver notifications
+on the runtime's completion thread.
+
 **Synchronous waiting on Linux and macOS**. The synchronous form uses the same
 nonblocking calls and waits with `ppoll` (Linux) or `poll` (macOS) without a
 time limit. A wait that a signal interrupts is repeated. `connect` reads the
 pending error of the socket after the socket becomes writable.
 
-**Linux io_uring**. `connect`, `accept`, `read`, and `write` submit the
-corresponding connect, accept, receive, and send requests; `send` and
-`receive` submit message requests that carry the endpoint. The request state,
-including the encoded endpoint and the message header, is stored inside the
-operation object, which the runtime keeps at a stable address. A request that
+**Linux io_uring**. `connect`, `accept`, `read`, and `write` submit the corresponding connect,
+accept, receive, and send requests. A UDP send or receive retains one socket
+descriptor, a 28-byte IPv4/IPv6 address buffer, one `iovec`, and one
+`msghdr` at a stable address. The completed byte count replaces the vector
+length. A receive decodes the source endpoint when the caller retrieves the
+result. A request that
 completes with an interruption is submitted again, except for `connect`, which
 reports `error::interrupted`. Accepted sockets are created nonblocking and
 close-on-exec.
@@ -184,19 +199,20 @@ and `accept` apply the connection context update option to the connected
 socket. A datagram that is longer than the buffer is reported as a truncated
 `datagram_result`; the native message-size error is not propagated.
 
-**All targets**. An empty buffer completes `read` and `write` with zero without
-a native request. `receive` with an empty buffer substitutes an internal
-one-byte buffer, so that the message is consumed and its truncation state is
-known. One native TCP transfer is limited to 2,147,483,647 bytes.
+**Empty buffers and transfer limits**. An empty buffer completes a TCP
+`read` or `write` with zero on an open socket. A UDP `receive` with an empty
+buffer consumes one datagram. Its `truncated` flag distinguishes a nonempty
+datagram from an empty datagram. The io_uring receive uses a zero-length
+vector and reads `MSG_TRUNC` from the completed message header.
+One native TCP transfer is limited to 2,147,483,647 bytes.
 
 ## Target restrictions
 
 The module supports Linux, macOS, and Windows. Its public declarations carry no
 [`INCLUDE_IF`](../../reference/availability-and-targets.md) condition, and the
 native socket handle type on which they depend is declared for these three
-targets only. The future and coroutine forms additionally require
-[`io::async_runtime`](../io/async-runtime.md), which is declared for the same
-targets. The option
+targets only. The future and coroutine forms accept `io::async_runtime` and
+`io::async_runtime2` on all three operating systems. The option
 [`io::linux_use_io_uring`](../io/index.md#module-options) selects the Linux
 mechanism for the future and coroutine forms and has no effect on the
 synchronous form.

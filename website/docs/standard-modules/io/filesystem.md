@@ -144,8 +144,10 @@ holds the JVM form of [`io::file_ref`](file-ref.md#jvm-targets).
 | Windows | Not declared | Not declared |
 
 The module declares no path-based opening function for Windows. A Windows
-program constructs an [`io::file`](file.md) from a handle that a native
-interface returns.
+program can import a newly opened native handle into an `io_descriptor_ref`,
+construct a `file_ref` from that descriptor, and transfer the closing
+obligation to an `io::file`. Copies of the descriptor carry its association
+across these operations. [Windows descriptor imports](io-descriptor-ref.md#constructor)
 
 The module declares no function that removes, renames, or queries a file.
 

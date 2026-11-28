@@ -1,0 +1,149 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+IMPORT syscall;
+
+PRIVATE(MODULE)
+{
+  DOC <$ Completes without work. Its completion returns the io_uring consumer from its wait. $>
+  ::uring_wake_operation INCLUDE_IF(OS_LINUX) STRUCT
+  {
+    DOC <$ Encodes a no-op request. $>
+    .prepare FUNCTION(@entry MUT& io_uring_submission_entry) MUT { entry.descriptor := -1; }
+    DOC <$ Ignores the completion. $>
+    .on_notify FUNCTION(@completion io_uring_completion_result) MUT {}
+  }
+
+  DOC <$
+    Supplies the Linux mechanisms of an async_runtime2. Construction creates an
+    io_uring when the running kernel provides one. Otherwise the backend uses
+    an epoll processor for socket readiness and a worker pool for positioned
+    file transfers. Exactly one of the two processors exists.
+    $>
+  ::runtime_backend INCLUDE_IF(OS_LINUX) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    DOC <$ Refers to the io_uring processor, or holds null on a kernel without io_uring. $>
+    .uring VAR MUT->io_uring_processor;
+    DOC <$ Serializes the producers of the submission queue. $>
+    .submission_mutex VAR std::unfair_mutex;
+    .wake_operation VAR uring_wake_operation;
+    DOC <$ Refers to the epoll processor when the kernel provides no io_uring. $>
+    .epoll VAR MUT->epoll_processor;
+    .file_work VAR file_work_pool;
+
+    .CONSTRUCTOR FUNCTION(@entries U32, @file_workers SZ) :> .file_work:(@workers file_workers)
+    {
+      STATIC_IF(linux_use_io_uring)
+      {
+        // Setup fails on a kernel that lacks io_uring and under a policy that forbids it.
+        TRY { .uring := NEW io_uring_processor:(@submission_entries entries, @completion_entries entries, @single_issuer FALSE); }
+        CATCH failure CONST& io_uring_error {}
+      }
+      IF (.uring!?) { .epoll := NEW epoll_processor; }
+    }
+
+    .DESTRUCTOR FUNCTION()
+    {
+      DELETE OPTIONAL .uring;
+      DELETE OPTIONAL .epoll;
+    }
+
+    DOC <$ Submits one operation to the io_uring. The operation receives one completion. $>
+    .submit FUNCTION(@operation io_uring_operation_ref) MUT
+    {
+      .submission_mutex.lock();
+      DEFER { .submission_mutex.unlock(); }
+      .uring->.submit(@operation operation);
+    }
+
+    DOC <$ Returns the consumer from its wait. $>
+    .wake FUNCTION() MUT
+    {
+      IF (.uring??) { .submit(@operation .wake_operation); }
+      ELSE { .epoll->.wake(); }
+    }
+
+    DOC <$ Consumes the completion of a wake request that the consumer did not receive before it stopped. The runtime calls quiesce after the consumer thread has exited. $>
+    .quiesce FUNCTION() MUT
+    {
+      IF (.uring!?) { RETURN; }
+      LOOP WHILE(.uring->.pending_count() != 0) DO
+      {
+        IF (.uring->.process_completions(@maximum 64) == 0) { .uring->.wait(); }
+      };
+    }
+
+    DOC <$
+      Delivers available completions or readiness notifications on the calling
+      thread, and waits when none are available. An epoll registration that
+      cannot be continued completes its operations with an error, and the
+      consumer continues with the other operations. A failed wait leaves no way
+      to complete any pending operation and panics.
+      $>
+    .process FUNCTION() MUT
+    {
+      IF (.uring??)
+      {
+        TRY { IF (.uring->.process_completions(@maximum 64) == 0) { .uring->.wait(); } }
+        CATCH failure CONST& io_uring_error { PANIC "The io_uring consumer cannot wait for completions."; }
+      }
+      ELSE
+      {
+        TRY { .epoll->.process_events(@maximum 64, @timeout_milliseconds -1); }
+        CATCH failure CONST& epoll_error
+        {
+          // The processor has already delivered rearm_failed to every affected operation.
+          IF (failure != epoll_error::registration_failed) { PANIC "The epoll consumer cannot wait for events."; }
+        }
+      }
+    }
+  }
+
+  DOC <$ Performs one positioned Linux read, repeating it across signal interruption. $>
+  ::linux_positioned_read INCLUDE_IF(OS_LINUX)
+    FUNCTION(@descriptor I32, @buffer CONST& buffer_ref, @offset U64): transfer_result
+  {
+    VAR outcome transfer_result;
+    VAR length SZ := async_transfer_size(@size buffer.size) AS SZ;
+    LOOP WHILE(TRUE) DO
+    {
+      VAR count I32 := syscall::linux::pread64(@descriptor descriptor, @buffer buffer.data, @count length,
+        @offset offset) AS PARTIAL I32;
+      IF (count >= 0)
+      {
+        outcome.succeeded := TRUE;
+        outcome.size := count AS ASSUME SZ;
+        RETURN outcome;
+      }
+      IF (count != -4) // EINTR
+      {
+        outcome.error := (0 - count) AS ASSUME U32;
+        RETURN outcome;
+      }
+    };
+  }
+
+  DOC <$ Performs one positioned Linux write, repeating it across signal interruption. $>
+  ::linux_positioned_write INCLUDE_IF(OS_LINUX)
+    FUNCTION(@descriptor I32, @buffer CONST& buffer_ref, @offset U64): transfer_result
+  {
+    VAR outcome transfer_result;
+    VAR length SZ := async_transfer_size(@size buffer.size) AS SZ;
+    LOOP WHILE(TRUE) DO
+    {
+      VAR count I32 := syscall::linux::pwrite64(@descriptor descriptor, @buffer buffer.data, @count length,
+        @offset offset) AS PARTIAL I32;
+      IF (count >= 0)
+      {
+        outcome.succeeded := TRUE;
+        outcome.size := count AS ASSUME SZ;
+        RETURN outcome;
+      }
+      IF (count != -4) // EINTR
+      {
+        outcome.error := (0 - count) AS ASSUME U32;
+        RETURN outcome;
+      }
+    };
+  }
+}

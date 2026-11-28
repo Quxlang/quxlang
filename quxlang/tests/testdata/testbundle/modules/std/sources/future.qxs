@@ -12,43 +12,53 @@ DOC <$ Refers to a stable continuation and its asynchronous notification operati
 
 PRIVATE(MODULE)
 {
-  DOC <$ Owns a single producer's result and a single consumer's completion registration. The mutex orders publication, readiness checks, and registration. $>
+  DOC <$ Owns a single-producer result. The publication word records blocking waiters, the coroutine registration, and completion. $>
   ::future_state TEMPLATE(@T TYPE) STRUCT ROOTED
   {
-    .mutex VAR unfair_mutex;
-    .changed VAR condition_variable;
-    .complete VAR BOOL;
+    ::blocking_waiters STATIC U32 := 1;
+    ::await_registered STATIC U32 := 2;
+    ::published STATIC U32 := 4;
+    .status VAR ATOMIC#U32;
+    .continuation VAR MUT->async_continuation;
     .error VAR EXCEPTION_PTR;
     .value INCLUDE_IF(SAME_TYPES(T, VOID) == FALSE) VAR optional#T;
-    .continuation VAR MUT->async_continuation;
 
-    DOC <$ Publishes a staged result and notifies the registered consumer. The producer calls this operation exactly once. $>
+    DOC <$ Publishes the staged result. Registration and publication are ordered by the same atomic word, so only registered consumers require a notification. $>
     .publish FUNCTION() MUT
     {
-      .mutex.lock();
-      .complete := TRUE;
-      VAR continuation MUT->async_continuation := .continuation;
-      .continuation := NULL;
-      .changed.notify_all();
-      .mutex.unlock();
-      IF (continuation??) { continuation->.notify(@context continuation->.context); }
+      VAR previous U32 := .status.EXCHANGE#ATOMIC_ACQREL(published);
+      IF ((previous #&& blocking_waiters) != 0)
+      { RUNTIME_MODULE::notify_all_at_address(@address IBC_GETADDR(@PTR .status<-), @size SIZEOF(U32)); }
+      IF ((previous #&& await_registered) != 0)
+      {
+        VAR continuation MUT->async_continuation := .continuation;
+        continuation->.notify(@context continuation->.context);
+      }
     }
 
-    DOC <$ Blocks the calling thread until publication. $>
+    DOC <$ Blocks until publication. A ready result requires one acquire load. $>
     .wait FUNCTION() MUT
     {
-      .mutex.lock();
-      LOOP WHILE(.complete == FALSE) DO { .changed.wait(@locked_mutex .mutex); }
-      .mutex.unlock();
+      VAR state U32 := .status.LOAD#ATOMIC_ACQUIRE();
+      IF ((state #&& published) != 0) { RETURN; }
+      IF ((state #&& blocking_waiters) == 0)
+      { state := .status.FETCH_BIT_OR#ATOMIC_ACQREL(blocking_waiters) #|| blocking_waiters; }
+      LOOP WHILE((state #&& published) == 0) DO
+      {
+        RUNTIME_MODULE::wait_at_u32_address(@address IBC_GETADDR(@PTR .status<-), @expected state);
+        state := .status.LOAD#ATOMIC_ACQUIRE();
+      };
     }
 
-    DOC <$ Reports whether the producer has published its result. $>
-    .is_ready FUNCTION() MUT: BOOL
+    DOC <$ Reports whether publication made the result visible. $>
+    .is_ready FUNCTION() CONST: BOOL
+    { RETURN (.status.LOAD#ATOMIC_ACQUIRE() #&& published) != 0; }
+
+    DOC <$ Registers the sole awaiting coroutine. A producer that published first leaves resumption to the caller. $>
+    .suspend FUNCTION(@target MUT->async_continuation) MUT: BOOL
     {
-      .mutex.lock();
-      VAR result BOOL := .complete;
-      .mutex.unlock();
-      RETURN result;
+      .continuation := target;
+      RETURN (.status.FETCH_BIT_OR#ATOMIC_ACQREL(await_registered) #&& published) == 0;
     }
   }
 }
@@ -100,12 +110,7 @@ DOC <$ Owns the single consumer of an asynchronous result. get and AWAIT consume
   DOC <$ Registers the controller's stable continuation, or declines suspension if publication already occurred. $>
   .AWAIT_SUSPEND FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) MUT: BOOL
   {
-    VAR continuation MUT->async_continuation := CONTROLLER.continuation();
-    .state->.mutex.lock();
-    IF (.state->.complete) { .state->.mutex.unlock(); RETURN FALSE; }
-    .state->.continuation := continuation;
-    .state->.mutex.unlock();
-    RETURN TRUE;
+    RETURN .state->.suspend(@target CONTROLLER.continuation());
   }
   DOC <$ Consumes the published result after resumption. $>
   .AWAIT_RESUME FUNCTION() MUT: T { RETURN .get(); }
@@ -122,7 +127,7 @@ DOC <$ Owns the single producer of an asynchronous result. get_future is called 
     DOC <$ Publishes a failure for an incomplete owned result before producer ownership is released. $>
     .abandon FUNCTION() MUT
     {
-      IF (.state.has_value() && .state->.complete == FALSE)
+      IF (.state.has_value() && .state->.is_ready() == FALSE)
       {
         TRY { THROW broken_promise(); }
         CATCH DEFAULT { .set_exception(@error CURRENT_EXCEPTION()); }

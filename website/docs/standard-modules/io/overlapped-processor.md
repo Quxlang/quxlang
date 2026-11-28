@@ -63,7 +63,7 @@ processor.process_completions(@maximum 1, @timeout_milliseconds -1);
 | Member | Contract |
 | --- | --- |
 | `CONSTRUCTOR(@concurrency U32 DEFAULT(0))` | Creates the port. The concurrency value limits the number of active consumer threads. Zero selects the Windows default based on the system processor count. |
-| `associate(@descriptor io_descriptor_ref): overlapped_handle_ref` | Establishes the native association and returns a copyable reference that borrows the handle and processor. |
+| `associate(@descriptor CONST& io_descriptor_ref): overlapped_handle_ref` | Establishes the native association and returns a copyable reference that borrows the handle and processor. |
 | `post(@request MUT& overlapped_request, @transferred U32 DEFAULT(0))` | Queues one successful notification with the specified byte count. A producer can wake a waiting consumer with this method. |
 | `process_completions(@maximum SZ, @timeout_milliseconds I32 DEFAULT(0)): SZ` | Dequeues and dispatches at most `maximum` packets on the calling thread. The result is the number of notifications delivered. |
 | `pending_count(): SZ` | Returns an advisory count that includes submissions in progress and all requests in batches whose notifications have yet to finish. |
@@ -73,9 +73,13 @@ An associated handle must support overlapped I/O. A file is opened with
 `FILE_FLAG_OVERLAPPED`. The handle requires `FILE_SKIP_COMPLETION_PORT_ON_SUCCESS`
 to be clear so the port receives a packet on immediate success. Each operation issued on the handle that can
 generate a packet for this port must use a request submitted through its
-binding. The native association lasts until the handle is closed. Changing
-the associated port requires opening a new handle. The caller owns the handle
-and coordinates its closure with outstanding I/O. [Windows handle association](https://learn.microsoft.com/en-us/windows/win32/api/ioapiset/nf-ioapiset-createiocompletionport) · [Windows completion modes](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setfilecompletionnotificationmodes)
+binding. Copies of the originating descriptor share the first association.
+Further calls on the same processor reuse it. A different processor or an
+incompatible completion key raises `overlapped_error`. The returned
+`overlapped_handle_ref` borrows the native handle and the processor, both of
+which must outlive its submissions. The owner waits for outstanding I/O before
+closing the handle. Opening a new handle permits association with a different
+port. [Descriptor ownership and closure](io-descriptor-ref.md#close_windows_handle) · [Windows handle association](https://learn.microsoft.com/en-us/windows/win32/api/ioapiset/nf-ioapiset-createiocompletionport) · [Windows completion modes](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-setfilecompletionnotificationmodes)
 
 ## Requests and cancellation
 
@@ -115,6 +119,7 @@ each receiver directly. A larger `maximum` permits multiple batches. A zero
 maximum returns immediately. A zero timeout polls, a positive timeout waits
 that many milliseconds for the first packet, and a negative timeout waits
 indefinitely. Once a batch arrives, further dequeues in the same call poll.
+A batch consisting entirely of packets whose starters are active returns zero.
 A timeout returns the count dispatched so far. A native wait failure throws
 `io::overlapped_error`. [Windows batch dequeue](https://learn.microsoft.com/en-us/windows/win32/api/ioapiset/nf-ioapiset-getqueuedcompletionstatusex)
 
@@ -130,11 +135,12 @@ directly from the returned `OVERLAPPED` address. Submission and dispatch
 require no processor-owned heap allocation or handle-table lookup. The
 processor retires the outstanding count once per dispatched batch.
 
-Completion can begin before the issuing call returns. The producer prepares
-all state used by the receiver before issuing native I/O. After Windows
-accepts the request, the submission callable can return only an accepted
-status and must avoid further access to storage that the receiver can reuse.
-The consumer finishes reading the request before entering `on_notify`.
-A receiver may therefore resubmit the same request from its callback.
+The processor delivers the callback after the submission callable returns.
+Windows can queue a packet while the callable is using the native
+`OVERLAPPED`. A consumer that dequeues the packet during issuance records
+its byte count in the request and proceeds with the batch. The submitting
+thread requeues that packet when the callable returns, preserving its status
+and completion key. The receiver can release or reuse the request from
+`on_notify`, including when the submitting thread is returning from `submit`.
 Applications with multiple consumers synchronize access to shared receiver
 state and coordinate cancellation with request reuse.

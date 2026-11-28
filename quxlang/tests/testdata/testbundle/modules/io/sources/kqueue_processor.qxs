@@ -1,0 +1,239 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT syscall;
+
+DOC <$ Carries the Darwin errno reported by a queue operation. $>
+::kqueue_error INCLUDE_IF(OS_MACOS) STRUCT
+{
+  .code VAR I32;
+  .CONSTRUCTOR FUNCTION(@code I32) { .code := code; }
+}
+
+DOC <$ Reports whether the running Darwin kernel supports file completions delivered by SIGEV_KEVENT. The notification mode is available from Darwin 25. $>
+::kqueue_native_aio_available INCLUDE_IF(OS_MACOS) FUNCTION(): BOOL
+{
+  VAR release [256]BYTE; // Darwin SYS_NMLN
+  VAR length SZ := release.SIZE();
+  VAR name STRING_CONSTANT := "kern.osrelease\0";
+  IF (syscall::macos::sysctlbyname(@name name.BEGIN(), @old_value release[&0], @old_size length<-,
+    @new_value NULL, @new_size 0) != 0) { RETURN FALSE; }
+  VAR major U32;
+  LOOP VALUE(index) FROM(0 AS SZ) UNTIL(length) DO
+  {
+    VAR digit BYTE := release[index];
+    IF (digit < 48 || digit > 57) { BREAK; }
+    major := major * 10 + (((digit AS U8) AS U32) - 48);
+    IF (major >= 25) { RETURN TRUE; }
+  };
+  RETURN FALSE;
+}
+
+DOC <$
+  Identifies the receiver of the kernel events of one operation. An operation embeds
+  its target at a stable address from registration until its final event is
+  delivered. The processor calls deliver with context and the event on the thread
+  that dequeued the event. The receiver may release the target during that call.
+  $>
+::kqueue_target INCLUDE_IF(OS_MACOS) STRUCT ROOTED
+{
+  .context VAR MUT->VOID;
+  .deliver VAR CONST->PROCEDURE(@context MUT->VOID, @event CONST->syscall::macos::kernel_event);
+}
+
+DOC <$ Returns the errno that a readiness event reports, or zero for an event without EV_ERROR. $>
+::kqueue_readiness_error INCLUDE_IF(OS_MACOS) FUNCTION(@event CONST& syscall::macos::kernel_event): U32
+{
+  IF ((event.flags #&& 16384) == 0) { RETURN 0; } // EV_ERROR carries errno in data.
+  VAR number I64 := event.data;
+  RETURN number AS ASSUME U32;
+}
+
+DOC <$ Returns the errno of a completed file transfer, or zero on success. $>
+::kqueue_transfer_error INCLUDE_IF(OS_MACOS) FUNCTION(@event CONST& syscall::macos::kernel_event): U32
+{ RETURN event.extensions[0] AS PARTIAL U32; }
+
+DOC <$ Returns the byte count of a successful file transfer. $>
+::kqueue_transfer_size INCLUDE_IF(OS_MACOS) FUNCTION(@event CONST& syscall::macos::kernel_event): SZ
+{ RETURN event.extensions[1]; }
+
+DOC <$ Holds a reusable Darwin aiocb at a stable address. Each simultaneously pending transfer requires a separate request. $>
+::kqueue_transfer_request INCLUDE_IF(OS_MACOS) STRUCT ROOTED
+{
+  PRIVATE(MODULE) { .control VAR syscall::macos::async_control_block; }
+}
+
+PRIVATE(MODULE)
+{
+  DOC <$ Bounds the number of events that one dequeue transfers from the kernel. $>
+  ::kqueue_batch_capacity INCLUDE_IF(OS_MACOS) STATIC SZ := 32;
+}
+
+DOC <$
+  Owns a Darwin kqueue that delivers each event to the target of its registration.
+  Registration, signalling and event processing may run concurrently on any
+  threads. Each event is delivered once, by the thread that dequeued it.
+  Destruction requires exclusive access after every registered target has
+  received its final event.
+  $>
+::kqueue_processor INCLUDE_IF(OS_MACOS) STRUCT ROOTED
+{
+  PRIVATE(CLASS)
+  {
+    .descriptor VAR I32;
+
+    DOC <$ Applies one change without consuming any pending events and returns its errno. $>
+    .change FUNCTION(@event CONST& syscall::macos::kernel_event) CONST: I32
+    {
+      IF (syscall::macos::kevent64(@queue_descriptor .descriptor, @change_list event<-,
+        @change_count 1, @event_list NULL, @event_count 0, @flags 0, @timeout NULL) == 0) { RETURN 0; }
+      RETURN syscall::macos::errno_location()->;
+    }
+
+    DOC <$ Registers a one-shot readiness event for the filter. The target's address distinguishes registrations of one descriptor and filter. $>
+    .watch FUNCTION(@descriptor io_descriptor_ref, @filter I16, @target MUT& kqueue_target) CONST
+    {
+      VAR event syscall::macos::kernel_event;
+      event.identifier := (descriptor.native_handle() AS PARTIAL U32) AS U64;
+      event.filter := filter;
+      event.flags := 273; // EV_ADD | EV_ONESHOT | EV_UDATA_SPECIFIC
+      event.user_data := IBC_GETADDR(@PTR target<-);
+      VAR code I32 := .change(@event event);
+      IF (code != 0) { THROW kqueue_error(@code code); }
+    }
+
+    DOC <$ Fills the aiocb of one positioned transfer and routes its completion to the target through this kqueue. $>
+    .prepare FUNCTION(@request MUT& kqueue_transfer_request, @descriptor io_descriptor_ref,
+      @buffer CONST& buffer_ref, @offset U64, @target MUT& kqueue_target) CONST
+    {
+      VAR control MUT& syscall::macos::async_control_block := request.control;
+      control.descriptor := descriptor.native_handle();
+      control.offset := offset AS ASSUME I64;
+      control.buffer := buffer.data;
+      control.byte_count := buffer.size;
+      IF (buffer.size > 2147483647) { control.byte_count := 2147483647; } // Darwin AIO limit per transfer.
+      control.signal_event.notification := 4; // SIGEV_KEVENT
+      control.signal_event.signal_number := .descriptor;
+      control.signal_event.value := IBC_GETADDR(@PTR target<-);
+    }
+  }
+
+  DOC <$ Opens a close-on-exec kqueue suitable for readiness and SIGEV_KEVENT file transfers. $>
+  .CONSTRUCTOR FUNCTION()
+  {
+    .descriptor := syscall::macos::kqueue();
+    IF (.descriptor == 0)
+    {
+      // Darwin requires a strictly positive kqueue descriptor for SIGEV_KEVENT.
+      DEFER { syscall::macos::close(@fd 0); }
+      .descriptor := syscall::macos::kqueue();
+      IF (.descriptor < 0) { THROW kqueue_error(@code syscall::macos::errno_location()->); }
+    }
+    IF (.descriptor < 0) { THROW kqueue_error(@code syscall::macos::errno_location()->); }
+    IF (syscall::macos::fcntl(@socket .descriptor, @command 2, @argument 1) < 0)
+    {
+      VAR code I32 := syscall::macos::errno_location()->;
+      syscall::macos::close(@fd .descriptor);
+      THROW kqueue_error(@code code);
+    }
+  }
+
+  DOC <$ Closes the owned descriptor. $>
+  .DESTRUCTOR FUNCTION()
+  {
+    IF (syscall::macos::close(@fd .descriptor) != 0) { PANIC "Cannot close a kqueue."; }
+  }
+
+  DOC <$ Delivers one event to the target when the descriptor becomes readable. The descriptor and the target outlive the delivery. Several targets may wait on one descriptor. $>
+  .watch_readable FUNCTION(@descriptor io_descriptor_ref, @target MUT& kqueue_target) CONST
+  { .watch(@descriptor descriptor, @filter -1, @target target); } // EVFILT_READ
+
+  DOC <$ Delivers one event to the target when the descriptor becomes writable. The descriptor and the target outlive the delivery. Several targets may wait on one descriptor. $>
+  .watch_writable FUNCTION(@descriptor io_descriptor_ref, @target MUT& kqueue_target) CONST
+  { .watch(@descriptor descriptor, @filter -2, @target target); } // EVFILT_WRITE
+
+  DOC <$
+    Issues one positioned read and returns zero, or returns the errno with which
+    Darwin rejected the request. An accepted read delivers one event to the
+    target; kqueue_transfer_error and kqueue_transfer_size decode it. The
+    request, the buffer and the target outlive that delivery. The offset is at
+    most the largest signed 64-bit value.
+    $>
+  .read FUNCTION(@request MUT& kqueue_transfer_request, @descriptor io_descriptor_ref,
+    @buffer CONST& buffer_ref, @offset U64, @target MUT& kqueue_target) CONST: I32
+  {
+    .prepare(@request request, @descriptor descriptor, @buffer buffer, @offset offset, @target target);
+    IF (syscall::macos::aio_read(@control request.control<-) == 0) { RETURN 0; }
+    RETURN syscall::macos::errno_location()->;
+  }
+
+  DOC <$ Issues one positioned write under the contract of read. $>
+  .write FUNCTION(@request MUT& kqueue_transfer_request, @descriptor io_descriptor_ref,
+    @buffer CONST& buffer_ref, @offset U64, @target MUT& kqueue_target) CONST: I32
+  {
+    .prepare(@request request, @descriptor descriptor, @buffer buffer, @offset offset, @target target);
+    IF (syscall::macos::aio_write(@control request.control<-) == 0) { RETURN 0; }
+    RETURN syscall::macos::errno_location()->;
+  }
+
+  DOC <$
+    Delivers one event to the target from a thread that processes events. The
+    registration persists, so repeated calls reuse it. Calls made before the
+    event is dequeued coalesce into one delivery. The target outlives the
+    processor's last delivery to it.
+    $>
+  .raise FUNCTION(@target MUT& kqueue_target) CONST
+  {
+    VAR event syscall::macos::kernel_event;
+    event.identifier := IBC_GETADDR(@PTR target<-) - (NULL AS ADDRESS);
+    event.filter := -10; // EVFILT_USER
+    event.flags := 33; // EV_ADD | EV_CLEAR
+    event.filter_flags := 16777216; // NOTE_TRIGGER
+    event.user_data := IBC_GETADDR(@PTR target<-);
+    VAR code I32 := .change(@event event);
+    IF (code != 0) { THROW kqueue_error(@code code); }
+  }
+
+  DOC <$
+    Dequeues at most maximum events and delivers each one to its target on the
+    calling thread. The timeout applies to the first dequeue: zero polls, and a
+    negative value waits indefinitely. Later dequeues poll. A timeout or signal
+    interruption ends processing. The result counts delivered events.
+    $>
+  .process_events FUNCTION(@maximum SZ, @timeout_milliseconds I32 DEFAULT(0)) CONST: SZ
+  {
+    VAR batch [kqueue_batch_capacity]syscall::macos::kernel_event;
+    VAR delivered SZ;
+    LOOP WHILE(delivered < maximum) DO
+    {
+      VAR capacity SZ := maximum - delivered;
+      IF (capacity > kqueue_batch_capacity) { capacity := kqueue_batch_capacity; }
+      VAR timeout syscall::timespec64;
+      VAR timeout_pointer CONST->VOID;
+      IF (timeout_milliseconds >= 0)
+      {
+        timeout.seconds := (timeout_milliseconds / 1000) AS I64;
+        timeout.nanoseconds := ((timeout_milliseconds % 1000) AS I64) * 1000000;
+        timeout_pointer := timeout<- AS REINTERPRET CONST->VOID;
+      }
+      VAR count I32 := syscall::macos::kevent64(@queue_descriptor .descriptor,
+        @change_list NULL, @change_count 0, @event_list batch[0]<-, @event_count capacity AS ASSUME I32,
+        @flags 0, @timeout timeout_pointer);
+      IF (count < 0)
+      {
+        VAR code I32 := syscall::macos::errno_location()->;
+        IF (code == 4) { BREAK; } // EINTR
+        THROW kqueue_error(@code code);
+      }
+      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(count AS ASSUME SZ) DO
+      {
+        VAR event CONST& syscall::macos::kernel_event := batch[index];
+        VAR target MUT->kqueue_target := IBC_PUN#(MUT->kqueue_target)(@ADDR event.user_data);
+        target->.deliver(@context target->.context, @event event<-);
+      };
+      delivered := delivered + (count AS ASSUME SZ);
+      IF ((count AS ASSUME SZ) < capacity) { BREAK; }
+      timeout_milliseconds := 0;
+    };
+    RETURN delivered;
+  }
+}

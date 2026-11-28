@@ -75,11 +75,14 @@ name `CONTROLLER` designates the controller of the calling invocation.
 A type can therefore declare a function and a coroutine with the same name and
 the same remaining parameters. A call from a coroutine that runs under
 `io::async_controller` selects the coroutine, and the caller suspends until the
-callee completes. A call from an ordinary function, or from a coroutine that
-runs under another controller, selects the function. The `io` module declares
-such pairs for [`io::file_ref`](file-ref.md#read-and-write-coroutines) and
-[`io::file`](file.md#read-and-write-coroutines), and the `net` module declares
-them for every [socket operation](../net/socket-operations.md).
+callee completes. A call from an ordinary function selects the function.
+The file and socket types use this overload selection for I/O.
+[File references](file-ref.md#read-and-write-coroutines),
+[owning files](file.md#read-and-write-coroutines) and
+[socket operations](../net/socket-operations.md).
+
+File reads and writes also support `io::async_controller2` when a coroutine
+runs on `io::async_runtime2`. [File member coroutines](async-runtime2.md#file-member-coroutines)
 
 A coroutine that declares no `CONTROLLER` parameter accepts every controller.
 When `ON(runtime) RUN` launches such a coroutine on an `io::async_runtime`, the

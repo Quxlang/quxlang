@@ -80,10 +80,10 @@ DOC <$ Provides one stable operation's access to its owning native completion qu
   }
 
   DOC <$ Associates a native overlapped handle with this operation's completion port. $>
-  .associate INCLUDE_IF(OS_WINDOWS) FUNCTION(@handle ADDRESS) CONST
+  .associate INCLUDE_IF(OS_WINDOWS) FUNCTION(@descriptor CONST& io_descriptor_ref) CONST
   {
     IF (associate_windows_async_file(@state .request->.context_control->.windows,
-      @descriptor io_descriptor_ref(@native_handle handle)) == FALSE)
+      @descriptor descriptor) == FALSE)
     { THROW async_error::submission_failed; }
   }
 
@@ -123,7 +123,7 @@ PRIVATE(MODULE)
     }
 
     DOC <$ Starts the operation and captures immediate failures in its future. $>
-    .start FUNCTION(@submission CONST& async_submission_ref) MUT: BOOL
+    .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
     {
       TRY
       {
@@ -135,7 +135,7 @@ PRIVATE(MODULE)
     }
 
     DOC <$ Processes one native notification, including readiness retries, and publishes final completion. $>
-    .complete FUNCTION(@submission CONST& async_submission_ref, @size SZ, @error U32) MUT: BOOL
+    .complete FUNCTION(@submission AUTO& AUTO, @size SZ, @error U32) MUT: BOOL
     {
       TRY
       {

@@ -81,20 +81,23 @@ the translated [`net::error`](error.md); an invalid reference throws
 ```quxlang
 .accept INCLUDE_IF(kind == socket_kind::listener) FUNCTION() CONST: tcp_connection                                         // (1)
 .async_accept INCLUDE_IF(kind == socket_kind::listener)
-  FUNCTION(@runtime MUT& io::async_runtime) CONST: std::future#tcp_connection                                             // (2)
+  FUNCTION(@runtime MUT& AUTO(runtime_type)) CONST
+  ENABLE_IF(SAME_TYPES(runtime_type, io::async_runtime) || SAME_TYPES(runtime_type, io::async_runtime2)): std::future#tcp_connection  // (2)
 .accept INCLUDE_IF(kind == socket_kind::listener)
-  COROUTINE(@CONTROLLER io::async_controller#AUTO(result_type)) CONST: tcp_connection                                     // (3)
+  COROUTINE(@CONTROLLER AUTO(controller_type)) CONST
+  ENABLE_IF(TYPE_HAS_MEMBER(controller_type, "submit")): tcp_connection  // (3)
 ```
 
 Removes one established connection from the queue of the listener, waiting
 until a connection is available.
 
 1. Blocks the calling thread.
-2. Submits the operation to `runtime` and returns a
-   [`std::future`](../std/future.md) for the connection. The operation can be
-   submitted before any client connects.
-3. Suspends the calling coroutine. A call made from a coroutine that runs on an
-   [`io::async_runtime`](../io/async-runtime.md) selects this form.
+2. Submits the operation to the supplied `io::async_runtime2` or
+   `io::async_runtime` and returns a future for the connection. The operation
+   can be submitted before any client connects.
+3. Suspends a coroutine running on either I/O runtime until a connection is
+   accepted or an error occurs. The `io::async_runtime2` form keeps the
+   pending accept in the socket coroutine's frame.
 
 [Socket operations](socket-operations.md) specifies the three forms.
 
@@ -149,4 +152,5 @@ Output on macOS ARM64:
 - [Socket operations](socket-operations.md)
 - [`net::error`](error.md)
 - [`io::async_runtime`](../io/async-runtime.md)
+- [`io::async_runtime2`](../io/async-runtime2.md)
 - [`std::future`](../std/future.md)

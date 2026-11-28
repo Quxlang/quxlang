@@ -1,0 +1,560 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT std;
+IMPORT syscall;
+
+DOC <$
+  Connects a TCP socket to an endpoint through an async_runtime2 on macOS. The
+  socket outlives completion. A coroutine awaits the operation in its own frame,
+  and the operation occupies a stable address until its result has been taken.
+  Socket failures throw net::error from the await or from the future.
+  $>
+::kqueue_socket_connect INCLUDE_IF(OS_MACOS) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  DOC <$ Names the result type. $>
+  ::value_type ALIAS VOID;
+
+  PRIVATE(MODULE)
+  {
+    .completion VAR io::operation_completion;
+    .target VAR io::kqueue_target;
+    .socket VAR native_socket_ref;
+    .failure VAR EXCEPTION_PTR;
+    .destination VAR endpoint;
+
+    DOC <$ Reads the outcome of the nonblocking connect after the socket becomes writable. $>
+    ::on_ready FUNCTION(@context MUT->VOID, @event CONST->syscall::macos::kernel_event)
+    {
+      VAR operation := context AS REINTERPRET MUT->kqueue_socket_connect;
+      TRY
+      {
+        VAR code U32 := io::kqueue_readiness_error(@event event->);
+        IF (code != 0) { THROW translate_socket_error(@code code AS I64); }
+        finish_socket_connect(@handle operation->.socket);
+      }
+      CATCH DEFAULT { operation->.failure := CURRENT_EXCEPTION(); }
+      operation->.completion.finish();
+    }
+  }
+
+  DOC <$ Describes the operation without starting it. $>
+  .CONSTRUCTOR FUNCTION(@runtime MUT& io::async_runtime2, @socket CONST& socket_operation_handle, @endpoint CONST& endpoint)
+    :> .completion:(@runtime runtime), .destination:(@OTHER endpoint)
+  {
+    .socket := socket;
+    .target.context := THIS<- AS REINTERPRET MUT->VOID;
+    .target.deliver := on_ready<-;
+  }
+
+  DOC <$ Issues the connect once. TRUE reports that the connection is established without waiting. FALSE reports that a writability wait is registered. $>
+  .start FUNCTION() MUT: BOOL
+  {
+    IF (connect_socket(@handle .socket, @endpoint .destination)) { RETURN TRUE; }
+    .completion.begin();
+    TRY
+    {
+      .completion.runtime().kqueue().watch_writable(
+        @descriptor io::io_descriptor_ref(@native_handle .socket), @target .target);
+    }
+    CATCH DEFAULT { .completion.abandon(); RETHROW; }
+    RETURN FALSE;
+  }
+
+  DOC <$ Registers the continuation that completion notifies. FALSE reports that the operation completed first. $>
+  .suspend FUNCTION(@continuation MUT->std::async_continuation) MUT: BOOL
+  { RETURN .completion.suspend(@continuation continuation); }
+
+  DOC <$ Returns after a successful connection, or throws its failure. $>
+  .result FUNCTION() MUT
+  {
+    IF (.failure??) { THROW_EXCEPTION_PTR(.failure); }
+  }
+
+  DOC <$ Starts the operation. $>
+  .AWAIT_READY FUNCTION() MUT: BOOL { RETURN .start(); }
+  DOC <$ Registers the awaiting coroutine. $>
+  .AWAIT_SUSPEND FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) MUT: BOOL
+  { RETURN .completion.suspend(@continuation CONTROLLER.continuation()); }
+  DOC <$ Returns after resumption, or throws the failure. $>
+  .AWAIT_RESUME FUNCTION() MUT { .result(); }
+  DOC <$ A started operation runs to completion. $>
+  .TRY_CANCEL FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) CONST NOEXCEPT: BOOL { RETURN FALSE; }
+}
+
+DOC <$
+  Accepts one TCP connection from a listener through an async_runtime2 on macOS. The socket and the storage named by the
+  arguments outlive completion. A coroutine awaits the operation in its own
+  frame, and the operation occupies a stable address until its result has been
+  taken. Socket failures throw net::error from the await or from the future.
+  $>
+::kqueue_socket_accept INCLUDE_IF(OS_MACOS) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  DOC <$ Names the result type. $>
+  ::value_type ALIAS tcp_connection;
+
+  PRIVATE(MODULE)
+  {
+    .completion VAR io::operation_completion;
+    .target VAR io::kqueue_target;
+    .socket VAR native_socket_ref;
+    .failure VAR EXCEPTION_PTR;
+    .accepted VAR tcp_connection;
+
+    DOC <$ Accepts a queued connection. FALSE reports that the socket is not ready. $>
+    .attempt FUNCTION() MUT: BOOL
+    {
+      RETURN accept_socket(@handle .socket, @result .accepted);
+    }
+
+    DOC <$ Registers one readiness wait whose event resumes the operation. $>
+    .arm FUNCTION() MUT
+    {
+      .completion.runtime().kqueue().watch_readable(
+        @descriptor io::io_descriptor_ref(@native_handle .socket), @target .target);
+    }
+
+    DOC <$ Continues the operation after a readiness event. The operation either completes or registers another wait. $>
+    ::on_ready FUNCTION(@context MUT->VOID, @event CONST->syscall::macos::kernel_event)
+    {
+      VAR operation := context AS REINTERPRET MUT->kqueue_socket_accept;
+      VAR finished BOOL := TRUE;
+      TRY
+      {
+        VAR code U32 := io::kqueue_readiness_error(@event event->);
+        IF (code != 0) { THROW translate_socket_error(@code code AS I64); }
+        IF (operation->.attempt() == FALSE)
+        {
+          operation->.arm();
+          // Another event may now complete the operation on a different thread.
+          finished := FALSE;
+        }
+      }
+      CATCH DEFAULT { operation->.failure := CURRENT_EXCEPTION(); }
+      IF (finished) { operation->.completion.finish(); }
+    }
+  }
+
+  DOC <$ Describes the operation without starting it. $>
+  .CONSTRUCTOR FUNCTION(@runtime MUT& io::async_runtime2, @socket CONST& socket_operation_handle)
+    :> .completion:(@runtime runtime)
+  {
+    .socket := socket;
+    .target.context := THIS<- AS REINTERPRET MUT->VOID;
+    .target.deliver := on_ready<-;
+  }
+
+  DOC <$ Attempts the operation once. TRUE reports that the result is available without waiting. FALSE reports that a readiness wait is registered. $>
+  .start FUNCTION() MUT: BOOL
+  {
+    IF (.attempt()) { RETURN TRUE; }
+    .completion.begin();
+    TRY { .arm(); }
+    CATCH DEFAULT { .completion.abandon(); RETHROW; }
+    RETURN FALSE;
+  }
+
+  DOC <$ Registers the continuation that completion notifies. FALSE reports that the operation completed first. $>
+  .suspend FUNCTION(@continuation MUT->std::async_continuation) MUT: BOOL
+  { RETURN .completion.suspend(@continuation continuation); }
+
+  DOC <$ Returns the result of the completed operation, or throws its failure. $>
+  .result FUNCTION() MUT: tcp_connection
+  {
+    IF (.failure??) { THROW_EXCEPTION_PTR(.failure); }
+    VAR accepted MUT& tcp_connection := .accepted;
+    RETURN MOVE(accepted);
+  }
+
+  DOC <$ Starts the operation. $>
+  .AWAIT_READY FUNCTION() MUT: BOOL { RETURN .start(); }
+  DOC <$ Registers the awaiting coroutine. $>
+  .AWAIT_SUSPEND FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) MUT: BOOL
+  { RETURN .completion.suspend(@continuation CONTROLLER.continuation()); }
+  DOC <$ Returns the result after resumption, or throws the failure. $>
+  .AWAIT_RESUME FUNCTION() MUT: tcp_connection { RETURN .result(); }
+  DOC <$ A started operation runs to completion. $>
+  .TRY_CANCEL FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) CONST NOEXCEPT: BOOL { RETURN FALSE; }
+}
+
+DOC <$
+  Reads available bytes from a TCP connection through an async_runtime2 on macOS. The socket and the storage named by the
+  arguments outlive completion. A coroutine awaits the operation in its own
+  frame, and the operation occupies a stable address until its result has been
+  taken. Socket failures throw net::error from the await or from the future.
+  $>
+::kqueue_socket_read INCLUDE_IF(OS_MACOS) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  DOC <$ Names the result type. $>
+  ::value_type ALIAS SZ;
+
+  PRIVATE(MODULE)
+  {
+    .completion VAR io::operation_completion;
+    .target VAR io::kqueue_target;
+    .socket VAR native_socket_ref;
+    .failure VAR EXCEPTION_PTR;
+    .buffer VAR io::buffer_ref;
+    .size VAR SZ;
+
+    DOC <$ Reads the bytes that are available. FALSE reports that the socket is not ready. $>
+    .attempt FUNCTION() MUT: BOOL
+    {
+      RETURN transfer_socket#(@writing FALSE)(@handle .socket, @buffer .buffer, @result .size);
+    }
+
+    DOC <$ Registers one readiness wait whose event resumes the operation. $>
+    .arm FUNCTION() MUT
+    {
+      .completion.runtime().kqueue().watch_readable(
+        @descriptor io::io_descriptor_ref(@native_handle .socket), @target .target);
+    }
+
+    DOC <$ Continues the operation after a readiness event. The operation either completes or registers another wait. $>
+    ::on_ready FUNCTION(@context MUT->VOID, @event CONST->syscall::macos::kernel_event)
+    {
+      VAR operation := context AS REINTERPRET MUT->kqueue_socket_read;
+      VAR finished BOOL := TRUE;
+      TRY
+      {
+        VAR code U32 := io::kqueue_readiness_error(@event event->);
+        IF (code != 0) { THROW translate_socket_error(@code code AS I64); }
+        IF (operation->.attempt() == FALSE)
+        {
+          operation->.arm();
+          // Another event may now complete the operation on a different thread.
+          finished := FALSE;
+        }
+      }
+      CATCH DEFAULT { operation->.failure := CURRENT_EXCEPTION(); }
+      IF (finished) { operation->.completion.finish(); }
+    }
+  }
+
+  DOC <$ Describes the operation without starting it. $>
+  .CONSTRUCTOR FUNCTION(@runtime MUT& io::async_runtime2, @socket CONST& socket_operation_handle, @buffer CONST& io::buffer_ref)
+    :> .completion:(@runtime runtime), .buffer:(@OTHER buffer)
+  {
+    .socket := socket;
+    .target.context := THIS<- AS REINTERPRET MUT->VOID;
+    .target.deliver := on_ready<-;
+  }
+
+  DOC <$ Attempts the operation once. TRUE reports that the result is available without waiting. FALSE reports that a readiness wait is registered. $>
+  .start FUNCTION() MUT: BOOL
+  {
+    IF (.attempt()) { RETURN TRUE; }
+    .completion.begin();
+    TRY { .arm(); }
+    CATCH DEFAULT { .completion.abandon(); RETHROW; }
+    RETURN FALSE;
+  }
+
+  DOC <$ Registers the continuation that completion notifies. FALSE reports that the operation completed first. $>
+  .suspend FUNCTION(@continuation MUT->std::async_continuation) MUT: BOOL
+  { RETURN .completion.suspend(@continuation continuation); }
+
+  DOC <$ Returns the result of the completed operation, or throws its failure. $>
+  .result FUNCTION() MUT: SZ
+  {
+    IF (.failure??) { THROW_EXCEPTION_PTR(.failure); }
+    RETURN .size;
+  }
+
+  DOC <$ Starts the operation. $>
+  .AWAIT_READY FUNCTION() MUT: BOOL { RETURN .start(); }
+  DOC <$ Registers the awaiting coroutine. $>
+  .AWAIT_SUSPEND FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) MUT: BOOL
+  { RETURN .completion.suspend(@continuation CONTROLLER.continuation()); }
+  DOC <$ Returns the result after resumption, or throws the failure. $>
+  .AWAIT_RESUME FUNCTION() MUT: SZ { RETURN .result(); }
+  DOC <$ A started operation runs to completion. $>
+  .TRY_CANCEL FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) CONST NOEXCEPT: BOOL { RETURN FALSE; }
+}
+
+DOC <$
+  Writes bytes to a TCP connection through an async_runtime2 on macOS. The socket and the storage named by the
+  arguments outlive completion. A coroutine awaits the operation in its own
+  frame, and the operation occupies a stable address until its result has been
+  taken. Socket failures throw net::error from the await or from the future.
+  $>
+::kqueue_socket_write INCLUDE_IF(OS_MACOS) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  DOC <$ Names the result type. $>
+  ::value_type ALIAS SZ;
+
+  PRIVATE(MODULE)
+  {
+    .completion VAR io::operation_completion;
+    .target VAR io::kqueue_target;
+    .socket VAR native_socket_ref;
+    .failure VAR EXCEPTION_PTR;
+    .buffer VAR io::buffer_ref;
+    .size VAR SZ;
+
+    DOC <$ Writes the bytes that the socket accepts. FALSE reports that the socket is not ready. $>
+    .attempt FUNCTION() MUT: BOOL
+    {
+      RETURN transfer_socket#(@writing TRUE)(@handle .socket, @buffer .buffer, @result .size);
+    }
+
+    DOC <$ Registers one readiness wait whose event resumes the operation. $>
+    .arm FUNCTION() MUT
+    {
+      .completion.runtime().kqueue().watch_writable(
+        @descriptor io::io_descriptor_ref(@native_handle .socket), @target .target);
+    }
+
+    DOC <$ Continues the operation after a readiness event. The operation either completes or registers another wait. $>
+    ::on_ready FUNCTION(@context MUT->VOID, @event CONST->syscall::macos::kernel_event)
+    {
+      VAR operation := context AS REINTERPRET MUT->kqueue_socket_write;
+      VAR finished BOOL := TRUE;
+      TRY
+      {
+        VAR code U32 := io::kqueue_readiness_error(@event event->);
+        IF (code != 0) { THROW translate_socket_error(@code code AS I64); }
+        IF (operation->.attempt() == FALSE)
+        {
+          operation->.arm();
+          // Another event may now complete the operation on a different thread.
+          finished := FALSE;
+        }
+      }
+      CATCH DEFAULT { operation->.failure := CURRENT_EXCEPTION(); }
+      IF (finished) { operation->.completion.finish(); }
+    }
+  }
+
+  DOC <$ Describes the operation without starting it. $>
+  .CONSTRUCTOR FUNCTION(@runtime MUT& io::async_runtime2, @socket CONST& socket_operation_handle, @buffer CONST& io::buffer_ref)
+    :> .completion:(@runtime runtime), .buffer:(@OTHER buffer)
+  {
+    .socket := socket;
+    .target.context := THIS<- AS REINTERPRET MUT->VOID;
+    .target.deliver := on_ready<-;
+  }
+
+  DOC <$ Attempts the operation once. TRUE reports that the result is available without waiting. FALSE reports that a readiness wait is registered. $>
+  .start FUNCTION() MUT: BOOL
+  {
+    IF (.attempt()) { RETURN TRUE; }
+    .completion.begin();
+    TRY { .arm(); }
+    CATCH DEFAULT { .completion.abandon(); RETHROW; }
+    RETURN FALSE;
+  }
+
+  DOC <$ Registers the continuation that completion notifies. FALSE reports that the operation completed first. $>
+  .suspend FUNCTION(@continuation MUT->std::async_continuation) MUT: BOOL
+  { RETURN .completion.suspend(@continuation continuation); }
+
+  DOC <$ Returns the result of the completed operation, or throws its failure. $>
+  .result FUNCTION() MUT: SZ
+  {
+    IF (.failure??) { THROW_EXCEPTION_PTR(.failure); }
+    RETURN .size;
+  }
+
+  DOC <$ Starts the operation. $>
+  .AWAIT_READY FUNCTION() MUT: BOOL { RETURN .start(); }
+  DOC <$ Registers the awaiting coroutine. $>
+  .AWAIT_SUSPEND FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) MUT: BOOL
+  { RETURN .completion.suspend(@continuation CONTROLLER.continuation()); }
+  DOC <$ Returns the result after resumption, or throws the failure. $>
+  .AWAIT_RESUME FUNCTION() MUT: SZ { RETURN .result(); }
+  DOC <$ A started operation runs to completion. $>
+  .TRY_CANCEL FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) CONST NOEXCEPT: BOOL { RETURN FALSE; }
+}
+
+DOC <$
+  Sends one UDP datagram to an endpoint through an async_runtime2 on macOS. The socket and the storage named by the
+  arguments outlive completion. A coroutine awaits the operation in its own
+  frame, and the operation occupies a stable address until its result has been
+  taken. Socket failures throw net::error from the await or from the future.
+  $>
+::kqueue_socket_send INCLUDE_IF(OS_MACOS) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  DOC <$ Names the result type. $>
+  ::value_type ALIAS SZ;
+
+  PRIVATE(MODULE)
+  {
+    .completion VAR io::operation_completion;
+    .target VAR io::kqueue_target;
+    .socket VAR native_socket_ref;
+    .failure VAR EXCEPTION_PTR;
+    .buffer VAR io::buffer_ref;
+    .destination VAR endpoint;
+    .size VAR SZ;
+
+    DOC <$ Sends the datagram. FALSE reports that the socket is not ready. $>
+    .attempt FUNCTION() MUT: BOOL
+    {
+      RETURN send_datagram(@handle .socket, @buffer .buffer, @destination .destination, @result .size);
+    }
+
+    DOC <$ Registers one readiness wait whose event resumes the operation. $>
+    .arm FUNCTION() MUT
+    {
+      .completion.runtime().kqueue().watch_writable(
+        @descriptor io::io_descriptor_ref(@native_handle .socket), @target .target);
+    }
+
+    DOC <$ Continues the operation after a readiness event. The operation either completes or registers another wait. $>
+    ::on_ready FUNCTION(@context MUT->VOID, @event CONST->syscall::macos::kernel_event)
+    {
+      VAR operation := context AS REINTERPRET MUT->kqueue_socket_send;
+      VAR finished BOOL := TRUE;
+      TRY
+      {
+        VAR code U32 := io::kqueue_readiness_error(@event event->);
+        IF (code != 0) { THROW translate_socket_error(@code code AS I64); }
+        IF (operation->.attempt() == FALSE)
+        {
+          operation->.arm();
+          // Another event may now complete the operation on a different thread.
+          finished := FALSE;
+        }
+      }
+      CATCH DEFAULT { operation->.failure := CURRENT_EXCEPTION(); }
+      IF (finished) { operation->.completion.finish(); }
+    }
+  }
+
+  DOC <$ Describes the operation without starting it. $>
+  .CONSTRUCTOR FUNCTION(@runtime MUT& io::async_runtime2, @socket CONST& socket_operation_handle, @buffer CONST& io::buffer_ref, @destination CONST& endpoint)
+    :> .completion:(@runtime runtime), .buffer:(@OTHER buffer), .destination:(@OTHER destination)
+  {
+    .socket := socket;
+    .target.context := THIS<- AS REINTERPRET MUT->VOID;
+    .target.deliver := on_ready<-;
+  }
+
+  DOC <$ Attempts the operation once. TRUE reports that the result is available without waiting. FALSE reports that a readiness wait is registered. $>
+  .start FUNCTION() MUT: BOOL
+  {
+    IF (.attempt()) { RETURN TRUE; }
+    .completion.begin();
+    TRY { .arm(); }
+    CATCH DEFAULT { .completion.abandon(); RETHROW; }
+    RETURN FALSE;
+  }
+
+  DOC <$ Registers the continuation that completion notifies. FALSE reports that the operation completed first. $>
+  .suspend FUNCTION(@continuation MUT->std::async_continuation) MUT: BOOL
+  { RETURN .completion.suspend(@continuation continuation); }
+
+  DOC <$ Returns the result of the completed operation, or throws its failure. $>
+  .result FUNCTION() MUT: SZ
+  {
+    IF (.failure??) { THROW_EXCEPTION_PTR(.failure); }
+    RETURN .size;
+  }
+
+  DOC <$ Starts the operation. $>
+  .AWAIT_READY FUNCTION() MUT: BOOL { RETURN .start(); }
+  DOC <$ Registers the awaiting coroutine. $>
+  .AWAIT_SUSPEND FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) MUT: BOOL
+  { RETURN .completion.suspend(@continuation CONTROLLER.continuation()); }
+  DOC <$ Returns the result after resumption, or throws the failure. $>
+  .AWAIT_RESUME FUNCTION() MUT: SZ { RETURN .result(); }
+  DOC <$ A started operation runs to completion. $>
+  .TRY_CANCEL FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) CONST NOEXCEPT: BOOL { RETURN FALSE; }
+}
+
+DOC <$
+  Receives one UDP datagram through an async_runtime2 on macOS. The socket and the storage named by the
+  arguments outlive completion. A coroutine awaits the operation in its own
+  frame, and the operation occupies a stable address until its result has been
+  taken. Socket failures throw net::error from the await or from the future.
+  $>
+::kqueue_socket_receive INCLUDE_IF(OS_MACOS) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  DOC <$ Names the result type. $>
+  ::value_type ALIAS datagram_result;
+
+  PRIVATE(MODULE)
+  {
+    .completion VAR io::operation_completion;
+    .target VAR io::kqueue_target;
+    .socket VAR native_socket_ref;
+    .failure VAR EXCEPTION_PTR;
+    .buffer VAR io::buffer_ref;
+    .received VAR datagram_result;
+
+    DOC <$ Receives a queued datagram. FALSE reports that the socket is not ready. $>
+    .attempt FUNCTION() MUT: BOOL
+    {
+      RETURN receive_datagram(@handle .socket, @buffer .buffer, @result .received);
+    }
+
+    DOC <$ Registers one readiness wait whose event resumes the operation. $>
+    .arm FUNCTION() MUT
+    {
+      .completion.runtime().kqueue().watch_readable(
+        @descriptor io::io_descriptor_ref(@native_handle .socket), @target .target);
+    }
+
+    DOC <$ Continues the operation after a readiness event. The operation either completes or registers another wait. $>
+    ::on_ready FUNCTION(@context MUT->VOID, @event CONST->syscall::macos::kernel_event)
+    {
+      VAR operation := context AS REINTERPRET MUT->kqueue_socket_receive;
+      VAR finished BOOL := TRUE;
+      TRY
+      {
+        VAR code U32 := io::kqueue_readiness_error(@event event->);
+        IF (code != 0) { THROW translate_socket_error(@code code AS I64); }
+        IF (operation->.attempt() == FALSE)
+        {
+          operation->.arm();
+          // Another event may now complete the operation on a different thread.
+          finished := FALSE;
+        }
+      }
+      CATCH DEFAULT { operation->.failure := CURRENT_EXCEPTION(); }
+      IF (finished) { operation->.completion.finish(); }
+    }
+  }
+
+  DOC <$ Describes the operation without starting it. $>
+  .CONSTRUCTOR FUNCTION(@runtime MUT& io::async_runtime2, @socket CONST& socket_operation_handle, @buffer CONST& io::buffer_ref)
+    :> .completion:(@runtime runtime), .buffer:(@OTHER buffer)
+  {
+    .socket := socket;
+    .target.context := THIS<- AS REINTERPRET MUT->VOID;
+    .target.deliver := on_ready<-;
+  }
+
+  DOC <$ Attempts the operation once. TRUE reports that the result is available without waiting. FALSE reports that a readiness wait is registered. $>
+  .start FUNCTION() MUT: BOOL
+  {
+    IF (.attempt()) { RETURN TRUE; }
+    .completion.begin();
+    TRY { .arm(); }
+    CATCH DEFAULT { .completion.abandon(); RETHROW; }
+    RETURN FALSE;
+  }
+
+  DOC <$ Registers the continuation that completion notifies. FALSE reports that the operation completed first. $>
+  .suspend FUNCTION(@continuation MUT->std::async_continuation) MUT: BOOL
+  { RETURN .completion.suspend(@continuation continuation); }
+
+  DOC <$ Returns the result of the completed operation, or throws its failure. $>
+  .result FUNCTION() MUT: datagram_result
+  {
+    IF (.failure??) { THROW_EXCEPTION_PTR(.failure); }
+    VAR received MUT& datagram_result := .received;
+    RETURN MOVE(received);
+  }
+
+  DOC <$ Starts the operation. $>
+  .AWAIT_READY FUNCTION() MUT: BOOL { RETURN .start(); }
+  DOC <$ Registers the awaiting coroutine. $>
+  .AWAIT_SUSPEND FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) MUT: BOOL
+  { RETURN .completion.suspend(@continuation CONTROLLER.continuation()); }
+  DOC <$ Returns the result after resumption, or throws the failure. $>
+  .AWAIT_RESUME FUNCTION() MUT: datagram_result { RETURN .result(); }
+  DOC <$ A started operation runs to completion. $>
+  .TRY_CANCEL FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) CONST NOEXCEPT: BOOL { RETURN FALSE; }
+}

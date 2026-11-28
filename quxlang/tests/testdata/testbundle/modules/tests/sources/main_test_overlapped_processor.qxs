@@ -124,13 +124,18 @@ IMPORT syscall;
 
     VAR data [3]BYTE;
     data[0] := 9; data[1] := 25; data[2] := 64;
-    AUTO write := -< [data] (@handle ADDRESS, @overlapped MUT->syscall::windows::overlapped): U32
+    VAR dispatched_during_write SZ;
+    AUTO write := -< [data, processor, dispatched_during_write] (@handle ADDRESS, @overlapped MUT->syscall::windows::overlapped): U32
     {
-      IF (syscall::windows::write_file(@handle handle, @buffer data[&0],
-        @count 3, @transferred NULL, @overlapped overlapped) != 0) { RETURN 0; }
-      RETURN syscall::windows::get_last_error();
+      VAR code U32;
+      IF (syscall::windows::write_file(@handle handle, @buffer data[&0], @count 3, @transferred NULL, @overlapped overlapped) == 0)
+      { code := syscall::windows::get_last_error(); }
+      IF (code == 0 || code == 997)
+      { dispatched_during_write := processor.process_completions(@maximum 1, @timeout_milliseconds -1); }
+      RETURN code;
     };
     binding.submit(@request item.request, @start write, @offset 2);
+    TEST_ASSERT(dispatched_during_write == 0 && item.count == 0 && processor.pending_count() == 1);
     TEST_ASSERT(processor.process_completions(@maximum 1, @timeout_milliseconds 5000) == 1);
     TEST_ASSERT(item.count == 1 && item.result.transferred == 3 && item.result.error == 0);
 
@@ -169,15 +174,24 @@ IMPORT syscall;
     buffer.length := 1;
     buffer.data := IBC_GETADDR(@PTR payload<-);
     VAR flags U32;
-    AUTO receive := -< [buffer, flags] (@handle ADDRESS, @overlapped MUT->syscall::windows::overlapped): U32
+    VAR canceled BOOL;
+    VAR dispatched_during_receive SZ;
+    AUTO receive := -< [buffer, flags, canceled, binding, item, processor, dispatched_during_receive]
+      (@handle ADDRESS, @overlapped MUT->syscall::windows::overlapped): U32
     {
       VAR status I32 := syscall::windows::socket_receive(@socket handle - (NULL AS ADDRESS),
         @buffers buffer<-, @count 1, @transferred NULL, @flags flags<-, @overlapped overlapped, @completion NULL);
-      IF (status == 0) { RETURN 0; }
-      RETURN syscall::windows::socket_last_error() AS ASSUME U32;
+      VAR code U32;
+      IF (status != 0) { code := syscall::windows::socket_last_error() AS ASSUME U32; }
+      IF (code == 997)
+      {
+        canceled := binding.cancel(@request item.request);
+        IF (canceled) { dispatched_during_receive := processor.process_completions(@maximum 1, @timeout_milliseconds -1); }
+      }
+      RETURN code;
     };
     binding.submit(@request item.request, @start receive);
-    TEST_ASSERT(binding.cancel(@request item.request));
+    TEST_ASSERT(canceled && dispatched_during_receive == 0 && item.count == 0 && processor.pending_count() == 1);
     TEST_ASSERT(processor.process_completions(@maximum 1, @timeout_milliseconds 5000) == 1);
     TEST_ASSERT(item.count == 1 && item.result.error == 995); // ERROR_OPERATION_ABORTED
     TEST_ASSERT(binding.cancel(@request item.request) == FALSE);

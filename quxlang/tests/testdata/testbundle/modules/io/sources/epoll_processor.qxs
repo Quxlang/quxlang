@@ -78,6 +78,57 @@ PRIVATE(MODULE)
   DOC <$ Bounds the number of events that one wait transfers from the kernel. $>
   ::epoll_batch_capacity STATIC SZ := 32;
 
+  DOC <$ Owns a native epoll descriptor. Clients choose their registration lifetimes and event payloads. $>
+  ::linux_epoll_queue INCLUDE_IF(OS_LINUX) STRUCT ROOTED
+  {
+    .descriptor VAR io_descriptor_ref;
+
+    .CONSTRUCTOR FUNCTION()
+    {
+      .descriptor := io_descriptor_ref(@native_handle syscall::linux::epoll_create1(@flags epoll_close_on_exec));
+      IF (.descriptor.is_valid() == FALSE) { THROW epoll_error::initialization_failed; }
+    }
+    .DESTRUCTOR FUNCTION()
+    {
+      IF (syscall::linux::close(@fd .descriptor.native_handle()) < 0) { PANIC "Cannot close an epoll descriptor."; }
+    }
+
+    DOC <$ Applies a native registration change and returns the Linux status code. $>
+    .control FUNCTION(@operation I32, @target io_descriptor_ref, @event CONST->syscall::linux::epoll_event) CONST: I32
+    {
+      RETURN syscall::linux::epoll_ctl(@queue .descriptor.native_handle(),
+        @operation operation, @descriptor target.native_handle(), @event event);
+    }
+
+    DOC <$ Arms a descriptor with a generation that identifies this set of interests in future kernel events. $>
+    .arm FUNCTION(@operation I32, @target io_descriptor_ref, @flags U32, @generation U32) CONST: I32
+    {
+      VAR event syscall::linux::epoll_event;
+      event.events := flags;
+      event.data[0] := target.native_handle() AS PARTIAL U32;
+      event.data[1] := generation;
+      RETURN .control(@operation operation, @target target, @event event<-);
+    }
+
+    DOC <$ Removes a kernel watch. Closing the descriptor or deleting the watch earlier also ends its registration. $>
+    .unwatch FUNCTION(@target io_descriptor_ref) CONST
+    {
+      VAR status I32 := .control(@operation epoll_control_delete, @target target, @event NULL);
+      IF (status != 0 && status != epoll_missing_result && status != epoll_bad_descriptor_result)
+      { PANIC "Cannot delete an epoll watch."; }
+    }
+
+    DOC <$ Transfers at most maximum events. A timeout or signal interruption returns an empty batch. $>
+    .wait FUNCTION(@events MUT->syscall::linux::epoll_event, @maximum I32, @timeout_milliseconds I32) CONST: SZ
+    {
+      VAR count I32 := syscall::linux::epoll_wait(@queue .descriptor.native_handle(),
+        @event events, @maximum maximum, @timeout timeout_milliseconds);
+      IF (count == epoll_interrupted_result) { RETURN 0; }
+      IF (count < 0) { THROW epoll_error::wait_failed; }
+      RETURN count AS ASSUME SZ;
+    }
+  }
+
   DOC <$ Retains one borrowed operation and its position among the registrations of its descriptor. $>
   ::epoll_registration INCLUDE_IF(OS_LINUX) STRUCT
   {
@@ -148,13 +199,15 @@ DOC <$
 {
   PRIVATE(MODULE)
   {
-    .queue VAR io_descriptor_ref;
+    .queue VAR linux_epoll_queue;
     .outstanding VAR ATOMIC#SZ;
     DOC <$ Protects the descriptor table, the registration lists, the generation, and the arming of kernel registrations. $>
     .mutex VAR std::ordering_mutex;
     .descriptors VAR std::hadix_map#[I32:epoll_descriptor_state];
     .generation VAR U32;
     .processing VAR BOOL;
+    DOC <$ Holds the event counter whose edge-triggered watch returns a consumer from its wait. $>
+    .wake_descriptor VAR io_descriptor_ref;
 
     DOC <$
       Adds or modifies a kernel watch with the supplied interest and a new generation.
@@ -164,12 +217,8 @@ DOC <$
     .arm FUNCTION(@descriptor io_descriptor_ref, @state MUT& epoll_descriptor_state, @command I32, @interest epoll_events) MUT: BOOL
     {
       VAR generation U32 := .generation + 1;
-      VAR event syscall::linux::epoll_event;
-      event.events := (interest AS U32) #|| epoll_one_shot;
-      event.data[0] := descriptor.native_handle() AS PARTIAL U32;
-      event.data[1] := generation;
-      VAR status I32 := syscall::linux::epoll_ctl(@queue .queue.native_handle(), @operation command,
-        @descriptor descriptor.native_handle(), @event event<-);
+      VAR status I32 := .queue.arm(@operation command, @target descriptor,
+        @flags (interest AS U32) #|| epoll_one_shot, @generation generation);
       IF (status < 0) { RETURN FALSE; }
       .generation := generation;
       state.interest := interest;
@@ -180,9 +229,7 @@ DOC <$
     DOC <$ Deletes the kernel watch and retires its table entry while the caller holds the mutex. $>
     .retire_watch FUNCTION(@descriptor io_descriptor_ref) MUT
     {
-      VAR status I32 := syscall::linux::epoll_ctl(@queue .queue.native_handle(), @operation epoll_control_delete,
-        @descriptor descriptor.native_handle(), @event NULL);
-      IF (status != 0 && status != epoll_missing_result && status != epoll_bad_descriptor_result) { PANIC "Cannot delete an epoll watch."; }
+      .queue.unwatch(@target descriptor);
       .descriptors.erase(descriptor.native_handle());
     }
 
@@ -293,18 +340,42 @@ DOC <$
     }
   }
 
-  DOC <$ Opens an epoll descriptor with close-on-exec enabled. $>
+  DOC <$ Opens an epoll descriptor with close-on-exec enabled, and an event counter that wake signals. $>
   .CONSTRUCTOR FUNCTION()
   {
-    .queue := io_descriptor_ref(@native_handle syscall::linux::epoll_create1(@flags epoll_close_on_exec));
-    IF (.queue.is_valid() == FALSE) { THROW epoll_error::initialization_failed; }
+    // EFD_NONBLOCK | EFD_CLOEXEC
+    .wake_descriptor := io_descriptor_ref(@native_handle syscall::linux::eventfd2(@initial 0, @flags 526336));
+    IF (.wake_descriptor.is_valid() == FALSE) { THROW epoll_error::initialization_failed; }
+    VAR event syscall::linux::epoll_event;
+    // EPOLLIN | EPOLLET. Every write to the counter produces one event, and the counter is never read.
+    event.events := 2147483649;
+    // No descriptor has this value, so event processing finds no registration for the wake event.
+    event.data[0] := (0 AS U32) #!!;
+    IF (.queue.control(@operation epoll_control_add, @target .wake_descriptor, @event event<-) != 0)
+    {
+      syscall::linux::close(@fd .wake_descriptor.native_handle());
+      THROW epoll_error::initialization_failed;
+    }
   }
 
   DOC <$ Closes the epoll descriptor. Destroying a processor with outstanding registrations violates its lifetime contract. $>
   .DESTRUCTOR FUNCTION()
   {
     IF (.outstanding.LOAD#ATOMIC_ACQUIRE() != 0) { PANIC "epoll processor destroyed with outstanding registrations."; }
-    IF (syscall::linux::close(@fd .queue.native_handle()) < 0) { PANIC "Cannot close an epoll descriptor."; }
+    IF (syscall::linux::close(@fd .wake_descriptor.native_handle()) < 0) { PANIC "Cannot close an epoll wake descriptor."; }
+  }
+
+  DOC <$ Returns one thread from its wait in process_events without delivering a notification. A wake issued while no thread waits ends the next wait. Any thread may call wake. $>
+  .wake FUNCTION() CONST
+  {
+    VAR increment U64 := 1;
+    VAR bytes CONST=>>BYTE := IBC_PUN#(CONST=>>BYTE)(@ADDR IBC_GETADDR(@PTR increment<-));
+    LOOP DO
+    {
+      VAR count I32 := syscall::linux::write(@fd .wake_descriptor.native_handle(), @buffer bytes, @count 8) AS PARTIAL I32;
+      IF (count == 8) { RETURN; }
+      IF (count != epoll_interrupted_result) { PANIC "Cannot signal an epoll wake descriptor."; }
+    };
   }
 
   DOC <$
@@ -373,7 +444,7 @@ DOC <$
   }
 
   DOC <$ Borrows the processor descriptor for polling by an external event loop. $>
-  .poll_descriptor FUNCTION() CONST: io_descriptor_ref { RETURN .queue; }
+  .poll_descriptor FUNCTION() CONST: io_descriptor_ref { RETURN .queue.descriptor; }
 
   DOC <$ Returns the current number of outstanding registrations. $>
   .pending_count FUNCTION() CONST: SZ { RETURN .outstanding.LOAD#ATOMIC_ACQUIRE(); }
@@ -399,11 +470,8 @@ DOC <$
     {
       VAR capacity SZ := maximum - transferred;
       IF (capacity > epoll_batch_capacity) { capacity := epoll_batch_capacity; }
-      VAR result I32 := syscall::linux::epoll_wait(@queue .queue.native_handle(), @event batch[0]<-,
-        @maximum (capacity AS CHECKED I32), @timeout timeout_milliseconds);
-      IF (result == epoll_interrupted_result) { BREAK; }
-      IF (result < 0) { THROW epoll_error::wait_failed; }
-      VAR count SZ := result AS CHECKED SZ;
+      VAR count SZ := .queue.wait(@events batch[0]<-, @maximum capacity AS ASSUME I32,
+        @timeout_milliseconds timeout_milliseconds);
       VAR index SZ;
       LOOP WHILE(index < count) DO
       {

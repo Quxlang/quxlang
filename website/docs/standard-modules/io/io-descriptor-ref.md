@@ -1,13 +1,11 @@
 # `io::io_descriptor_ref`
 
-Module `io` · source file `io_descriptor_ref.qxs`
+Module `io` · source files `io_descriptor_ref.qxs` and `windows_completion_bindings.qxs`
 
-`io::io_descriptor_ref` stores one native I/O resource identifier: a file
-descriptor on Linux and macOS, or a `HANDLE` on Windows. The type is a
-non-owning value. A copy refers to the same native resource, and destruction
-performs no native operation. [`io::file_ref`](file-ref.md) adds transfer
-operations to a descriptor reference, and [`io::file`](file.md) adds exclusive
-ownership.
+`io::io_descriptor_ref` borrows one native resource. Copies identify the
+same open file or socket. A reference can outlive the resource, and destroying
+the last reference does not close it. [File references](file-ref.md) ·
+[File owners](file.md)
 
 ## Declaration
 
@@ -16,12 +14,10 @@ ownership.
 ::io_descriptor_ref INCLUDE_IF(OS_WINDOWS) STRUCT
 ```
 
-The module declares two structures with the same name and selects one with
-[`INCLUDE_IF`](../../reference/availability-and-targets.md). The POSIX
-structure stores an `I32`. The Windows structure stores an `ADDRESS`. Both
-structures keep the stored value in a `PRIVATE(CLASS)` field, declare no struct
-modifier, and are copyable. The size of the structure equals the size of the
-stored value: `SIZEOF(I32)` on Linux and macOS and `SIZEOF(ADDRESS)` on Windows.
+On Linux and macOS, the reference contains an `I32` file descriptor.
+On Windows, the reference holds shared ownership of a record containing
+the native handle and its completion-port association. A non-null raw handle
+import allocates a record. Copying the reference shares that record.
 
 ## Member summary
 
@@ -30,6 +26,7 @@ stored value: `SIZEOF(I32)` on Linux and macOS and `SIZEOF(ADDRESS)` on Windows.
 | [`CONSTRUCTOR`](#constructor) | Creates an invalid reference or borrows a native value. |
 | [`native_handle`](#native_handle) | Returns the stored native value. |
 | [`is_valid`](#is_valid) | Reports whether the stored value can identify an open resource. |
+| [`close_windows_handle`](#close_windows_handle) | Invokes a native close operation and invalidates copies on success. |
 
 ## Member functions
 
@@ -50,11 +47,17 @@ Windows:
 ```
 
 1. Creates an invalid reference. The POSIX structure stores `-1`. The Windows
-   structure stores the null address.
+   structure has no record and returns a null native handle.
 2. Stores `native_handle` without acquiring ownership and without validating
    the value against the operating system.
 
-**Parameters**: `native_handle` is the descriptor or handle to borrow.
+On Windows, a raw import starts a fresh record. The caller imports each open
+handle once and passes copies for subsequent use. Constructing a second
+reference from `native_handle()` cannot recover an existing association.
+Windows keeps a native handle associated with its first completion port until
+the handle closes. An independently opened handle gets its own record, even
+if Windows recycles a previous numeric value. If allocation fails during a raw
+import, the caller retains responsibility for the native resource.
 
 ### `native_handle`
 
@@ -76,12 +79,28 @@ system interfaces accept.
 nonnegative. On Windows, `TRUE` when the stored handle is neither the null
 address nor `INVALID_HANDLE_VALUE` (the address one below the null address).
 
-The function inspects only the stored value. A reference whose resource was
-closed through another copy continues to report `TRUE`.
+On POSIX targets, closing the descriptor leaves its numeric value in copies.
+On Windows, a successful close through the shared record clears the handle,
+and every copy then reports `FALSE`. Closure through an external native call
+bypasses the record. Calls to `is_valid` do not query the operating system.
+
+### `close_windows_handle`
+
+```quxlang
+.close_windows_handle FUNCTION(@close AUTO& AUTO) CONST: BOOL
+```
+
+Calls `close(@handle native_handle())`. A `TRUE` result clears the shared
+handle and releases its port identity. All descriptor copies then return a null native handle. A `FALSE` result preserves the handle and association.
+The callback selects the native close operation appropriate to the resource.
+The caller has exclusive access for the duration of closure, after all
+submissions, completions, and other uses of the handle have finished.
+[Closing a file reference](file-ref.md#close) ·
+[Closing a socket reference](../net/socket-references.md#close)
 
 ## Target restrictions
 
-| Target | Stored type | Invalid values |
+| Target | Native value type | Invalid values |
 | --- | --- | --- |
 | Linux, macOS | `I32` | Every negative value. The default value is `-1`. |
 | Windows | `ADDRESS` | The null address and `INVALID_HANDLE_VALUE`. The default value is the null address. |

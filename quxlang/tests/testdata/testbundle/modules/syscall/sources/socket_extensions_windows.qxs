@@ -19,7 +19,7 @@ LANGUAGE QUXLANG EN 0.0;
 
   DOC <$ Invokes the provider-specific ConnectEx entry point using its Windows ABI. $>
   ::connect_extended ASM_PROCEDURE X64
-    CALLABLE CALLCONV CCALL(@socket UINTPTR, @destination CONST->socket_address_storage, @length I32,
+    CALLABLE CALLCONV CCALL(@socket UINTPTR, @destination ADDRESS, @length I32,
       @buffer ADDRESS, @size U32, @transferred MUT->U32, @overlapped MUT->overlapped,
       @entry ADDRESS; RETURN I32)
   {

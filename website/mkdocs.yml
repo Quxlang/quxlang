@@ -308,11 +308,13 @@ nav:
               - "io::async_file": standard-modules/io/async-file.md
               - "io::thread_pool": standard-modules/io/thread-pool.md
           - Asynchronous Runtime:
+              - "io::async_runtime2": standard-modules/io/async-runtime2.md
               - "io::async_runtime": standard-modules/io/async-runtime.md
               - "io::async_controller": standard-modules/io/async-controller.md
               - "Native Operations": standard-modules/io/native-operation.md
           - Standalone Processors:
               - "io::io_uring_processor": standard-modules/io/io-uring-processor.md
+              - "io::kqueue_processor": standard-modules/io/kqueue-processor.md
               - "io::epoll_processor": standard-modules/io/epoll-processor.md
               - "io::overlapped_processor": standard-modules/io/overlapped-processor.md
       - Module net:

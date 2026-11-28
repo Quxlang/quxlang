@@ -108,20 +108,36 @@ DOC <$ Owns worker threads and an unbounded intrusive ready queue. Each invocati
         entry->.notified := FALSE;
         .mutex.unlock();
 
-        VAR complete BOOL := entry->.drive(@owner entry->.owner);
-        .mutex.lock();
-        IF (complete)
-        {
-          .active--;
-          IF (.active == 0) { .idle.notify_all(); }
-        }
-        ELSE
-        {
-          entry->.running := FALSE;
-          IF (entry->.notified) { .enqueue(@entry entry); }
-        }
-        .mutex.unlock();
+        .retire(@entry entry, @complete entry->.drive(@owner entry->.owner));
       };
+    }
+
+    DOC <$ Records the end of one activation. A completed invocation leaves the pool, and its entry is no longer accessed. A suspended invocation that was notified during the activation is queued. $>
+    .retire FUNCTION(@entry MUT->cort_work, @complete BOOL) MUT
+    {
+      .mutex.lock();
+      IF (complete)
+      {
+        .active--;
+        IF (.active == 0) { .idle.notify_all(); }
+      }
+      ELSE
+      {
+        entry->.running := FALSE;
+        IF (entry->.notified) { .enqueue(@entry entry); }
+      }
+      .mutex.unlock();
+    }
+
+    DOC <$ Transfers ownership of one initialized invocation to the pool and drives its first activation on the calling worker. The invocation enters the ready queue only in response to a later notification. $>
+    .start FUNCTION(@entry MUT->cort_work) MUT
+    {
+      .mutex.lock();
+      .active++;
+      .mutex.unlock();
+      // The entry is unpublished until its first activation registers a continuation.
+      entry->.running := TRUE;
+      .retire(@entry entry, @complete entry->.drive(@owner entry->.owner));
     }
   }
 
@@ -185,6 +201,54 @@ DOC <$ Owns worker threads and an unbounded intrusive ready queue. Each invocati
     }
   }
 
+  DOC <$ Schedules a selected coroutine with a concrete controller derived from thread_pool_cort_controller for its result type. The invocation owns its controller, frame, and result producer together. $>
+  .launch_with_controller TEMPLATE(@T:descriptor_type TYPE AUTO)
+    FUNCTION(@controller AUTO& AUTO(controller_type), @ARGUMENTS:arguments ..., @group MUT->task_group DEFAULT(NULL)) MUT: future#descriptor_type::RETURN_TYPE
+  {
+    VAR invocation MUT->cort_invocation#(@descriptor_type descriptor_type, @controller_type controller_type);
+    DEFER { DELETE OPTIONAL invocation; }
+    invocation := NEW cort_invocation#(@descriptor_type descriptor_type, @controller_type controller_type):(
+      @runtime THIS, @controller FORWARD(controller), @ARGUMENTS FORWARD PACK(arguments));
+    VAR result := invocation->.producer.get_future();
+    invocation->.group := group;
+    IF (group??) { group->.state.register_task(); }
+    .submit(@entry invocation->.entry<-);
+    invocation := NULL;
+    RETURN MOVE(result);
+  }
+
+  DOC <$ Selects a coroutine as CO_RUN does and starts it on the calling worker. The caller is a coroutine that this pool is driving. $>
+  .call_coroutine FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ...) MUT: AUTO
+  {
+    STATIC_IF(PACK_CONTAINS(arguments, "RECEIVER"))
+    {
+      VAR descriptor := child#(@CONTROLLER AUTO, @THIS PACK_FIELD_TYPE(arguments, "RECEIVER"),
+        ...PACK_TYPES_EXCEPT(arguments, "RECEIVER"));
+      RETURN cort_call#descriptor(@runtime THIS, @ARGUMENTS FORWARD PACK(arguments));
+    }
+    STATIC_ELSE
+    {
+      VAR descriptor := child#(@CONTROLLER AUTO, ...PACK_TYPES(arguments));
+      RETURN cort_call#descriptor(@runtime THIS, @ARGUMENTS FORWARD PACK(arguments));
+    }
+  }
+
+  DOC <$ Starts a selected coroutine on the calling worker with a concrete controller derived from thread_pool_cort_controller for its result type. A coroutine that completes without suspending never enters the ready queue. The caller is a coroutine that this pool is driving. $>
+  .call_with_controller TEMPLATE(@T:descriptor_type TYPE AUTO)
+    FUNCTION(@controller AUTO& AUTO(controller_type), @ARGUMENTS:arguments ...) MUT: future#descriptor_type::RETURN_TYPE
+  {
+    VAR invocation MUT->cort_invocation#(@descriptor_type descriptor_type, @controller_type controller_type);
+    DEFER { DELETE OPTIONAL invocation; }
+    invocation := NEW cort_invocation#(@descriptor_type descriptor_type, @controller_type controller_type):(
+      @runtime THIS, @controller FORWARD(controller), @ARGUMENTS FORWARD PACK(arguments));
+    VAR result := invocation->.producer.get_future();
+    VAR entry MUT->cort_work := invocation->.entry<-;
+    // The first activation may complete and release the invocation.
+    invocation := NULL;
+    .start(@entry entry);
+    RETURN MOVE(result);
+  }
+
   DOC <$ Queues an owned callable whose call operator completes synchronously without throwing. $>
   .post FUNCTION(@operation AUTO& AUTO(operation_type)) MUT
   {
@@ -244,19 +308,21 @@ DOC <$ Connects a coroutine result to its pool and stable continuation. Recursiv
     {
       RETURN .entry->.runtime->.CO_RUN(@COROUTINE child, @ARGUMENTS FORWARD PACK(arguments), @group group);
     }
+    STATIC_ELSE { RETURN .launch_function(@child child, @ARGUMENTS FORWARD PACK(arguments), @group group); }
+  }
+  DOC <$ Selects the synchronous overload of a callable binding and queues its captured arguments on the pool. $>
+  .launch_function FUNCTION(@child AUTO, @ARGUMENTS:arguments ..., @group MUT->task_group DEFAULT(NULL)): AUTO
+  {
+    STATIC_IF(PACK_CONTAINS(arguments, "RECEIVER"))
+    {
+      VAR receiver EMIT FIELD("RECEIVER") FROM (arguments);
+      VAR bound := BIND_CALL child(@THIS FORWARD(receiver), ...FORWARD PACK(arguments));
+      RETURN cort_launch_function(@runtime .entry->.runtime->, @bound MOVE(bound), @group group);
+    }
     STATIC_ELSE
     {
-      STATIC_IF(PACK_CONTAINS(arguments, "RECEIVER"))
-      {
-        VAR receiver EMIT FIELD("RECEIVER") FROM (arguments);
-        VAR bound := BIND_CALL child(@THIS FORWARD(receiver), ...FORWARD PACK(arguments));
-        RETURN cort_launch_function(@runtime .entry->.runtime->, @bound MOVE(bound), @group group);
-      }
-      STATIC_ELSE
-      {
-        VAR bound := BIND_CALL child(...FORWARD PACK(arguments));
-        RETURN cort_launch_function(@runtime .entry->.runtime->, @bound MOVE(bound), @group group);
-      }
+      VAR bound := BIND_CALL child(...FORWARD PACK(arguments));
+      RETURN cort_launch_function(@runtime .entry->.runtime->, @bound MOVE(bound), @group group);
     }
   }
   DOC <$ Schedules a child whose completion is joined by the supplied group. $>
@@ -264,32 +330,57 @@ DOC <$ Connects a coroutine result to its pool and stable continuation. Recursiv
   {
     RETURN .CO_GO(@COROUTINE child, @ARGUMENTS FORWARD PACK(arguments), @group group<-);
   }
-  DOC <$ Schedules a coroutine destructor and suspends its caller until cleanup completes. $>
+  DOC <$ Starts a coroutine destructor on the calling worker. The caller suspends only if cleanup suspends. $>
   .CO_CALL_DTOR FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ...): AUTO
   {
-    RETURN cort_launch#child(@runtime .entry->.runtime->, @ARGUMENTS FORWARD PACK(arguments));
+    RETURN cort_call#child(@runtime .entry->.runtime->, @ARGUMENTS FORWARD PACK(arguments));
   }
-  DOC <$ Schedules a coroutine constructor against its caller-owned destination. $>
+  DOC <$ Starts a coroutine constructor on the calling worker against its caller-owned destination. $>
   .CO_CALL_CTOR FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ..., @DESTINATION:destination MUT& AUTO): AUTO
   {
     PACK invocation FUSE(...{ .RECEIVER = destination; }, arguments);
-    RETURN cort_launch#child(@runtime .entry->.runtime->, @ARGUMENTS FORWARD PACK(invocation));
+    RETURN cort_call#child(@runtime .entry->.runtime->, @ARGUMENTS FORWARD PACK(invocation));
   }
-  DOC <$ Schedules a recursive child whose task is awaited by the ordinary call protocol. $>
+  DOC <$ Starts a child on the calling worker and returns its task, which the ordinary call protocol awaits. A child that completes without suspending leaves the task ready, so the caller continues without a scheduling boundary. $>
   .CO_COROUTINE_CALL FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ...): AUTO
   {
-    VAR result := .CO_GO(@COROUTINE child, @ARGUMENTS FORWARD PACK(arguments));
-    RETURN task#(DECLTYPE(result)::value_type)(@result MOVE(result));
+    STATIC_IF(STATIC_CHOOSE(PACK_CONTAINS(arguments, "RECEIVER"),
+      IS_COROUTINE_CALLABLE_WITH(child, @CONTROLLER AUTO, @THIS PACK_FIELD_TYPE(arguments, "RECEIVER"),
+        ...PACK_TYPES_EXCEPT(arguments, "RECEIVER")),
+      IS_COROUTINE_CALLABLE_WITH(child, @CONTROLLER AUTO, ...PACK_TYPES(arguments))))
+    {
+      VAR result := .entry->.runtime->.call_coroutine(@COROUTINE child, @ARGUMENTS FORWARD PACK(arguments));
+      RETURN task#(DECLTYPE(result)::value_type)(@result MOVE(result));
+    }
+    STATIC_ELSE
+    {
+      VAR result := .call_function(@child child, @ARGUMENTS FORWARD PACK(arguments));
+      RETURN task#(DECLTYPE(result)::value_type)(@result MOVE(result));
+    }
+  }
+  DOC <$ Selects the synchronous overload of a callable binding and executes it on the calling worker through the coroutine completion protocol. $>
+  .call_function FUNCTION(@child AUTO, @ARGUMENTS:arguments ...): AUTO
+  {
+    STATIC_IF(PACK_CONTAINS(arguments, "RECEIVER"))
+    {
+      VAR receiver EMIT FIELD("RECEIVER") FROM (arguments);
+      VAR bound := BIND_CALL child(@THIS FORWARD(receiver), ...FORWARD PACK(arguments));
+      RETURN cort_call_function(@runtime .entry->.runtime->, @bound MOVE(bound));
+    }
+    STATIC_ELSE
+    {
+      VAR bound := BIND_CALL child(...FORWARD PACK(arguments));
+      RETURN cort_call_function(@runtime .entry->.runtime->, @bound MOVE(bound));
+    }
   }
 }
 
 PRIVATE(MODULE)
 {
   DOC <$ Owns a concrete coroutine frame and its result producer at stable addresses. $>
-  ::cort_invocation TEMPLATE(@T:descriptor_type TYPE AUTO) STRUCT ROOTED
+  ::cort_invocation TEMPLATE(@descriptor_type TYPE AUTO, @controller_type TYPE AUTO) STRUCT ROOTED
   {
     ::result_type ALIAS descriptor_type::RETURN_TYPE;
-    ::controller_type ALIAS thread_pool_cort_controller#result_type;
     ::descriptor ALIAS descriptor_type#(@CONTROLLER controller_type);
     .entry VAR cort_work;
     .group VAR MUT->task_group;
@@ -298,22 +389,24 @@ PRIVATE(MODULE)
     .frame VAR descriptor::FRAME_TYPE;
 
     DOC <$ Captures arguments before publishing the invocation to workers. $>
-    .CONSTRUCTOR FUNCTION(@runtime MUT& thread_pool_cort_runtime, @ARGUMENTS:arguments ...)
+    .CONSTRUCTOR FUNCTION(@runtime MUT& thread_pool_cort_runtime, @controller AUTO& controller_type, @ARGUMENTS:arguments ...)
+      :> .controller:(@OTHER FORWARD(controller))
     {
       .entry.runtime := runtime<-;
       .entry.owner := THIS<- AS REINTERPRET MUT->VOID;
       .entry.drive := drive<-;
       .entry.continuation.context := .entry<- AS REINTERPRET MUT->VOID;
       .entry.continuation.notify := cort_notify<-;
-      .controller.entry := .entry<-;
-      .controller.producer := .producer<-;
+      VAR scheduling MUT& thread_pool_cort_controller#result_type := .controller;
+      scheduling.entry := .entry<-;
+      scheduling.producer := .producer<-;
       .frame.INITIALIZE(...FORWARD PACK(arguments));
     }
 
     DOC <$ Drives one activation, publishes the result after terminal frame cleanup, and releases a completed invocation. $>
     ::drive FUNCTION(@owner MUT->VOID): BOOL
     {
-      VAR invocation MUT->cort_invocation#descriptor_type := owner AS REINTERPRET MUT->cort_invocation#descriptor_type;
+      VAR invocation := owner AS REINTERPRET MUT->cort_invocation#(@descriptor_type descriptor_type, @controller_type controller_type);
       VAR complete BOOL := invocation->.frame.RESUME(@CONTROLLER invocation->.controller);
       IF (complete)
       {
@@ -333,16 +426,20 @@ PRIVATE(MODULE)
     entry->.runtime->.notify(@entry entry);
   }
 
-  DOC <$ Allocates a selected invocation and transfers its ownership to the pool. $>
+  DOC <$ Starts a coroutine on the calling worker with its result type's standard thread-pool controller. $>
+  ::cort_call TEMPLATE(@T:descriptor_type TYPE AUTO)
+    FUNCTION(@runtime MUT& thread_pool_cort_runtime, @ARGUMENTS:arguments ...): future#descriptor_type::RETURN_TYPE
+  {
+    VAR controller thread_pool_cort_controller#(descriptor_type::RETURN_TYPE);
+    RETURN runtime.call_with_controller#descriptor_type(@controller MOVE(controller), @ARGUMENTS FORWARD PACK(arguments));
+  }
+
+  DOC <$ Schedules a coroutine with its result type's standard thread-pool controller. $>
   ::cort_launch TEMPLATE(@T:descriptor_type TYPE AUTO)
     FUNCTION(@runtime MUT& thread_pool_cort_runtime, @ARGUMENTS:arguments ..., @group MUT->task_group DEFAULT(NULL)): future#descriptor_type::RETURN_TYPE
   {
-    VAR invocation MUT->cort_invocation#descriptor_type := NEW cort_invocation#descriptor_type:(@runtime runtime, @ARGUMENTS FORWARD PACK(arguments));
-    VAR result := invocation->.producer.get_future();
-    invocation->.group := group;
-    IF (group??) { group->.state.register_task(); }
-    runtime.submit(@entry invocation->.entry<-);
-    RETURN MOVE(result);
+    VAR controller thread_pool_cort_controller#(descriptor_type::RETURN_TYPE);
+    RETURN runtime.launch_with_controller#descriptor_type(@controller MOVE(controller), @ARGUMENTS FORWARD PACK(arguments), @group group);
   }
 }
 
@@ -353,6 +450,14 @@ PRIVATE(MODULE)
   ::cort_function_call TEMPLATE(@T:bound_type TYPE) COROUTINE(@bound bound_type): COMPOSITE_FIELD_TYPE(bound_type, "CALLEE")::RETURN_TYPE
   {
     RETURN FORWARD PACK(COMPOSITE_TO_PACK(COMPOSITE_FIELD_GET(MOVE(bound), "ARGUMENTS"))) TO COMPOSITE_FIELD_GET(bound, "CALLEE");
+  }
+
+  DOC <$ Transfers adapted arguments into a coroutine frame and executes a synchronous function on the calling worker. $>
+  ::cort_call_function FUNCTION(@runtime MUT& thread_pool_cort_runtime, @bound TEMP& AUTO(bound_type)): AUTO
+  {
+    VAR wrapper := cort_function_call#bound_type;
+    VAR descriptor := wrapper#(@CONTROLLER AUTO, @bound bound_type);
+    RETURN cort_call#descriptor(@runtime runtime, @ARGUMENTS ...{ .bound = FORWARD(bound); });
   }
 
   DOC <$ Transfers adapted arguments into a coroutine frame before scheduling a synchronous function. $>

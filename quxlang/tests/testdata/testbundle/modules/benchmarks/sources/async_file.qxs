@@ -1,0 +1,143 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT std;
+IMPORT syscall;
+
+::async_files INCLUDE_IF(OS_MACOS || OS_LINUX) NAMESPACE
+{
+  PRIVATE(MODULE)
+  {
+    ::page_size STATIC SZ := 4096;
+    ::window_size STATIC SZ := 16;
+    ::temporary_file INCLUDE_IF(OS_MACOS) EXTERN_PROCEDURE["/usr/lib/libSystem.B.dylib":"mkstemp"]
+      CALLABLE CALLCONV CCALL(@path MUT=>>BYTE; RETURN I32);
+    ::unlink_file INCLUDE_IF(OS_MACOS) EXTERN_PROCEDURE["/usr/lib/libSystem.B.dylib":"unlink"]
+      CALLABLE CALLCONV CCALL(@path MUT=>>BYTE; RETURN I32);
+
+    DOC <$ Populates sixteen distinct pages in a private file before any timed read. $>
+    ::cached_file FUNCTION(): io::file
+    {
+      VAR native I32;
+      STATIC_IF(OS_MACOS)
+      {
+        VAR name STRING_CONSTANT := "/tmp/quxlang-bench-XXXXXX";
+        VAR path [32]BYTE;
+        VAR length SZ := (name.END() - name.BEGIN()) AS ASSUME SZ;
+        LOOP VALUE(index) FROM(0 AS SZ) UNTIL(length) DO { path[index] := name.BEGIN()[index]; };
+        native := temporary_file(@path path[&0]);
+        IF (native < 0) { THROW (1 AS I32); }
+        IF (unlink_file(@path path[&0]) != 0) { syscall::macos::close(@fd native); THROW (2 AS I32); }
+      }
+      STATIC_ELSE
+      {
+        VAR name STRING_CONSTANT := "quxlang-async-file\0";
+        native := syscall::linux::memfd_create(@name name.BEGIN(), @flags 1);
+        IF (native < 0) { THROW (1 AS I32); }
+      }
+      VAR file io::file :(@native_ref io::file_ref(@descriptor io::io_descriptor_ref(@native_handle native)));
+      VAR bytes [page_size]BYTE;
+      VAR buffer io::buffer_ref :(@data bytes[&0], @size page_size);
+      LOOP VALUE(index) FROM(0 AS SZ) UNTIL(window_size) DO
+      {
+        bytes[0] := (index + 1) AS ASSUME U8 AS BYTE;
+        VAR result io::transfer_result;
+        file.write(@buffer buffer, @result result);
+        IF (result.succeeded == FALSE || result.size != page_size) { THROW (3 AS I32); }
+      };
+      RETURN MOVE(file);
+    }
+
+    ::page_slot STRUCT ROOTED
+    {
+      .bytes VAR [page_size]BYTE;
+      .result VAR io::transfer_result;
+      .buffer FUNCTION() MUT: io::buffer_ref { RETURN io::buffer_ref(@data .bytes[&0], @size page_size); }
+      .complete FUNCTION(@result io::transfer_result) MUT NOEXCEPT { .result := result; }
+    }
+
+    ::read_window STRUCT ROOTED
+    {
+      .slots VAR [window_size]page_slot;
+      .futures VAR [window_size]std::future#io::transfer_result;
+
+      .read_futures FUNCTION(@runtime MUT& AUTO(runtime_type), @file AUTO, @depth SZ) MUT
+      {
+        LOOP VALUE(index) FROM(0 AS SZ) UNTIL(depth) DO
+        {
+          VAR offset U64 := (index * page_size) AS U64;
+          .futures[index] := runtime.read(@descriptor file, @buffer .slots[index].buffer(), @offset offset);
+        };
+        LOOP VALUE(index) FROM(0 AS SZ) UNTIL(depth) DO { .slots[index].result := .futures[index].get(); };
+      }
+
+      .read_callbacks FUNCTION(@runtime MUT& AUTO(runtime_type), @file AUTO, @depth SZ) MUT
+      {
+        LOOP VALUE(index) FROM(0 AS SZ) UNTIL(depth) DO
+        {
+          VAR slot MUT->page_slot := .slots[index]<-;
+          VAR offset U64 := (index * page_size) AS U64;
+          AUTO receive := -< [=slot] (@result io::transfer_result) { slot->.complete(@result result); };
+          runtime.read(@descriptor file, @buffer slot->.buffer(), @offset offset, @callback MOVE(receive));
+        };
+        runtime.drain();
+      }
+
+      .verify FUNCTION(@depth SZ) MUT
+      {
+        LOOP VALUE(index) FROM(0 AS SZ) UNTIL(depth) DO
+        {
+          VAR slot MUT& page_slot := .slots[index];
+          IF (slot.result.succeeded == FALSE || slot.result.size != page_size || slot.bytes[0] != (index + 1) AS ASSUME U8 AS BYTE)
+          { THROW (4 AS I32); }
+          slot.result := io::transfer_result();
+          slot.bytes[0] := 0;
+        };
+      }
+    }
+  }
+
+  DOC <$ Measures a window of cached positioned reads submitted through async_runtime futures. $>
+  ::legacy_futures BENCHMARK(@depth SZ) CASE("depth1", @depth 1) CASE("depth16", @depth 16) BODY
+  {
+    VAR file := cached_file();
+    VAR window read_window;
+    VAR runtime io::async_runtime :(@workers 1, @file_workers 2, @completion_workers 1, @entries 256);
+    VAR descriptor := file.reference().descriptor;
+    BENCHMARK_LOOP
+    {
+      MEASURE COUNT(depth) { window.read_futures(@runtime runtime, @file descriptor, @depth depth); }
+      window.verify(@depth depth);
+    }
+  }
+
+  DOC <$ Measures the same positioned reads submitted through async_runtime2 futures. $>
+  ::runtime2_futures BENCHMARK(@depth SZ) CASE("depth1", @depth 1) CASE("depth16", @depth 16) BODY
+  {
+    VAR file := cached_file();
+    VAR window read_window;
+    VAR runtime io::async_runtime2 :(@workers 1, @file_workers 2, @entries 256);
+    VAR binding := file.reference().descriptor;
+    BENCHMARK_LOOP
+    {
+      MEASURE COUNT(depth) { window.read_futures(@runtime runtime, @file binding, @depth depth); }
+      window.verify(@depth depth);
+    }
+  }
+
+  DOC <$ Measures the callback interface of the async_context underlying async_runtime, including the wait for all callbacks in the window. $>
+  ::legacy_callbacks BENCHMARK(@depth SZ) CASE("depth1", @depth 1) CASE("depth16", @depth 16) BODY
+  {
+    VAR file := cached_file();
+    VAR window read_window;
+    VAR context io::async_context :(@entries 256);
+    IF (context.valid() == FALSE) { THROW (5 AS I32); }
+    VAR workers io::thread_pool :(@context context, @worker_count 1);
+    VAR descriptor := file.reference().descriptor;
+    BENCHMARK_LOOP
+    {
+      MEASURE COUNT(depth) { window.read_callbacks(@runtime context, @file descriptor, @depth depth); }
+      window.verify(@depth depth);
+    }
+  }
+}

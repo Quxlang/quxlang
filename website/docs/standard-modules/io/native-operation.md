@@ -158,13 +158,14 @@ descriptor at any time.
 ### `associate`
 
 ```quxlang
-.associate INCLUDE_IF(OS_WINDOWS) FUNCTION(@handle ADDRESS) CONST
+.associate INCLUDE_IF(OS_WINDOWS) FUNCTION(@descriptor CONST& io_descriptor_ref) CONST
 ```
 
-Associates `handle`, which supports overlapped I/O, with the completion port of
-the context. Further calls for the same handle and context reuse the binding.
-An operation that manages a raw handle closes it through
-[`io::close_windows_async_handle`](#close_windows_async_handle).
+Associates the open handle identified by `descriptor` with the context's
+completion port. The handle supports overlapped I/O. An operation obtains
+a copy of the descriptor for any deferred start. Copies share the same
+association. The caller keeps the native resource open until completion.
+[Windows descriptor ownership and closure](io-descriptor-ref.md#close_windows_handle)
 
 **Exceptions**: a failed association throws
 [`async_error::submission_failed`](async-context.md#ioasync_error).
@@ -179,20 +180,6 @@ An operation that manages a raw handle closes it through
 structure has a stable address until the operation completes. An overlapped
 native call that receives this pointer delivers its completion packet to
 `complete` as one notification.
-
-## `io::close_windows_async_handle` { #close_windows_async_handle }
-
-```quxlang
-::close_windows_async_handle INCLUDE_IF(OS_WINDOWS)
-  FUNCTION(@handle ADDRESS, @close AUTO& AUTO): BOOL
-```
-
-The function invokes `close()` to close the native handle after all operations
-have completed. The callable returns `TRUE` on successful closure. The
-function then removes the completion-port binding before another submission
-can associate a new handle with the same numeric value. A failed closure
-returns `FALSE` and preserves the binding. The file and socket interfaces
-perform this step as part of their close operations.
 
 ## Target restrictions
 

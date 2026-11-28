@@ -1,5 +1,7 @@
 LANGUAGE QUXLANG EN 0.0;
 
+IMPORT std;
+
 DOC <$ A borrowed native I/O descriptor. Copies refer to the same resource. Destruction does not release the resource. $>
 ::io_descriptor_ref INCLUDE_IF(OS_LINUX || OS_MACOS) STRUCT
 {
@@ -14,20 +16,38 @@ DOC <$ A borrowed native I/O descriptor. Copies refer to the same resource. Dest
   .is_valid FUNCTION() CONST: BOOL { RETURN .value >= 0; }
 }
 
-DOC <$ A borrowed Windows I/O handle. Copies refer to the same resource. Destruction does not release the resource. $>
+DOC <$ A borrowed Windows I/O handle. Copies share the open handle's completion-port association. A raw import starts a new association record. $>
 ::io_descriptor_ref INCLUDE_IF(OS_WINDOWS) STRUCT
 {
-  PRIVATE(CLASS) { .value VAR ADDRESS; }
+  PRIVATE(MODULE) { .state VAR std::shared_ptr#windows_open_handle; }
   DOC <$ Constructs an invalid handle reference. $>
   .CONSTRUCTOR FUNCTION() {}
   DOC <$ Borrows a native handle without acquiring ownership. $>
-  .CONSTRUCTOR FUNCTION(@native_handle ADDRESS) { .value := native_handle; }
-  DOC <$ Returns the handle for native system interfaces. $>
-  .native_handle FUNCTION() CONST: ADDRESS { RETURN .value; }
+  .CONSTRUCTOR FUNCTION(@native_handle ADDRESS)
+  {
+    IF (native_handle != NULL) { .state := std::make_shared#windows_open_handle(@handle native_handle); }
+  }
+  DOC <$ Returns the borrowed native handle, or null for an empty or closed descriptor. $>
+  .native_handle FUNCTION() CONST: ADDRESS
+  {
+    IF (.state.has_value()) { RETURN .state->.handle; }
+    RETURN NULL;
+  }
   DOC <$ Rejects null and INVALID_HANDLE_VALUE handles. $>
   .is_valid FUNCTION() CONST: BOOL
   {
-    VAR zero ADDRESS;
-    RETURN .value != NULL && .value != zero - (1 AS SZ);
+    VAR handle ADDRESS := .native_handle();
+    RETURN handle != NULL && handle != (NULL AS ADDRESS) - (1 AS SZ);
+  }
+  DOC <$ Invokes the native close operation, then invalidates all descriptor copies on success. The caller has exclusive access to the open handle. $>
+  .close_windows_handle FUNCTION(@close AUTO& AUTO) CONST: BOOL
+  {
+    IF (close(@handle .native_handle()) == FALSE) { RETURN FALSE; }
+    IF (.state.has_value())
+    {
+      .state->.handle := NULL;
+      .state->.port.reset();
+    }
+    RETURN TRUE;
   }
 }

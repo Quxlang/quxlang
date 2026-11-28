@@ -1,0 +1,308 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT io;
+IMPORT syscall;
+
+PRIVATE(MODULE)
+{
+  DOC <$ Obtains the Winsock handle and rejects a closed descriptor before issuing an operation. $>
+  ::windows_open_socket INCLUDE_IF(OS_WINDOWS) FUNCTION(@socket CONST& socket_operation_handle): native_socket_ref
+  {
+    VAR handle native_socket_ref := native_socket_value(@source socket);
+    IF (handle == invalid_socket_handle()) { THROW error::closed; }
+    RETURN handle;
+  }
+
+  DOC <$ Builds the WSABUF that Winsock captures during initiation of an overlapped transfer. $>
+  ::windows_transfer_buffer INCLUDE_IF(OS_WINDOWS)
+    FUNCTION(@buffer CONST& io::buffer_ref): syscall::windows::socket_buffer
+  {
+    VAR native syscall::windows::socket_buffer;
+    native.data := IBC_GETADDR(@PTR buffer.data);
+    native.length := socket_transfer_size(@size buffer.size);
+    RETURN native;
+  }
+
+  DOC <$ Checks whether Winsock accepted a request for completion through the associated port. $>
+  ::require_windows_socket_submission INCLUDE_IF(OS_WINDOWS) FUNCTION(@issued BOOL)
+  {
+    IF (issued == FALSE)
+    {
+      VAR failure I32 := syscall::windows::socket_last_error();
+      IF (failure != 997) { THROW translate_socket_error(@code failure AS I64); }
+    }
+  }
+
+  DOC <$ Maps a failed socket completion to its portable exception. $>
+  ::require_windows_socket_completion INCLUDE_IF(OS_WINDOWS) FUNCTION(@error U32)
+  {
+    IF (error != 0) { THROW translate_socket_error(@code error AS I64); }
+  }
+
+  DOC <$ Retains the open handle and encoded peer address through ConnectEx completion. $>
+  ::connect_operation INCLUDE_IF(OS_WINDOWS) STRUCT MOVE_ONLY NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    ::value_type ALIAS VOID;
+    .handle VAR socket_operation_handle;
+    .destination VAR internet_address_storage;
+    .destination_length VAR U32;
+
+    .CONSTRUCTOR FUNCTION(@socket CONST& socket_operation_handle, @endpoint CONST& endpoint)
+      :> .handle:(@OTHER socket)
+    { .destination_length := encode_socket_address(@address .destination, @endpoint endpoint); }
+
+    .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
+    {
+      VAR handle native_socket_ref := windows_open_socket(@socket .handle);
+      submission.associate(@descriptor .handle);
+      // ConnectEx requires a bound socket. Match the destination family when binding a wildcard address.
+      VAR local endpoint;
+      VAR bound BOOL;
+      TRY { local := socket_local_endpoint(@handle handle); bound := local.port != 0; }
+      CATCH failure CONST& error { IF (failure != error::invalid_argument) { RETHROW; } }
+      IF (bound == FALSE)
+      {
+        VAR family IBC CONST->U16 := IBC_PUN#(IBC CONST->U16)(@ADDR IBC_GETADDR(@PTR .destination<-));
+        IF (family-> == native_ipv6_family() AS CHECKED U16) { local.address := ip_address(@OTHER ipv6_address()); }
+        bind_socket(@handle handle, @endpoint local);
+      }
+      VAR entry ADDRESS := socket_extension#(@accepting FALSE)(@handle handle);
+      VAR transferred U32;
+      VAR issued I32 := syscall::windows::connect_extended(@socket handle,
+        @destination IBC_GETADDR(@PTR .destination<-), @length .destination_length AS CHECKED I32,
+        @buffer NULL, @size 0, @transferred transferred<-, @overlapped submission.overlapped(), @entry entry);
+      require_windows_socket_submission(@issued issued != 0);
+      RETURN FALSE;
+    }
+
+    .complete FUNCTION(@submission AUTO& AUTO, @size SZ, @error U32) MUT: BOOL
+    {
+      require_windows_socket_completion(@error error);
+      VAR handle native_socket_ref := native_socket_value(@source .handle);
+      IF (syscall::windows::set_socket_option(@socket handle, @level 65535, @option 28688, @value NULL, @length 0) != 0)
+      { THROW translate_socket_error(@code syscall::windows::socket_last_error() AS I64); }
+      RETURN TRUE;
+    }
+
+    .result FUNCTION() MUT: VOID {}
+  }
+
+  DOC <$ Owns the new connection and the two address slots required by AcceptEx until its listener context is installed. $>
+  ::accept_operation INCLUDE_IF(OS_WINDOWS) STRUCT MOVE_ONLY NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    ::value_type ALIAS tcp_connection;
+    .handle VAR socket_operation_handle;
+    .accepted VAR tcp_connection;
+    // AcceptEx requires 16 bytes beyond the largest sockaddr in each output slot.
+    ::address_length STATIC U32 := (SIZEOF(internet_address_storage) AS CHECKED U32) + 16;
+    .addresses VAR [2 * address_length]BYTE;
+
+    .CONSTRUCTOR FUNCTION(@socket CONST& socket_operation_handle) :> .handle:(@OTHER socket) {}
+
+    .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
+    {
+      VAR handle native_socket_ref := windows_open_socket(@socket .handle);
+      submission.associate(@descriptor .handle);
+      VAR local endpoint := socket_local_endpoint(@handle handle);
+      .accepted := tcp_connection(@address local.address);
+      VAR entry ADDRESS := socket_extension#(@accepting TRUE)(@handle handle);
+      VAR transferred U32;
+      VAR issued I32 := syscall::windows::accept_extended(@listener handle, @accepted .accepted.reference().native_socket(),
+        @buffer IBC_GETADDR(@PTR .addresses[&0]), @size 0, @local_size address_length, @remote_size address_length,
+        @transferred transferred<-, @overlapped submission.overlapped(), @entry entry);
+      require_windows_socket_submission(@issued issued != 0);
+      RETURN FALSE;
+    }
+
+    .complete FUNCTION(@submission AUTO& AUTO, @size SZ, @error U32) MUT: BOOL
+    {
+      require_windows_socket_completion(@error error);
+      VAR listener native_socket_ref := native_socket_value(@source .handle);
+      IF (syscall::windows::set_socket_option(@socket .accepted.reference().native_socket(), @level 65535, @option 28683,
+        @value IBC_GETADDR(@PTR listener<-), @length SIZEOF(native_socket_ref) AS CHECKED I32) != 0)
+      { THROW translate_socket_error(@code syscall::windows::socket_last_error() AS I64); }
+      RETURN TRUE;
+    }
+
+    .result FUNCTION() MUT: tcp_connection
+    {
+      VAR accepted MUT& tcp_connection := .accepted;
+      RETURN MOVE(accepted);
+    }
+  }
+
+  DOC <$ Receives connected stream bytes through WSARecv. $>
+  ::read_operation INCLUDE_IF(OS_WINDOWS) STRUCT MOVE_ONLY NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    ::value_type ALIAS SZ;
+    .handle VAR socket_operation_handle;
+    .buffer VAR io::buffer_ref;
+
+    .CONSTRUCTOR FUNCTION(@socket CONST& socket_operation_handle, @buffer CONST& io::buffer_ref)
+      :> .handle:(@OTHER socket), .buffer:(@OTHER buffer) {}
+
+    .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
+    {
+      VAR handle native_socket_ref := windows_open_socket(@socket .handle);
+      IF (.buffer.size == 0) { RETURN TRUE; }
+      submission.associate(@descriptor .handle);
+      VAR native_buffer syscall::windows::socket_buffer := windows_transfer_buffer(@buffer .buffer);
+      VAR flags U32;
+      VAR status I32 := syscall::windows::socket_receive(@socket handle, @buffers native_buffer<-, @count 1,
+        @transferred NULL, @flags flags<-, @overlapped submission.overlapped(), @completion NULL);
+      require_windows_socket_submission(@issued status == 0);
+      RETURN FALSE;
+    }
+
+    .complete FUNCTION(@submission AUTO& AUTO, @size SZ, @error U32) MUT: BOOL
+    {
+      require_windows_socket_completion(@error error);
+      .buffer.size := size;
+      RETURN TRUE;
+    }
+
+    .result FUNCTION() MUT: SZ { RETURN .buffer.size; }
+  }
+
+  DOC <$ Sends connected stream bytes through WSASend. $>
+  ::write_operation INCLUDE_IF(OS_WINDOWS) STRUCT MOVE_ONLY NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    ::value_type ALIAS SZ;
+    .handle VAR socket_operation_handle;
+    .buffer VAR io::buffer_ref;
+
+    .CONSTRUCTOR FUNCTION(@socket CONST& socket_operation_handle, @buffer CONST& io::buffer_ref)
+      :> .handle:(@OTHER socket), .buffer:(@OTHER buffer) {}
+
+    .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
+    {
+      VAR handle native_socket_ref := windows_open_socket(@socket .handle);
+      IF (.buffer.size == 0) { RETURN TRUE; }
+      submission.associate(@descriptor .handle);
+      VAR native_buffer syscall::windows::socket_buffer := windows_transfer_buffer(@buffer .buffer);
+      VAR status I32 := syscall::windows::socket_send(@socket handle, @buffers native_buffer<-, @count 1,
+        @transferred NULL, @flags 0, @overlapped submission.overlapped(), @completion NULL);
+      require_windows_socket_submission(@issued status == 0);
+      RETURN FALSE;
+    }
+
+    .complete FUNCTION(@submission AUTO& AUTO, @size SZ, @error U32) MUT: BOOL
+    {
+      require_windows_socket_completion(@error error);
+      .buffer.size := size;
+      RETURN TRUE;
+    }
+
+    .result FUNCTION() MUT: SZ { RETURN .buffer.size; }
+  }
+
+  DOC <$ Retains one native destination through completion of a datagram send. $>
+  ::send_operation INCLUDE_IF(OS_WINDOWS) STRUCT MOVE_ONLY NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    ::value_type ALIAS SZ;
+    .handle VAR socket_operation_handle;
+    .buffer VAR io::buffer_ref;
+    .destination VAR internet_address_storage;
+    .destination_length VAR U32;
+
+    .CONSTRUCTOR FUNCTION(@socket CONST& socket_operation_handle, @buffer CONST& io::buffer_ref, @destination CONST& endpoint)
+      :> .handle:(@OTHER socket), .buffer:(@OTHER buffer)
+    { .destination_length := encode_socket_address(@address .destination, @endpoint destination); }
+
+    .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
+    {
+      VAR handle native_socket_ref := windows_open_socket(@socket .handle);
+      IF (.buffer.size > 2147483647) { THROW error::message_too_large; }
+      submission.associate(@descriptor .handle);
+      VAR native_buffer syscall::windows::socket_buffer := windows_transfer_buffer(@buffer .buffer);
+      VAR status I32 := syscall::windows::socket_send_to(@socket handle, @buffers native_buffer<-, @count 1,
+        @transferred NULL, @flags 0, @destination IBC_GETADDR(@PTR .destination<-),
+        @length .destination_length AS CHECKED I32, @overlapped submission.overlapped(), @completion NULL);
+      require_windows_socket_submission(@issued status == 0);
+      RETURN FALSE;
+    }
+
+    .complete FUNCTION(@submission AUTO& AUTO, @size SZ, @error U32) MUT: BOOL
+    {
+      require_windows_socket_completion(@error error);
+      .buffer.size := size;
+      RETURN TRUE;
+    }
+
+    .result FUNCTION() MUT: SZ { RETURN .buffer.size; }
+  }
+
+  DOC <$ Retains the source address and length that Winsock writes on arrival. The portable endpoint is decoded when the result is consumed. $>
+  ::receive_operation INCLUDE_IF(OS_WINDOWS) STRUCT MOVE_ONLY NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    ::value_type ALIAS datagram_result;
+    .handle VAR socket_operation_handle;
+    .data VAR ADDRESS;
+    .size VAR U32;
+    .source VAR internet_address_storage;
+    .source_length VAR I32;
+    .scratch VAR [1]BYTE;
+    .truncated VAR BOOL;
+
+    .CONSTRUCTOR FUNCTION(@socket CONST& socket_operation_handle, @buffer CONST& io::buffer_ref)
+      :> .handle:(@OTHER socket)
+    {
+      .data := IBC_GETADDR(@PTR buffer.data);
+      .size := socket_transfer_size(@size buffer.size);
+    }
+
+    .start FUNCTION(@submission AUTO& AUTO) MUT: BOOL
+    {
+      VAR handle native_socket_ref := windows_open_socket(@socket .handle);
+      submission.associate(@descriptor .handle);
+      VAR native_buffer syscall::windows::socket_buffer;
+      native_buffer.data := .data;
+      native_buffer.length := .size;
+      IF (.size == 0)
+      {
+        native_buffer.data := IBC_GETADDR(@PTR .scratch[&0]);
+        native_buffer.length := 1;
+      }
+      .source_length := SIZEOF(internet_address_storage) AS CHECKED I32;
+      VAR flags U32;
+      VAR status I32 := syscall::windows::socket_receive_from(@socket handle, @buffers native_buffer<-, @count 1,
+        @transferred NULL, @flags flags<-, @source IBC_GETADDR(@PTR .source<-),
+        @length .source_length<-, @overlapped submission.overlapped(), @completion NULL);
+      IF (status == 0) { RETURN FALSE; }
+      VAR failure I32 := syscall::windows::socket_last_error();
+      IF (failure == 997) { RETURN FALSE; }
+      IF (failure == 10040) { RETURN .complete(@submission submission, @size 0, @error 10040); }
+      THROW translate_socket_error(@code failure AS I64);
+    }
+
+    .complete FUNCTION(@submission AUTO& AUTO, @size SZ, @error U32) MUT: BOOL
+    {
+      IF (error != 0 && error != 10040 && error != 234) { THROW translate_socket_error(@code error AS I64); }
+      .truncated := error != 0 || size > .size AS SZ;
+      IF (.truncated == FALSE)
+      {
+        // Winsock reports deferred MSG_PARTIAL through WSAGetOverlappedResult when the payload fills the buffer.
+        IF (size != 0 && size == .size AS SZ)
+        {
+          VAR transferred U32;
+          VAR flags U32;
+          IF (syscall::windows::socket_overlapped_result(@socket native_socket_value(@source .handle),
+            @overlapped submission.overlapped(), @transferred transferred<-, @wait 0, @flags flags<-) == 0)
+          { THROW translate_socket_error(@code syscall::windows::socket_last_error() AS I64); }
+          .truncated := (flags #&& 32768) != 0;
+        }
+        .size := size AS CHECKED U32;
+      }
+      RETURN TRUE;
+    }
+
+    .result FUNCTION() MUT: datagram_result
+    {
+      VAR value datagram_result;
+      value.size := .size AS SZ;
+      value.truncated := .truncated;
+      value.source := decode_socket_address(@address .source, @length .source_length AS CHECKED U32);
+      RETURN value;
+    }
+  }
+}

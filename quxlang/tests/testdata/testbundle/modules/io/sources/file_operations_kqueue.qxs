@@ -1,0 +1,255 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+IMPORT syscall;
+
+PRIVATE(MODULE)
+{
+  DOC <$ Performs one positioned Darwin read, repeating it across signal interruption. $>
+  ::darwin_positioned_read INCLUDE_IF(OS_MACOS)
+    FUNCTION(@descriptor I32, @buffer CONST& buffer_ref, @offset U64): transfer_result
+  {
+    VAR outcome transfer_result;
+    VAR length SZ := async_transfer_size(@size buffer.size) AS SZ;
+    LOOP WHILE(TRUE) DO
+    {
+      VAR count I64 := syscall::macos::pread(@descriptor descriptor, @buffer buffer.data, @count length,
+        @offset offset AS ASSUME I64);
+      IF (count >= 0)
+      {
+        outcome.succeeded := TRUE;
+        outcome.size := count AS ASSUME SZ;
+        RETURN outcome;
+      }
+      VAR code I32 := syscall::macos::errno_location()->;
+      IF (code != 4) // EINTR
+      {
+        outcome.error := code AS ASSUME U32;
+        RETURN outcome;
+      }
+    };
+  }
+
+  DOC <$ Performs one positioned Darwin write, repeating it across signal interruption. $>
+  ::darwin_positioned_write INCLUDE_IF(OS_MACOS)
+    FUNCTION(@descriptor I32, @buffer CONST& buffer_ref, @offset U64): transfer_result
+  {
+    VAR outcome transfer_result;
+    VAR length SZ := async_transfer_size(@size buffer.size) AS SZ;
+    LOOP WHILE(TRUE) DO
+    {
+      VAR count I64 := syscall::macos::pwrite(@descriptor descriptor, @buffer buffer.data, @count length,
+        @offset offset AS ASSUME I64);
+      IF (count >= 0)
+      {
+        outcome.succeeded := TRUE;
+        outcome.size := count AS ASSUME SZ;
+        RETURN outcome;
+      }
+      VAR code I32 := syscall::macos::errno_location()->;
+      IF (code != 4) // EINTR
+      {
+        outcome.error := code AS ASSUME U32;
+        RETURN outcome;
+      }
+    };
+  }
+}
+
+DOC <$
+  Reads from a file at a byte offset through an async_runtime2 on macOS. A kernel
+  that delivers file completions through kqueue performs the transfer; other
+  kernels, and a kernel that has reached its limit of queued transfers, use a
+  file worker. The descriptor and the buffer outlive completion. A coroutine
+  awaits the operation in its own frame, and the operation occupies a stable
+  address until its result has been taken.
+  $>
+::kqueue_file_read INCLUDE_IF(OS_MACOS) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  DOC <$ Names the result type. $>
+  ::value_type ALIAS transfer_result;
+
+  PRIVATE(MODULE)
+  {
+    .completion VAR operation_completion;
+    .target VAR kqueue_target;
+    .request VAR kqueue_transfer_request;
+    .work VAR file_work;
+    .descriptor VAR io_descriptor_ref;
+    .buffer VAR buffer_ref;
+    .offset VAR U64;
+    .outcome VAR transfer_result;
+
+    DOC <$ Receives the completion event of a transfer that the kernel performed. $>
+    ::on_event FUNCTION(@context MUT->VOID, @event CONST->syscall::macos::kernel_event)
+    {
+      VAR operation := context AS REINTERPRET MUT->kqueue_file_read;
+      operation->.outcome.error := kqueue_transfer_error(@event event->);
+      operation->.outcome.succeeded := operation->.outcome.error == 0;
+      IF (operation->.outcome.succeeded) { operation->.outcome.size := kqueue_transfer_size(@event event->); }
+      operation->.completion.finish();
+    }
+
+    DOC <$ Performs the transfer on a file worker. $>
+    ::run FUNCTION(@context MUT->VOID)
+    {
+      VAR operation := context AS REINTERPRET MUT->kqueue_file_read;
+      operation->.outcome := darwin_positioned_read(@descriptor operation->.descriptor.native_handle(),
+        @buffer operation->.buffer, @offset operation->.offset);
+      operation->.completion.finish();
+    }
+  }
+
+  DOC <$ Describes the transfer without starting it. $>
+  .CONSTRUCTOR FUNCTION(@runtime MUT& async_runtime2, @descriptor io_descriptor_ref, @buffer CONST& buffer_ref, @offset U64)
+    :> .completion:(@runtime runtime), .buffer:(@OTHER buffer)
+  {
+    .descriptor := descriptor;
+    .offset := offset;
+    .target.context := THIS<- AS REINTERPRET MUT->VOID;
+    .target.deliver := on_event<-;
+    .work.context := THIS<- AS REINTERPRET MUT->VOID;
+    .work.run := run<-;
+  }
+
+  DOC <$ Issues the transfer once. TRUE reports that the result is available without waiting, which occurs when the descriptor or the offset is rejected. $>
+  .start FUNCTION() MUT: BOOL
+  {
+    IF (.descriptor.is_valid() == FALSE) { .outcome.error := 9; RETURN TRUE; } // EBADF
+    IF (.offset > 9223372036854775807) { .outcome.error := 22; RETURN TRUE; } // EINVAL
+    VAR backend MUT& runtime_backend := .completion.runtime().backend;
+    .completion.begin();
+    IF (backend.native_aio)
+    {
+      VAR code I32 := backend.processor.read(@request .request, @descriptor .descriptor,
+        @buffer .buffer, @offset .offset, @target .target);
+      IF (code == 0) { RETURN FALSE; }
+      // EAGAIN reports that the process has reached its limit of queued transfers.
+      IF (code != 35)
+      {
+        .completion.abandon();
+        .outcome.error := code AS ASSUME U32;
+        RETURN TRUE;
+      }
+    }
+    TRY { backend.file_work.submit(@work .work<-); }
+    CATCH DEFAULT { .completion.abandon(); RETHROW; }
+    RETURN FALSE;
+  }
+
+  DOC <$ Registers the continuation that completion notifies. FALSE reports that the transfer completed first. $>
+  .suspend FUNCTION(@continuation MUT->std::async_continuation) MUT: BOOL
+  { RETURN .completion.suspend(@continuation continuation); }
+
+  DOC <$ Returns the outcome of the completed transfer. $>
+  .result FUNCTION() MUT: transfer_result { RETURN .outcome; }
+
+  DOC <$ Starts the transfer. $>
+  .AWAIT_READY FUNCTION() MUT: BOOL { RETURN .start(); }
+  DOC <$ Registers the awaiting coroutine. $>
+  .AWAIT_SUSPEND FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) MUT: BOOL
+  { RETURN .completion.suspend(@continuation CONTROLLER.continuation()); }
+  DOC <$ Returns the outcome after resumption. $>
+  .AWAIT_RESUME FUNCTION() MUT: transfer_result { RETURN .outcome; }
+  DOC <$ A started transfer runs to completion. $>
+  .TRY_CANCEL FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) CONST NOEXCEPT: BOOL { RETURN FALSE; }
+}
+
+DOC <$
+  Writes to a file at a byte offset through an async_runtime2 on macOS. A kernel
+  that delivers file completions through kqueue performs the transfer; other
+  kernels, and a kernel that has reached its limit of queued transfers, use a
+  file worker. The descriptor and the buffer outlive completion. A coroutine
+  awaits the operation in its own frame, and the operation occupies a stable
+  address until its result has been taken.
+  $>
+::kqueue_file_write INCLUDE_IF(OS_MACOS) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+{
+  DOC <$ Names the result type. $>
+  ::value_type ALIAS transfer_result;
+
+  PRIVATE(MODULE)
+  {
+    .completion VAR operation_completion;
+    .target VAR kqueue_target;
+    .request VAR kqueue_transfer_request;
+    .work VAR file_work;
+    .descriptor VAR io_descriptor_ref;
+    .buffer VAR buffer_ref;
+    .offset VAR U64;
+    .outcome VAR transfer_result;
+
+    DOC <$ Receives the completion event of a transfer that the kernel performed. $>
+    ::on_event FUNCTION(@context MUT->VOID, @event CONST->syscall::macos::kernel_event)
+    {
+      VAR operation := context AS REINTERPRET MUT->kqueue_file_write;
+      operation->.outcome.error := kqueue_transfer_error(@event event->);
+      operation->.outcome.succeeded := operation->.outcome.error == 0;
+      IF (operation->.outcome.succeeded) { operation->.outcome.size := kqueue_transfer_size(@event event->); }
+      operation->.completion.finish();
+    }
+
+    DOC <$ Performs the transfer on a file worker. $>
+    ::run FUNCTION(@context MUT->VOID)
+    {
+      VAR operation := context AS REINTERPRET MUT->kqueue_file_write;
+      operation->.outcome := darwin_positioned_write(@descriptor operation->.descriptor.native_handle(),
+        @buffer operation->.buffer, @offset operation->.offset);
+      operation->.completion.finish();
+    }
+  }
+
+  DOC <$ Describes the transfer without starting it. $>
+  .CONSTRUCTOR FUNCTION(@runtime MUT& async_runtime2, @descriptor io_descriptor_ref, @buffer CONST& buffer_ref, @offset U64)
+    :> .completion:(@runtime runtime), .buffer:(@OTHER buffer)
+  {
+    .descriptor := descriptor;
+    .offset := offset;
+    .target.context := THIS<- AS REINTERPRET MUT->VOID;
+    .target.deliver := on_event<-;
+    .work.context := THIS<- AS REINTERPRET MUT->VOID;
+    .work.run := run<-;
+  }
+
+  DOC <$ Issues the transfer once. TRUE reports that the result is available without waiting, which occurs when the descriptor or the offset is rejected. $>
+  .start FUNCTION() MUT: BOOL
+  {
+    IF (.descriptor.is_valid() == FALSE) { .outcome.error := 9; RETURN TRUE; } // EBADF
+    IF (.offset > 9223372036854775807) { .outcome.error := 22; RETURN TRUE; } // EINVAL
+    VAR backend MUT& runtime_backend := .completion.runtime().backend;
+    .completion.begin();
+    IF (backend.native_aio)
+    {
+      VAR code I32 := backend.processor.write(@request .request, @descriptor .descriptor,
+        @buffer .buffer, @offset .offset, @target .target);
+      IF (code == 0) { RETURN FALSE; }
+      // EAGAIN reports that the process has reached its limit of queued transfers.
+      IF (code != 35)
+      {
+        .completion.abandon();
+        .outcome.error := code AS ASSUME U32;
+        RETURN TRUE;
+      }
+    }
+    TRY { backend.file_work.submit(@work .work<-); }
+    CATCH DEFAULT { .completion.abandon(); RETHROW; }
+    RETURN FALSE;
+  }
+
+  DOC <$ Registers the continuation that completion notifies. FALSE reports that the transfer completed first. $>
+  .suspend FUNCTION(@continuation MUT->std::async_continuation) MUT: BOOL
+  { RETURN .completion.suspend(@continuation continuation); }
+
+  DOC <$ Returns the outcome of the completed transfer. $>
+  .result FUNCTION() MUT: transfer_result { RETURN .outcome; }
+
+  DOC <$ Starts the transfer. $>
+  .AWAIT_READY FUNCTION() MUT: BOOL { RETURN .start(); }
+  DOC <$ Registers the awaiting coroutine. $>
+  .AWAIT_SUSPEND FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) MUT: BOOL
+  { RETURN .completion.suspend(@continuation CONTROLLER.continuation()); }
+  DOC <$ Returns the outcome after resumption. $>
+  .AWAIT_RESUME FUNCTION() MUT: transfer_result { RETURN .outcome; }
+  DOC <$ A started transfer runs to completion. $>
+  .TRY_CANCEL FUNCTION(@CONTROLLER MUT& AUTO, @FRAME MUT& AUTO) CONST NOEXCEPT: BOOL { RETURN FALSE; }
+}

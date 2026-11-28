@@ -8,8 +8,9 @@ with completion callbacks and counts the transfers that are in flight on the
 file. Every member function that uses the file takes the context as an argument
 and rejects a context other than the context given at construction. The
 callback-free owner for synchronous transfers is [`io::file`](file.md).
-Coroutine code uses [`io::async_runtime`](async-runtime.md) with an `io::file`
-or an [`io::file_ref`](file-ref.md) and does not require `io::async_file`.
+Coroutines on `io::async_runtime` and `io::async_runtime2` can issue positioned
+or cursor-based transfers through `io::file` or `io::file_ref`.
+[File coroutine overloads](file-ref.md#read-and-write-coroutines)
 
 ## Declaration
 
@@ -210,8 +211,10 @@ fails; the close is not retried.
 The structure is declared when `OS_LINUX || OS_WINDOWS || OS_MACOS` holds. The
 mechanism that performs a positioned transfer on each target is specified in
 [Platform implementations](async-context.md#platform-implementations). On
-Windows, the constructor performs the completion-port association once, and the
-transfer functions do not repeat it.
+Windows, the constructor associates the open file with the context's port, or
+reuses the association held by the supplied descriptor. Its transfers use that
+binding. Successful closure invalidates Windows file references that share
+the open-handle record. [Windows descriptor ownership](io-descriptor-ref.md)
 
 ## Example
 

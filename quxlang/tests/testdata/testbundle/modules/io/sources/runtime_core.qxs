@@ -1,0 +1,187 @@
+LANGUAGE QUXLANG EN 0.0;
+
+IMPORT std;
+
+PRIVATE(MODULE)
+{
+  DOC <$ Creates the coroutine worker pool on first use. Its address is stable until exclusive destruction. $>
+  ::scheduler_pool INCLUDE_IF(OS_LINUX || OS_MACOS) STRUCT ROOTED NO_IMPLICIT_DEFAULT_CONSTRUCTOR
+  {
+    .pool VAR ATOMIC#(MUT->std::thread_pool_cort_runtime);
+    .creation VAR std::thin_mutex;
+    .workers VAR SZ;
+    .CONSTRUCTOR FUNCTION(@workers SZ)
+    {
+      IF (workers == 0) { THROW async_error::initialization_failed; }
+      .workers := workers;
+    }
+    .get FUNCTION() MUT: MUT& std::thread_pool_cort_runtime
+    {
+      VAR pool MUT->std::thread_pool_cort_runtime := .pool.LOAD#ATOMIC_ACQUIRE();
+      IF (pool!?) {
+        .creation.lock();
+        DEFER { .creation.unlock(); }
+        pool := .pool.LOAD#ATOMIC_RELAXED();
+        IF (pool!?) {
+          pool := NEW std::thread_pool_cort_runtime:(@workers .workers);
+          .pool.STORE#ATOMIC_RELEASE(pool);
+        }
+      }
+      RETURN pool->;
+    }
+    .drain FUNCTION() MUT
+    {
+      VAR pool MUT->std::thread_pool_cort_runtime := .pool.LOAD#ATOMIC_ACQUIRE();
+      IF (pool??) { pool->.drain(); }
+    }
+    .DESTRUCTOR FUNCTION()
+    {
+      VAR pool MUT->std::thread_pool_cort_runtime := .pool.LOAD#ATOMIC_RELAXED();
+      DELETE OPTIONAL pool;
+    }
+  }
+}
+
+DOC <$
+  Runs asynchronous file and socket operations and schedules the coroutines that
+  await them. Each operation is an object of its own type, such as file_read. A
+  coroutine awaits an operation in its own frame. The read and write members
+  return a future for callers outside a coroutine. One consumer thread delivers
+  kernel events to their operations. Any thread may start an operation.
+  $>
+::async_runtime2 INCLUDE_IF(OS_LINUX || OS_MACOS) STRUCT ROOTED
+{
+  PRIVATE(MODULE)
+  {
+    .backend VAR runtime_backend;
+    .stream_work VAR file_work_pool;
+    .scheduler VAR scheduler_pool;
+    // Exclusive shutdown starts after the final operation retires.
+    ::consumer_stopped STATIC SZ := (0 AS SZ) #!!;
+    .outstanding VAR ATOMIC#SZ;
+    .drain_wait VAR ATOMIC#U32;
+    .pool_submission VAR ATOMIC#BOOL;
+    .consumer VAR std::thread;
+
+    DOC <$ Releases the outstanding count of completed or rejected operations. Only a thread waiting in drain needs an idle notification. $>
+    .retire FUNCTION(@count SZ) MUT
+    {
+      // The total order pairs the zero transition with drain's registration and count recheck.
+      IF (.outstanding.FETCH_SUBTRACT#ATOMIC_SEQCST(count) == count && .drain_wait.LOAD#ATOMIC_SEQCST() != 0)
+      {
+        .drain_wait.STORE#ATOMIC_RELEASE(0);
+        RUNTIME_MODULE::notify_one_at_address(@address IBC_GETADDR(@PTR .drain_wait<-), @size SIZEOF(U32));
+      }
+    }
+
+    DOC <$ Delivers kernel events until exclusive shutdown. $>
+    .dispatch FUNCTION() MUT
+    {
+      LOOP DO
+      {
+        .backend.process();
+        IF (.outstanding.LOAD#ATOMIC_ACQUIRE() == consumer_stopped) { RETURN; }
+      };
+    }
+  }
+
+  DOC <$ Starts the consumer thread. Entries selects the io_uring queue capacity on a Linux kernel that provides io_uring. File workers bounds each pool of blocking file workers, and workers selects the coroutine pool size. Both counts are positive. $>
+  .CONSTRUCTOR FUNCTION(@entries U32 DEFAULT(256), @file_workers SZ DEFAULT(2), @workers SZ DEFAULT(1))
+    :> .backend:(@entries entries, @file_workers file_workers), .stream_work:(@workers file_workers), .scheduler:(@workers workers)
+  {
+    VAR runtime MUT->async_runtime2 := THIS<-;
+    .consumer := std::thread(@ARG -< [=runtime] { runtime->.dispatch(); });
+  }
+
+  DOC <$ Drains the runtime, stops the consumer, and joins every thread. No operation may start during destruction. $>
+  .DESTRUCTOR FUNCTION()
+  {
+    .drain();
+    .outstanding.STORE#ATOMIC_RELEASE(consumer_stopped);
+    .backend.wake();
+    .consumer.join();
+    .backend.quiesce();
+  }
+
+  DOC <$ Returns the kqueue that delivers this runtime's events. Socket operations register their readiness waits on it. $>
+  .kqueue INCLUDE_IF(OS_MACOS) FUNCTION() MUT: MUT& kqueue_processor { RETURN .backend.processor; }
+
+  DOC <$ Reports whether this runtime issues its operations through io_uring. FALSE selects epoll with file workers. The running kernel determines the value at construction. $>
+  .uses_io_uring INCLUDE_IF(OS_LINUX) FUNCTION() CONST: BOOL { RETURN .backend.uring??; }
+
+  DOC <$ Submits one io_uring operation of this runtime, which uses io_uring. The operation receives one completion. A rejected submission throws io_uring_error and retains no reference. $>
+  .submit_uring INCLUDE_IF(OS_LINUX) FUNCTION(@operation io_uring_operation_ref) MUT
+  { .backend.submit(@operation operation); }
+
+  DOC <$ Returns the epoll processor that delivers the readiness notifications of this runtime, which does not use io_uring. $>
+  .epoll INCLUDE_IF(OS_LINUX) FUNCTION() MUT: MUT& epoll_processor { RETURN .backend.epoll->; }
+
+  DOC <$ Reads at a byte offset into caller-owned storage and returns the future of the result. The descriptor and the buffer outlive completion. $>
+  .read INCLUDE_IF(OS_MACOS) FUNCTION(@descriptor io_descriptor_ref, @buffer CONST& buffer_ref, @offset U64) MUT: std::future#transfer_result
+  { RETURN submit_operation#kqueue_file_read(@runtime THIS, @descriptor descriptor, @buffer buffer, @offset offset); }
+
+  DOC <$ Writes at a byte offset from caller-owned storage and returns the future of the result. The descriptor and the buffer outlive completion. $>
+  .write INCLUDE_IF(OS_MACOS) FUNCTION(@descriptor io_descriptor_ref, @buffer CONST& buffer_ref, @offset U64) MUT: std::future#transfer_result
+  { RETURN submit_operation#kqueue_file_write(@runtime THIS, @descriptor descriptor, @buffer buffer, @offset offset); }
+
+  DOC <$ Reads at a byte offset into caller-owned storage and returns the future of the result. The descriptor and the buffer outlive completion. $>
+  .read INCLUDE_IF(OS_LINUX) FUNCTION(@descriptor io_descriptor_ref, @buffer CONST& buffer_ref, @offset U64) MUT: std::future#transfer_result
+  {
+    IF (.uses_io_uring())
+    { RETURN submit_operation#io_uring_file_read(@runtime THIS, @descriptor descriptor, @buffer buffer, @offset offset); }
+    RETURN submit_operation#epoll_file_read(@runtime THIS, @descriptor descriptor, @buffer buffer, @offset offset);
+  }
+
+  DOC <$ Writes at a byte offset from caller-owned storage and returns the future of the result. The descriptor and the buffer outlive completion. $>
+  .write INCLUDE_IF(OS_LINUX) FUNCTION(@descriptor io_descriptor_ref, @buffer CONST& buffer_ref, @offset U64) MUT: std::future#transfer_result
+  {
+    IF (.uses_io_uring())
+    { RETURN submit_operation#io_uring_file_write(@runtime THIS, @descriptor descriptor, @buffer buffer, @offset offset); }
+    RETURN submit_operation#epoll_file_write(@runtime THIS, @descriptor descriptor, @buffer buffer, @offset offset);
+  }
+
+  DOC <$ Reads at the cursor of a blocking descriptor on a file worker and returns the future of the result. $>
+  .read FUNCTION(@descriptor io_descriptor_ref, @buffer CONST& buffer_ref) MUT: std::future#transfer_result
+  { RETURN submit_operation#file_stream_read(@runtime THIS, @descriptor descriptor, @buffer buffer); }
+
+  DOC <$ Writes at the cursor of a blocking descriptor on a file worker and returns the future of the result. $>
+  .write FUNCTION(@descriptor io_descriptor_ref, @buffer CONST& buffer_ref) MUT: std::future#transfer_result
+  { RETURN submit_operation#file_stream_write(@runtime THIS, @descriptor descriptor, @buffer buffer); }
+
+  DOC <$ Selects the coroutine with the runtime's I/O controller and schedules it on the runtime's worker pool. $>
+  .CO_RUN FUNCTION(@COROUTINE:child AUTO, @ARGUMENTS:arguments ..., @group MUT->std::task_group DEFAULT(NULL)) MUT: AUTO
+  {
+    STATIC_IF(PACK_CONTAINS(arguments, "RECEIVER"))
+    {
+      VAR descriptor := child#(@CONTROLLER async_controller2#VOID, @THIS PACK_FIELD_TYPE(arguments, "RECEIVER"),
+        ...PACK_TYPES_EXCEPT(arguments, "RECEIVER"));
+      RETURN launch_io_coroutine2#descriptor(@runtime THIS, @ARGUMENTS FORWARD PACK(arguments), @group group);
+    }
+    STATIC_ELSE
+    {
+      VAR descriptor := child#(@CONTROLLER async_controller2#VOID, ...PACK_TYPES(arguments));
+      RETURN launch_io_coroutine2#descriptor(@runtime THIS, @ARGUMENTS FORWARD PACK(arguments), @group group);
+    }
+  }
+
+  DOC <$ Waits for started operations and scheduled coroutines, including the work that they start. A single external thread drains after external threads stop starting work. $>
+  .drain FUNCTION() MUT
+  {
+    LOOP DO
+    {
+      IF (.outstanding.LOAD#ATOMIC_ACQUIRE() != 0)
+      {
+        LOOP DO
+        {
+          .drain_wait.STORE#ATOMIC_SEQCST(1);
+          IF (.outstanding.LOAD#ATOMIC_SEQCST() == 0) { BREAK; }
+          RUNTIME_MODULE::wait_at_u32_address(@address IBC_GETADDR(@PTR .drain_wait<-), @expected 1);
+        };
+        .drain_wait.STORE#ATOMIC_RELAXED(0);
+      }
+      IF (.pool_submission.LOAD#ATOMIC_ACQUIRE() == FALSE) { RETURN; }
+      .pool_submission.EXCHANGE#ATOMIC_ACQREL(FALSE);
+      .scheduler.drain();
+    };
+  }
+}
